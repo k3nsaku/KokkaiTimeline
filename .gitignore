@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 取得した生データ・生成物（リポジトリには入れない）
+data/raw/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite
+data/*.sqlite3
+reports/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
