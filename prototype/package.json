@@ -1,0 +1,14 @@
+{
+  "name": "kokkai-timeline-prototype",
+  "private": true,
+  "version": "0.0.0",
+  "description": "ROADMAP §3.1: sql.js-httpvfs が年ごとDB(約370MB)で実用速度を出せるかの検証",
+  "type": "module",
+  "scripts": {
+    "vendor": "node vendor.js",
+    "serve": "node server.js"
+  },
+  "dependencies": {
+    "sql.js-httpvfs": "^0.8.12"
+  }
+}

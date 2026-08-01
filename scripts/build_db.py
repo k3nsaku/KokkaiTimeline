@@ -22,8 +22,20 @@
     politician   : 名寄せ後の議員マスタ（Phase 1 で投入）
     affiliation  : 所属政党の時系列（Phase 1 で投入）
 
+## 年ごとの分割（Phase 1）
+
+`--split-by-year` を付けると `data/dist/kokkai-YYYY.db` を年ごとに作る。
+日次更新で変わるのは当年分だけなので、R2 へのアップロードが1ファイルで済み、
+過去年は CDN キャッシュが効き続ける（`docs/PHASE0_FINDINGS.md` §5.1）。
+
+配信するDBは **WAL にしない**。WAL は本体ファイルの外に -wal を持つため、
+HTTP Range で1ファイルだけ読む sql.js-httpvfs から開けない。
+ビルド中だけ WAL を使い、最後に `journal_mode=DELETE` + `VACUUM` で単一ファイルに畳む。
+
 使い方:
-    python scripts/build_db.py --fresh
+    python scripts/build_db.py --fresh                  # 従来どおり単一DB
+    python scripts/build_db.py --split-by-year          # 年ごとに data/dist/ へ
+    python scripts/build_db.py --split-by-year --year 2025
     python scripts/build_db.py --no-fts
 """
 
@@ -32,13 +44,26 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sqlite3
 import sys
+import time
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw" / "speeches"
 DEFAULT_DB = ROOT / "data" / "kokkai.db"
+DIST_DIR = ROOT / "data" / "dist"
+POLITICIANS_PATH = ROOT / "data" / "politicians.json"
+TOPICS_PATH = ROOT / "data" / "topics.json"
+
+# sql.js-httpvfs は requestChunkSize 単位で HTTP Range を投げる。
+# page_size をそれに合わせると1ページ＝1リクエストになり、無駄な読みが出ない。
+# 8192 は実測で決めた値（docs/PHASE1_PROTOTYPE.md §3）。
+# 4096 比でリクエスト18%減・DBサイズ4%減。16384 以上は転送量が2〜4倍になる。
+# **変えるときはブラウザ側の requestChunkSize も同じ値にすること。**
+DEFAULT_PAGE_SIZE = 8192
 
 logger = logging.getLogger("build_db")
 
@@ -49,8 +74,6 @@ NON_SPEECH_SPEAKERS = {"会議録情報", "会議録情報等", "目次"}
 INDEXED_KINDS = ("議員",)
 
 SCHEMA = """
-PRAGMA journal_mode = WAL;
-
 CREATE TABLE IF NOT EXISTS meeting (
     issue_id        TEXT PRIMARY KEY,
     session         INTEGER NOT NULL,
@@ -62,6 +85,11 @@ CREATE TABLE IF NOT EXISTS meeting (
     pdf_url         TEXT
 );
 
+-- ★ rowid は日付の昇順になるよう投入する（load() が並べ替えている）。
+--   これに依存して、UIの「新しい順」はすべて `ORDER BY rowid DESC` で書く。
+--   `ORDER BY date DESC` にすると一時B-TREEができてヒット全件を読みに行き、
+--   HTTP Range 越しでは 200MB 単位の転送になる（docs/ROADMAP.md §2 の実測）。
+--   rowid 順なら FTS5 も通常のインデックスも降順スキャンで早期終了できる。
 CREATE TABLE IF NOT EXISTS speech (
     speech_id        TEXT PRIMARY KEY,
     issue_id         TEXT NOT NULL REFERENCES meeting(issue_id),
@@ -82,30 +110,78 @@ CREATE TABLE IF NOT EXISTS speech (
     politician_id    INTEGER REFERENCES politician(id)
 );
 
+-- ★ 絞り込みキーに date を足さないこと。
+--   SQLite のインデックスは末尾に rowid が付くので、`(politician_id)` だけなら
+--   並びは (politician_id, rowid) ＝ (politician_id, 日付) になり、
+--   `WHERE politician_id=? ORDER BY rowid DESC LIMIT 50` が降順スキャンで早期終了できる。
+--   `(politician_id, date)` にすると並びが (politician_id, date, rowid) になって
+--   SQLite が rowid 順を保証できなくなり、**一時B-TREEでその議員の全発言を読む**。
+--   date 単体のインデックスは、日付から rowid の境界を求めるために残す。
 CREATE INDEX IF NOT EXISTS idx_speech_date ON speech(date);
 CREATE INDEX IF NOT EXISTS idx_speech_speaker ON speech(speaker);
 CREATE INDEX IF NOT EXISTS idx_speech_issue ON speech(issue_id, speech_order);
-CREATE INDEX IF NOT EXISTS idx_speech_kind ON speech(speaker_kind, date);
-CREATE INDEX IF NOT EXISTS idx_speech_politician ON speech(politician_id, date);
+CREATE INDEX IF NOT EXISTS idx_speech_kind ON speech(speaker_kind);
+CREATE INDEX IF NOT EXISTS idx_speech_politician ON speech(politician_id);
 
+-- id は URL に出る（/politician/123）。data/politician_ids.json の台帳で維持していて、
+-- 作り直しても変わらない。採番は scripts/build_politicians.py。
 CREATE TABLE IF NOT EXISTS politician (
     id              INTEGER PRIMARY KEY,
+    -- 会議録での代表表記。通称（あべ俊子）で通っている議員がいるので
+    -- Wikidata の表記では上書きしない
     name            TEXT NOT NULL,
     name_kana       TEXT,
     house           TEXT,
     district        TEXT,
     wikidata_id     TEXT UNIQUE,
-    official_url    TEXT
+    wikidata_name   TEXT,
+    official_url    TEXT,
+    -- 全期間の集計。年ごとDBに分割しても値は同じ（議員一覧の並べ替えに使う）
+    n_speeches      INTEGER NOT NULL DEFAULT 0,
+    first_date      TEXT,
+    last_date       TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_politician_name ON politician(name);
 
 CREATE TABLE IF NOT EXISTS affiliation (
     id              INTEGER PRIMARY KEY,
     politician_id   INTEGER NOT NULL REFERENCES politician(id),
-    party           TEXT NOT NULL,
+    -- 会議録に書いてある事実。集計の既定単位はこちら
     kaiha           TEXT,
+    -- 会派から政党を特定できたときだけ入る。**特定できなければ NULL**。
+    -- `'無所属'` は「政党に所属していないと分かっている」という値で、
+    -- NULL（＝特定できていない）とは意味が違う。政党別に集計するときは
+    -- 政党のひとつとして混ぜず、別の区分として出すこと
+    party           TEXT,
+    -- 「その会派で発言した最初と最後の日」。在籍期間そのものではない
     start_date      TEXT,
-    end_date        TEXT
+    end_date        TEXT,
+    n_speeches      INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE INDEX IF NOT EXISTS idx_affiliation_politician ON affiliation(politician_id, start_date);
+
+-- 争点語。FTS5(trigram) が引けない2文字以下の語への対策であり、
+-- よく引かれる語をFTSから外して速くするための索引でもある
+-- （docs/PHASE1_PROTOTYPE.md §6-1）。リストは data/topics.json。
+CREATE TABLE IF NOT EXISTS topic (
+    id              INTEGER PRIMARY KEY,
+    term            TEXT NOT NULL UNIQUE,
+    category        TEXT,
+    variants        TEXT,     -- JSON配列。合算した別表記
+    -- **この年の件数**。全期間の集計は data/dist/topics.json 側にある
+    n_speeches      INTEGER NOT NULL DEFAULT 0
+);
+
+-- 争点語 → 発言。speech_rowid の降順スキャンで「新しい順」を早期終了できるよう、
+-- 主キーの並びをそのまま使う（WITHOUT ROWID にして重複した索引を持たない）
+CREATE TABLE IF NOT EXISTS topic_hit (
+    topic_id        INTEGER NOT NULL REFERENCES topic(id),
+    speech_rowid    INTEGER NOT NULL,
+    n               INTEGER NOT NULL,   -- その発言中の出現回数
+    PRIMARY KEY (topic_id, speech_rowid)
+) WITHOUT ROWID;
 
 -- 名寄せレポートの材料
 CREATE VIEW IF NOT EXISTS speaker_stats AS
@@ -147,11 +223,27 @@ def classify(record: dict) -> tuple[int, str]:
     return 1, "政府参考人等"
 
 
-def iter_raw_records(raw_dir: Path):
-    files = sorted(raw_dir.glob("*.ndjson"))
+def raw_files(raw_dir: Path, year: str | None = None) -> list[Path]:
+    """NDJSON は `YYYY-MM.ndjson`。年の指定があればファイル名で絞る。"""
+    pattern = f"{year}-*.ndjson" if year else "*.ndjson"
+    files = sorted(raw_dir.glob(pattern))
     if not files:
-        raise SystemExit(f"NDJSON が見つからない: {raw_dir}\n先に scripts/fetch_range.py を実行すること")
-    for path in files:
+        target = f"（{year}年）" if year else ""
+        raise SystemExit(f"NDJSON が見つからない{target}: {raw_dir}\n"
+                         f"先に scripts/fetch_range.py を実行すること")
+    return files
+
+
+def available_years(raw_dir: Path) -> list[str]:
+    years = {m.group(1) for path in raw_dir.glob("*.ndjson")
+             if (m := re.fullmatch(r"(\d{4})-\d{2}", path.stem))}
+    if not years:
+        raise SystemExit(f"NDJSON が見つからない: {raw_dir}")
+    return sorted(years)
+
+
+def iter_raw_records(raw_dir: Path, year: str | None = None):
+    for path in raw_files(raw_dir, year):
         logger.info("読み込み %s", path.name)
         with path.open(encoding="utf-8") as handle:
             for line in handle:
@@ -159,11 +251,95 @@ def iter_raw_records(raw_dir: Path):
                     yield json.loads(line)
 
 
-def load(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, int]:
+def load_politicians(path: Path) -> tuple[list[dict], dict[str, int]]:
+    """議員マスタと「突合単位 → 議員ID」の対応。無ければ空で通す。
+
+    無くてもDBは作れる（politician_id が NULL になるだけ）ので、
+    先に build_politicians.py を回していなくても止めない。
+    """
+    if not path.exists():
+        logger.warning("%s が無い。politician_id は NULL のままになる。"
+                       "先に scripts/build_politicians.py を実行すること", path.name)
+        return [], {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data["politicians"], data["units"]
+
+
+def insert_politicians(con: sqlite3.Connection, politicians: list[dict]) -> int:
+    con.executemany(
+        "INSERT OR REPLACE INTO politician"
+        " (id, name, name_kana, house, district, wikidata_id, wikidata_name,"
+        "  official_url, n_speeches, first_date, last_date)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(p["id"], p["name"], p["name_kana"], p["house"], None, p["wikidata_id"],
+          p["wikidata_name"], p["official_url"], p["n_speeches"],
+          p["first_date"], p["last_date"]) for p in politicians])
+    con.executemany(
+        "INSERT INTO affiliation"
+        " (politician_id, kaiha, party, start_date, end_date, n_speeches)"
+        " VALUES (?,?,?,?,?,?)",
+        [(p["id"], a["kaiha"], a["party"], a["start_date"], a["end_date"], a["n_speeches"])
+         for p in politicians for a in p["affiliations"]])
+    con.commit()
+    return sum(len(p["affiliations"]) for p in politicians)
+
+
+def load_topics(path: Path) -> list[dict]:
+    """争点語のリスト。無ければ空で通す（争点語の機能が無いDBになるだけ）。"""
+    if not path.exists():
+        logger.warning("%s が無い。争点語の索引を作らない", path.name)
+        return []
+    topics = json.loads(path.read_text(encoding="utf-8"))["topics"]
+    for i, topic in enumerate(topics, 1):
+        topic.setdefault("id", i)
+        topic.setdefault("variants", [])
+        topic.setdefault("category", None)
+    return topics
+
+
+def build_topic_index(con: sqlite3.Connection, topics: list[dict]) -> int:
+    """議員の発言を走査して争点語の索引を作る。
+
+    rowid は投入順（＝日付順）に振られているので、そのまま「新しい順」に使える。
+    投入直後にDBから読み直しているのは、rowid を推測せず実際の値を使うため。
+    """
+    if not topics:
+        return 0
+    forms = [(t["id"], [t["term"], *t["variants"]]) for t in topics]
+    hits: list[tuple[int, int, int]] = []
+    counts: dict[int, int] = defaultdict(int)
+
+    for rowid, body in con.execute(
+            "SELECT rowid, body FROM speech WHERE speaker_kind = ?", INDEXED_KINDS[:1]):
+        for topic_id, form_list in forms:
+            n = sum(body.count(form) for form in form_list)
+            if n:
+                hits.append((topic_id, rowid, n))
+                counts[topic_id] += 1
+
+    con.executemany(
+        "INSERT OR REPLACE INTO topic (id, term, category, variants, n_speeches)"
+        " VALUES (?,?,?,?,?)",
+        [(t["id"], t["term"], t["category"], json.dumps(t["variants"], ensure_ascii=False),
+          counts.get(t["id"], 0)) for t in topics])
+    con.executemany("INSERT OR REPLACE INTO topic_hit VALUES (?,?,?)", hits)
+    con.commit()
+    return len(hits)
+
+
+def load(con: sqlite3.Connection, raw_dir: Path, year: str | None = None,
+         unit_map: dict[str, int] | None = None) -> tuple[int, int]:
     meetings: dict[str, tuple] = {}
     speeches: list[tuple] = []
+    out_of_range = 0
+    unit_map = unit_map or {}
+    unresolved = 0
 
-    for record in iter_raw_records(raw_dir):
+    for record in iter_raw_records(raw_dir, year):
+        # ファイル名ではなくレコードの日付で年を決める。取得月とズレていても落とさない
+        if year and not record["date"].startswith(year):
+            out_of_range += 1
+            continue
         issue_id = record["issueID"]
         if issue_id not in meetings:
             meetings[issue_id] = (
@@ -172,23 +348,42 @@ def load(con: sqlite3.Connection, raw_dir: Path) -> tuple[int, int]:
                 record.get("meetingURL"), record.get("pdfURL"),
             )
         is_speech, kind = classify(record)
+        politician_id = None
+        if kind == "議員":
+            # キーの組み立ては build_politicians.py の unit_key() と揃えること
+            key = "\t".join([record["speaker"], record.get("speakerYomi") or "",
+                             record.get("speakerGroup") or ""])
+            politician_id = unit_map.get(key)
+            if politician_id is None:
+                unresolved += 1
         speeches.append((
             record["speechID"], issue_id, record["speechOrder"], record["date"],
             record["speaker"], record.get("speakerYomi"), record.get("speakerGroup"),
             record.get("speakerPosition"), record.get("speakerRole"),
             record["speech"], record.get("startPage"), record.get("speechURL"),
-            is_speech, kind,
+            is_speech, kind, politician_id,
         ))
+
+    # rowid を日付の昇順にするための並べ替え。理由は SCHEMA のコメントを参照。
+    # NDJSON は月ごとのファイルなので、そのままだと月境界で数十件が前後する（実測124件）。
+    speeches.sort(key=lambda row: (row[3], row[1], row[2]))  # date, issue_id, speech_order
 
     con.executemany("INSERT OR REPLACE INTO meeting VALUES (?,?,?,?,?,?,?,?)", meetings.values())
     con.executemany(
         "INSERT OR REPLACE INTO speech "
         "(speech_id, issue_id, speech_order, date, speaker, speaker_yomi, speaker_group,"
-        " speaker_position, speaker_role, body, start_page, speech_url, is_speech, speaker_kind)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " speaker_position, speaker_role, body, start_page, speech_url, is_speech,"
+        " speaker_kind, politician_id)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         speeches,
     )
     con.commit()
+    if out_of_range:
+        logger.warning("  %s年のファイルに他年のレコード %s件。除外した",
+                       year, f"{out_of_range:,}")
+    if unresolved and unit_map:
+        logger.warning("  議員に紐づかなかった発言 %s件。build_politicians.py が古い可能性",
+                       f"{unresolved:,}")
     return len(meetings), len(speeches)
 
 
@@ -220,6 +415,98 @@ def check_highlight(con: sqlite3.Connection) -> None:
         print("\nハイライト動作確認: 該当なし（検証語がこの範囲に無い）")
 
 
+def open_fresh(db_path: Path, page_size: int) -> sqlite3.Connection:
+    """空のDBを作って開く。page_size は最初のテーブルを作る前にしか変えられない。"""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.unlink(missing_ok=True)
+    for suffix in ("-wal", "-shm"):
+        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
+
+    con = sqlite3.connect(db_path)
+    con.execute(f"PRAGMA page_size = {page_size}")
+    con.execute("PRAGMA journal_mode = WAL")  # 投入中だけ WAL。配信前に畳む
+    con.executescript(SCHEMA)
+    return con
+
+
+def finalize(con: sqlite3.Connection, db_path: Path) -> None:
+    """配信できる単一ファイルにする。
+
+    WAL のままだと本体の外に -wal が要るので、HTTP Range で1ファイルしか読まない
+    sql.js-httpvfs から開けない。VACUUM はページの断片化も解消し、
+    1回の検索で触るページが散らばりにくくなる。
+    """
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.execute("PRAGMA journal_mode = DELETE")
+    con.execute("VACUUM")
+    con.commit()
+    for suffix in ("-wal", "-shm"):
+        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
+
+
+def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
+               dist_dir: Path, politicians: list[dict], unit_map: dict[str, int],
+               topics: list[dict]) -> dict:
+    """1年分のDBを作って統計を返す。
+
+    議員マスタは**全期間分をそのまま入れる**（1,111人で数百KB）。年ごとに絞ると
+    「その年に発言していない議員のページ」が作れなくなるし、`n_speeches` の
+    意味が年によって変わってしまう。
+    """
+    db_path = dist_dir / f"kokkai-{year}.db"
+    started = time.monotonic()
+    logger.info("=== %s年 → %s ===", year, db_path.name)
+
+    con = open_fresh(db_path, page_size)
+    insert_politicians(con, politicians)
+    n_meetings, n_speeches = load(con, raw_dir, year, unit_map)
+    n_hits = build_topic_index(con, topics)
+    if with_fts:
+        logger.info("  FTS5(trigram) を構築中…")
+        build_fts(con)
+    indexed = count_indexed(con)
+    finalize(con, db_path)
+    con.close()
+
+    size = db_path.stat().st_size
+    logger.info("  会議 %s / 発言 %s（索引 %s / 争点語 %s） / %.1f MB / %.0f秒",
+                f"{n_meetings:,}", f"{n_speeches:,}", f"{indexed:,}", f"{n_hits:,}",
+                size / 1024**2, time.monotonic() - started)
+    return {"year": year, "path": db_path, "meetings": n_meetings,
+            "speeches": n_speeches, "indexed": indexed, "hits": n_hits, "size": size}
+
+
+def count_indexed(con: sqlite3.Connection) -> int:
+    """external content の FTS5 は COUNT(*) を本体テーブルへ委譲するため speech 側で数える。"""
+    placeholders = ",".join("?" * len(INDEXED_KINDS))
+    return con.execute(
+        f"SELECT COUNT(*) FROM speech WHERE speaker_kind IN ({placeholders})",
+        INDEXED_KINDS).fetchone()[0]
+
+
+def run_split(args: argparse.Namespace) -> None:
+    years = args.year or available_years(args.raw)
+    politicians, unit_map = load_politicians(args.politicians)
+    topics = load_topics(args.topics)
+    logger.info("年ごとに分割して構築: %s（議員 %s人 / 争点語 %s件）",
+                " ".join(years), f"{len(politicians):,}", f"{len(topics):,}")
+    results = [build_year(args.raw, year, page_size=args.page_size,
+                          with_fts=not args.no_fts, dist_dir=args.dist,
+                          politicians=politicians, unit_map=unit_map, topics=topics)
+               for year in years]
+
+    print(f"\n--- 年ごとDB（page_size={args.page_size} / {args.dist}）---")
+    print(f"{'年':<6}{'会議':>8}{'発言':>10}{'索引':>10}{'争点語':>10}{'サイズ':>12}")
+    for r in results:
+        print(f"{r['year']:<6}{r['meetings']:>8,}{r['speeches']:>10,}"
+              f"{r['indexed']:>10,}{r['hits']:>10,}{r['size'] / 1024**2:>10.1f} MB")
+    total = sum(r["size"] for r in results)
+    print(f"{'合計':<6}{'':>8}{sum(r['speeches'] for r in results):>10,}"
+          f"{sum(r['indexed'] for r in results):>10,}"
+          f"{sum(r['hits'] for r in results):>10,}{total / 1024**3:>10.2f} GB")
+    print(f"\nR2無料枠 10GB に対して {100 * total / (10 * 1024**3):.1f}%")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     parser = argparse.ArgumentParser(description=__doc__)
@@ -227,7 +514,22 @@ def main() -> None:
     parser.add_argument("--raw", type=Path, default=RAW_DIR)
     parser.add_argument("--no-fts", action="store_true", help="全文検索インデックスを作らない")
     parser.add_argument("--fresh", action="store_true", help="既存DBを削除してから作る")
+    parser.add_argument("--split-by-year", action="store_true",
+                        help="年ごとに data/dist/kokkai-YYYY.db を作る（配信用）")
+    parser.add_argument("--year", action="append", metavar="YYYY",
+                        help="対象の年。複数指定可。省略時は取得済みの全年（--split-by-year 用）")
+    parser.add_argument("--dist", type=Path, default=DIST_DIR, help="年ごとDBの出力先")
+    parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE,
+                        help=f"SQLiteのページサイズ（既定 {DEFAULT_PAGE_SIZE}）")
+    parser.add_argument("--politicians", type=Path, default=POLITICIANS_PATH,
+                        help="scripts/build_politicians.py の出力。無ければ議員を紐づけない")
+    parser.add_argument("--topics", type=Path, default=TOPICS_PATH,
+                        help="争点語のリスト。無ければ争点語の索引を作らない")
     args = parser.parse_args()
+
+    if args.split_by_year or args.year:
+        run_split(args)
+        return
 
     args.db.parent.mkdir(parents=True, exist_ok=True)
     if args.fresh and args.db.exists():
@@ -236,9 +538,15 @@ def main() -> None:
             args.db.with_name(args.db.name + suffix).unlink(missing_ok=True)
 
     con = sqlite3.connect(args.db)
+    con.execute("PRAGMA journal_mode = WAL")
     con.executescript(SCHEMA)
 
-    n_meetings, n_speeches = load(con, args.raw)
+    # 初回は politicians.json がまだ無い（この kokkai.db を材料に作る）ので、
+    # 無ければ紐づけずに進む。2回目以降の再構築で埋まる
+    politicians, unit_map = load_politicians(args.politicians)
+    if politicians:
+        insert_politicians(con, politicians)
+    n_meetings, n_speeches = load(con, args.raw, None, unit_map)
     logger.info("投入: 会議 %s件 / 発言 %s件", f"{n_meetings:,}", f"{n_speeches:,}")
 
     print("\n--- 発言者の種別 ---")
@@ -256,12 +564,7 @@ def main() -> None:
         build_fts(con)
         con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         size_after = args.db.stat().st_size
-        # external content の FTS5 は COUNT(*) を本体テーブルへ委譲するため、
-        # speech_fts を数えても索引件数にならない。speech 側で数える。
-        placeholders = ",".join("?" * len(INDEXED_KINDS))
-        indexed = con.execute(
-            f"SELECT COUNT(*) FROM speech WHERE speaker_kind IN ({placeholders})",
-            INDEXED_KINDS).fetchone()[0]
+        indexed = count_indexed(con)
         print(f"FTSありのサイズ: {size_after / 1024 / 1024:.2f} MB "
               f"(索引 {indexed:,}件 / +{(size_after - size_before) / 1024 / 1024:.2f} MB)")
 

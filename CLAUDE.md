@@ -3,7 +3,8 @@
 国会会議録から政治家の発言を収集・構造化し、横断検索と時系列表示を提供する
 **完全静的サイト**。有権者が政治家について判断する材料を出すことが目的。
 
-現在 **Phase 0（技術検証）完了**。Phase 1（サイト実装）は未着手。
+現在 **Phase 1 着手中**。§3.1（プロトタイプ検証）まで完了し、
+sql.js-httpvfs でこのアーキテクチャが成立することを実測で確認済み。
 進捗と計画は `docs/ROADMAP.md`。
 
 ---
@@ -37,12 +38,37 @@ python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31
 # DB構築（data/kokkai.db を作り直す）
 python scripts/build_db.py --fresh
 
+# 配信用の年ごとDB（data/dist/kokkai-YYYY.db）。日次更新は当年だけ作り直す
+python scripts/build_db.py --split-by-year --page-size 8192
+python scripts/build_db.py --year 2026 --page-size 8192
+
+# プロトタイプの計測サーバ（詳細は prototype/README.md）
+cd prototype && npm install && npm run vendor && npm run serve
+
 # Wikidata から議員リストを取得
 python scripts/fetch_wikidata.py
 
-# 名寄せ（reports/name_matching.md にレポートが出る）
+# 名寄せの検証レポートだけ出す（DBは書き換えない）
 python scripts/match_politicians.py
+
+# 議員マスタを確定させる（data/politicians.json と ID台帳を更新）
+# → 政党の手入力が要る分は reports/party_todo.md に出る
+python scripts/build_politicians.py
+
+# 所属政党の訂正（手順は docs/CORRECTIONS.md）。名前でもIDでも引ける
+python scripts/build_politicians.py --fix 浜田聡
+
+# 争点語の候補出し（reports/topic_candidates.md）→ data/topics.json は手で選ぶ
+python scripts/build_topics.py --propose
+
+# 頻度推移（data/dist/topics.json・258KB）と週次トレンド（trending.json・10KB）
+python scripts/build_topics.py
 ```
+
+**順番は `fetch_range` → `build_db`（単一DB）→ `build_politicians` / `build_topics`
+→ `build_db --split-by-year`。**
+`build_politicians.py` と `build_topics.py` は `data/kokkai.db` を材料にするので、
+単一DBが先に要る。
 
 バックフィルの詳細は `docs/BACKFILL.md`。
 
@@ -60,9 +86,11 @@ python scripts/match_politicians.py
 [ブラウザ] sql.js-httpvfs が HTTP Range で必要なページだけ取得
 ```
 
-- **DBは年ごとに分割する**（1ファイル335〜378MB）。日次更新で変わるのは当年分だけ。
+- **DBは年ごとに分割する**（1ファイル約360MB / `page_size=8192`）。日次更新で変わるのは当年分だけ。
 - **DBは R2 に置く。** Cloudflare Pages は1ファイル25MiB上限、GitHub は100MB上限で置けない。
 - **Vercel は使わない**（帯域課金。バズると個人の財布が痛む）。
+- **年またぎ検索は年ごとに別ワーカを立てて並列に引き、JS側でマージする。**
+  1ワーカ内のリクエストは同期XHRで直列になるため、ATTACH+UNION だと年数に比例して遅くなる。
 
 ## データモデル
 
@@ -71,13 +99,47 @@ meeting      : issue_id, 会期, 院, 会議名, 号数, 日付, meeting_url, pd
 speech       : speech_id, issue_id, 発言順, 日付, 発言者, よみ, 会派, 肩書, 役割,
                本文, speech_url, is_speech, speaker_kind, politician_id
 speech_fts   : FTS5 + trigram。議員の発言のみを索引化（本文は speech 側）
-politician   : 名寄せ後の議員マスタ（Phase 1 で投入）
-affiliation  : 所属政党の時系列（Phase 1 で投入）
+politician   : 名寄せ後の議員マスタ（1,111人）。id は URL に出る
+affiliation  : 会派の時系列。party は特定できたときだけ入る（NULL あり）
+topic        : 争点語（79件）。リストは data/topics.json
+topic_hit    : 争点語 → 発言。2文字語対策 兼 FTS回避の索引
 ```
+
+配信物は年DBのほかに2つある。
+
+**`data/dist/topics.json`（258KB）** — 月×会派の出現件数と**分母（その月の発言数）**。
+頻度推移ページはこれだけで描ける。**分母で割らずにグラフにしないこと。**
+国会は通年で開いていないので、割らないと「開催日数が多い月」が争点に見える。
+
+**`data/dist/trending.json`（10KB）** — 直近の国会で急に増えた語。検索の入口に使う。
+**カレンダー週で区切らない**（実測で直近8週のうち2週が発言不足で集計にならなかった）。
+発言のあった日を5日ずつまとめている。中身は「その週に審議された法案の専門用語」が
+主で、**「今週の争点」ではない**。表示の言葉を誇張しないこと。
+
+**議員IDは `data/politician_ids.json` の台帳で維持する。** URLに出るので作り直すと
+リンクが全部壊れる。**この台帳と `data/party_overrides.json` はコミットすること。**
+採番は `scripts/build_politicians.py`。`build_db.py` は `data/politicians.json` を読むだけ。
+
+**`affiliation.party` は NULL がある（発言の3.6%）。** 統一会派の分は
+`data/party_overrides.json` に人力で入れて解消済み（141件）。残る NULL は
+`無所属` `各派に属しない議員` `有志の会` `沖縄の風` `碧水会` `改革の会` で、
+**会派名から政党を決められないもの**（設計どおり。議長は自党の会派を抜けるが党籍は残る）。
+
+**`party = '無所属'` と `party IS NULL` は意味が違う。**
+前者は「政党に所属していないと分かっている」、後者は「特定できていない」。
+政党別の集計で混ぜないこと。作業リストは `reports/party_todo.md`。
+
+**1会派 = 1政党とは限らない。** 統一会派は名前が変わらないまま構成政党が入れ替わる。
+`party_overrides.json` に `periods` を書くと所属レコードが期間で分割される
+（発言数は実データから数え直す）。**区間に隙間があると発言が落ちるので警告が出る。**
+訂正の手順は `docs/CORRECTIONS.md`。`--fix 議員名` で編集用の雛形が出る。
 
 `speaker_kind` は `議員 / 参考人 / 公述人 / 証人 / 政府参考人等 / 非発言`。
 **全発言をDBに持ち、全文検索の索引は「議員」だけに張る。**
 参考人等は検索対象外だが、前後の文脈表示のためDBに残してある。
+
+**`speech.rowid` は日付の昇順**（`build_db.py` の `load()` が並べ替えている）。
+UIの「新しい順」はこれに依存する。詳しくは下の落とし穴を見ること。
 
 ---
 
@@ -103,6 +165,28 @@ affiliation  : 所属政党の時系列（Phase 1 で投入）
 - **`SELECT COUNT(*) FROM speech_fts` は索引件数にならない。**
   external content 構成では本体テーブルに委譲される。`speech` 側で数えること。
 
+### ブラウザからDBを引く（sql.js-httpvfs）
+
+実測の根拠は `docs/PHASE1_PROTOTYPE.md`。数字はすべて 350MB のDBでの実測。
+
+- **`ORDER BY date DESC` と書かない。`ORDER BY rowid DESC` にする。**
+  date で並べると一時B-TREEができて**ヒット全件を読みに行く**。
+  検索で **204MB 転送**、議員ページで **7,800リクエスト**になる。
+  rowid は日付昇順に投入してあるので、結果は date 順と完全に一致する。
+- **絞り込み用のインデックスに `date` を足さない。** SQLite のインデックスは末尾に
+  rowid が付くので、`speech(politician_id)` だけで `(politician_id, 日付)` 順になる。
+  `(politician_id, date)` にすると rowid 順が保証されなくなり、上と同じ罠に落ちる
+  （議員ページが 27リクエスト → **509リクエスト**）。
+- **配信するDBを WAL にしない。** `-wal` が本体の外に要るのでブラウザから開けない。
+  `build_db.py` の `finalize()` が `journal_mode=DELETE` + `VACUUM` で畳んでいる。
+- **`db.query(sql, params)` の第2引数は配列で渡す。** 型定義は `(sql, ...params)` だが
+  実体は sql.js の `exec(sql, params)`。展開して渡すと**黙って束縛されない**。
+- **wasm の URL は絶対パスで渡す。** ワーカ内で解決されるため相対パスだと壊れる。
+- **遅いのはヒット件数ではなく検索語の長さ。** trigram は N文字を N-2 トークンに展開する。
+  ヒット14件の「デジタル田園都市国家構想」が、ヒット2,864件の「安全保障」の2.4倍遅い。
+- **争点語リストにある語は FTS を使わない。** `topic_hit` を引くほうが 3.3倍速い
+  （0.7秒 vs 2.3秒）。2文字語はそもそも FTS では引けない。
+
 ### 名寄せ
 
 - **突合の単位は `(発言者, 読み, 会派)`。** 読みだけだと同姓同名が1行に潰れて分離できなくなる。
@@ -124,10 +208,28 @@ affiliation  : 所属政党の時系列（Phase 1 で投入）
 - 人物属性と任期は**別クエリに分ける**。1本にまとめると OPTIONAL の直積で行数が爆発する。
 - User-Agent を明示しないと403。
 
+### 争点語
+
+- **`data/topics.json` は運営の編集方針そのもの。** 何を争点として扱うかは判断が要る。
+  初版79件は `--propose` の機械抽出から選んだだけで、**レビューを経ていない**。
+- 語を**互いに部分文字列にしない**。`夫婦別姓` と `選択的夫婦別姓` を並べると二重に数える。
+  同じ争点の別表記は `variants` に入れる（`build_topics.py` が重なりを警告する）。
+- 候補は**頻度上位ではなく増減で見る。** 頻度上位は「日本」「議論」「重要」で埋まる。
+  年ごとの発言数が違う（2026年は7月まで）ので、割合に直してから比べる。
+- **両端（最初の年と最後の年）を比べない。ピーク年と中央値を比べる。**
+  両端比だと途中で山を作って収束した争点が消える
+  （裏金は両端比2.4だがピーク比12.4、マイナンバーは両端比0.2でピーク比4.6）。
+- **機械抽出に人名が混ざる。** 「〜議員」「〜大臣」で終わる語は姓の照合を待たずに落とす
+  （姓が1文字だと照合をすり抜けて「簗議員」が漏れた）。
+  それでも取り切れない分は `data/topic_denylist.json` に1行足して消す。
+
 ### Git
 
-- `data/` は `.gitignore` 済み。ただし **`data/party_map.json` は手書きの資産なのでコミットする**
-  （生成物ではない。失うと作り直しになる）。
+- `data/` は `.gitignore` 済み。ただし**手書きの資産はコミットする**
+  （生成物ではない。失うと作り直しになる）:
+  `party_map.json` / `party_overrides.json` / `politician_ids.json` /
+  `topics.json` / `topic_denylist.json`。
+  特に `politician_ids.json` を失うと**公開後はURLが全部変わる**。
 
 ---
 
@@ -140,7 +242,10 @@ affiliation  : 所属政党の時系列（Phase 1 で投入）
 | `whatiwant.md` | 実現したいことの原典（発注側の要望） | 要件を確認するとき |
 | `PROJECT_BRIEF.md` | 企画書。意思決定とその理由、法的整理 | 「なぜそうなっているか」を知りたいとき |
 | `docs/PHASE0_FINDINGS.md` | Phase 0 の検証結果。実測値と判断の根拠 | 設計判断を疑うとき |
+| `docs/PHASE1_PROTOTYPE.md` | ブラウザからDBを引く性能の実測。**守るべき制約3つ** | 検索まわりを実装するとき |
+| `docs/CORRECTIONS.md` | **所属政党の訂正手順**。期間分割・ID台帳の注意 | 誤りを指摘されたとき |
 | `docs/BACKFILL.md` | バックフィルの操作手順 | データを取り直すとき |
+| `prototype/README.md` | 計測サーバの使い方 | 性能を測り直すとき |
 
-**設計判断を変えるときは `docs/PHASE0_FINDINGS.md` の実測値を確認すること。**
-そこにある数字はすべて実測であり、推測ではない。
+**設計判断を変えるときは `docs/PHASE0_FINDINGS.md` と `docs/PHASE1_PROTOTYPE.md` の
+実測値を確認すること。** そこにある数字はすべて実測であり、推測ではない。
