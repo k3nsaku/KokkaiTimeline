@@ -83,6 +83,7 @@ def fetch(
 def iter_speeches(
     *,
     limit: int | None = None,
+    start_record: int = 1,
     interval: float = REQUEST_INTERVAL_SEC,
     **search_params: Any,
 ) -> Iterator[dict[str, Any]]:
@@ -90,14 +91,18 @@ def iter_speeches(
 
     search_params には from / until / nameOfHouse / any / speaker などを渡す。
     仕様上、検索条件がひとつも無いと 19007 エラーになる。
+
+    start_record は中断からの再開に使う。取得済みの件数 + 1 を渡すと続きから流れる。
     """
     if not any(v for v in search_params.values()):
         raise ValueError("検索条件を最低ひとつ指定すること（API仕様 19007）")
 
     per_page = MAX_RECORDS["speech"]
-    start_record = 1
     yielded = 0
     total: int | None = None
+    # start_record はループ内で next_position に更新されるので、
+    # 再開位置は最初に控えておく（進捗表示に使う）
+    offset = start_record - 1
 
     while True:
         if limit is not None:
@@ -120,7 +125,8 @@ def iter_speeches(
             yield record
             yielded += 1
 
-        logger.info("取得済み %s / %s", f"{yielded:,}", f"{total:,}")
+        # 再開時も進捗が分かるよう、この回で取った件数ではなく通算の位置を出す
+        logger.info("取得済み %s / %s", f"{offset + yielded:,}", f"{total:,}")
 
         next_position = payload.get("nextRecordPosition")
         if not next_position or not records:
