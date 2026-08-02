@@ -77,13 +77,27 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 
 ### 1. R2 バケットを2つ作る
 
-| バケット | 用途 | 公開 |
-|---|---|---|
-| `kokkai-timeline` | 年DB（約2.1GB）と `manifest.json` | **公開**（カスタムドメイン） |
-| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ・語彙 | 非公開 |
+| バケット | 用途 | Location | Storage class | 公開 |
+|---|---|---|---|---|
+| `kokkai-timeline` | 年DB（約2.1GB）と `manifest.json` | **APAC** | Standard | **公開**（カスタムドメイン） |
+| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ・語彙 | **ENAM** | Standard | 非公開 |
 
 分けるのは、公開バケットにカスタムドメインを付けると**バケット全体が見える**ため。
 1.2GBの生データを配る必要はない。合計 3.3GB で、無料枠10GBに収まる。
+
+**Location は作成時にしか指定できない。** 公開バケットの読み手は日本の有権者なので
+APAC。状態バケットを読むのは GitHub Actions のランナー（主に米国）だけで、毎回
+生データを丸ごと落とすので ENAM。未指定の「Automatic」は**作成リクエストの発信元**に
+近い場所が選ばれるため、日本から作ると両方 APAC になる。状態バケットは明示すること。
+
+**Storage class は両方 Standard。** Infrequent Access は
+①年DBが Range で常時読まれる（取り出し料金が乗る）
+②**最低保存期間30日**があり、当月の生データは毎日置き換えるので置換のたびに30日分を払う
+—— の2点で合わない。そもそも無料枠10GBに収まっているので、安くなる余地が無い。
+
+**Object Lifecycle Rules の `Default Multipart Abort` は有効のままにする。**
+約400MBのDBを `aws s3 cp` で上げる＝マルチパートなので、ジョブが途中で死ぬと
+中途半端なパートが容量を食う。それを自動で掃除してくれる。
 
 ### 2. 公開バケットにカスタムドメインを付ける
 
@@ -95,8 +109,15 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 | **`db.kokkai-timeline.com`** | R2（公開バケット） |
 | `kokkai-timeline.com` | Cloudflare Pages（サイト） |
 
-R2 → バケット → Settings → Public access → **Connect Domain** →
-`db.kokkai-timeline.com`。DNSレコードは Cloudflare が自動で足す。
+R2 object storage → `kokkai-timeline` → **Settings** → **Custom Domains** → **Add** →
+`db.kokkai-timeline.com` → Continue → **Connect Domain**。
+同じアカウントのゾーンなので DNS レコードは自動で足される。
+
+**`Public Development URL`（＝`r2.dev`）は Enable しない。** 画面には
+「Public access: Disabled」と出るが、それはこちらの状態で、**そのままで正しい**。
+Cloudflare も「2つは独立していて、カスタムドメインを使うのに `r2.dev` を
+有効にする必要はない」と明記している。有効にすると、レート制限がありキャッシュも
+効かない経路が 2.09GB のDBにもう1本生えるだけで、得るものが無い。
 
 **カスタムドメインにするのは CDN キャッシュを効かせるため。** Cloudflare は
 `r2.dev` を「レート制限があり開発用途に限る」とし、キャッシュを含む機能は
