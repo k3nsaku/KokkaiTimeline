@@ -38,8 +38,7 @@ export interface Operator {
 
 export const OPERATOR: Operator = {
   name: "国会タイムライン 運営",
-  // ★ 公開前に必ず埋める。この1行が §3.5 の最後の関門
-  email: null,
+  email: "kokkai.timeline@gmail.com",
   formUrl: null,
   analytics: false,
 };
