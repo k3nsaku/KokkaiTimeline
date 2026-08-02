@@ -1,0 +1,274 @@
+/**
+ * 検索SQLと件数SQLが同じものを数えているかの回帰テスト。
+ *
+ * `countQuery()` は結果取得とは**別のSQL**なので、絞り込みを片方だけに足すと
+ * 一覧の中身と画面上部の件数が黙って食い違う。実際に会議名の絞り込みが件数に
+ * 効いておらず、2,594件と557件が入れ替わっていた
+ * （docs/ROADMAP.md §4-8 の指摘3）。**FTS・争点語・2文字語の3経路すべてにある。**
+ *
+ * 年DBと同じ形の小さなDBを `node:sqlite` でメモリに作り、
+ * 「searchQuery が返した行数」と「countQuery が返した数」を突き合わせる。
+ */
+
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+
+import {
+  countQuery, searchQuery, toMatchExpr,
+  type QueryPlan, type SearchOptions,
+} from "../src/lib/query.ts";
+
+// --- 年DBを模したデータ ---------------------------------------------------
+
+const MEETINGS = [
+  { issue_id: "A", name: "内閣委員会", house: "衆議院" },
+  { issue_id: "B", name: "予算委員会", house: "参議院" },
+];
+
+/** 争点語「安全保障」と2文字語「憲法」が、会議・議員・発言者種別に
+ *  ばらけて出てくるようにしてある（どれか1つの条件だけで数が動くと困る）。 */
+const SPEECHES = [
+  { issue: "A", pol: 1,    kind: "議員",       body: "安全保障の在り方について憲法の観点から伺う。" },
+  { issue: "A", pol: 1,    kind: "議員",       body: "経済安全保障推進法の運用について。" },
+  { issue: "A", pol: 2,    kind: "議員",       body: "憲法改正の議論を進めるべきだ。" },
+  { issue: "A", pol: 2,    kind: "議員",       body: "安全保障環境の変化を踏まえた対応が要る。" },
+  { issue: "A", pol: null, kind: "参考人",     body: "安全保障については専門家として憲法にも触れたい。" },
+  { issue: "B", pol: 1,    kind: "議員",       body: "予算における安全保障関連経費の内訳を問う。" },
+  { issue: "B", pol: 1,    kind: "議員",       body: "地方財政の話をする。" },
+  // 議員1は両方の会議で「憲法」に触れる。片方だけの絞り込みでも数が動くようにするため
+  // （両方が同じ会議に寄っていると「会議名 + 議員」の組が素通りしてしまう）
+  { issue: "B", pol: 1,    kind: "議員",       body: "憲法の議論は予算委員会でも避けられない。" },
+  { issue: "B", pol: 1,    kind: "議員",       body: "予算委員会でも憲法と安全保障の関係に触れておく。" },
+  { issue: "B", pol: 2,    kind: "議員",       body: "憲法審査会の運営について申し上げる。" },
+  { issue: "B", pol: 2,    kind: "議員",       body: "安全保障と憲法の関係を整理したい。" },
+  { issue: "B", pol: 3,    kind: "議員",       body: "安全保障の議論は丁寧にやるべきだ。" },
+  { issue: "B", pol: null, kind: "政府参考人等", body: "安全保障の運用実態をご説明する。" },
+];
+
+const TOPIC_ID = 1;
+const TOPIC_TERM = "安全保障";
+const WORD_TERM = "憲法";
+
+function fixture(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE meeting (
+      issue_id TEXT PRIMARY KEY, session INTEGER NOT NULL, house TEXT NOT NULL,
+      name TEXT NOT NULL, issue TEXT, date TEXT NOT NULL,
+      meeting_url TEXT, pdf_url TEXT);
+    CREATE TABLE speech (
+      speech_id TEXT PRIMARY KEY, issue_id TEXT NOT NULL, speech_order INTEGER NOT NULL,
+      date TEXT NOT NULL, speaker TEXT NOT NULL, speaker_yomi TEXT, speaker_group TEXT,
+      speaker_position TEXT, speaker_role TEXT, body TEXT NOT NULL, start_page INTEGER,
+      speech_url TEXT NOT NULL, is_speech INTEGER NOT NULL, speaker_kind TEXT NOT NULL,
+      politician_id INTEGER);
+    CREATE TABLE topic (
+      id INTEGER PRIMARY KEY, term TEXT NOT NULL UNIQUE, category TEXT, variants TEXT,
+      n_speeches INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE topic_hit (
+      topic_id INTEGER NOT NULL, speech_rowid INTEGER NOT NULL, n INTEGER NOT NULL,
+      PRIMARY KEY (topic_id, speech_rowid)) WITHOUT ROWID;
+    CREATE TABLE word (
+      id INTEGER PRIMARY KEY, term TEXT NOT NULL UNIQUE,
+      n_speeches INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE word_hit (
+      word_id INTEGER NOT NULL, speech_rowid INTEGER NOT NULL,
+      PRIMARY KEY (word_id, speech_rowid)) WITHOUT ROWID;
+    CREATE VIRTUAL TABLE speech_fts USING fts5(
+      body, content='speech', content_rowid='rowid', tokenize='trigram');
+  `);
+
+  const meeting = db.prepare(
+    "INSERT INTO meeting VALUES (?, 217, ?, ?, '1号', '2026-01-01', NULL, NULL)");
+  for (const m of MEETINGS) meeting.run(m.issue_id, m.house, m.name);
+
+  const speech = db.prepare(`
+    INSERT INTO speech (rowid, speech_id, issue_id, speech_order, date, speaker, body,
+                        speech_url, is_speech, speaker_kind, politician_id)
+    VALUES (?, ?, ?, ?, '2026-01-01', '誰か', ?, 'http://example.invalid', 1, ?, ?)`);
+  SPEECHES.forEach((s, i) => {
+    speech.run(i + 1, `S${i + 1}`, s.issue, i + 1, s.body, s.kind, s.pol);
+  });
+
+  // ★ 索引は「議員」だけに張る（build_db.py と同じ）。rebuild は使わない
+  db.exec(`INSERT INTO speech_fts(rowid, body)
+           SELECT rowid, body FROM speech WHERE speaker_kind = '議員'`);
+
+  const indexed = SPEECHES
+    .map((s, i) => ({ ...s, rowid: i + 1 }))
+    .filter((s) => s.kind === "議員");
+
+  const topicRows = indexed.filter((s) => s.body.includes(TOPIC_TERM));
+  db.prepare("INSERT INTO topic VALUES (?, ?, NULL, '[]', ?)")
+    .run(TOPIC_ID, TOPIC_TERM, topicRows.length);
+  const hit = db.prepare("INSERT INTO topic_hit VALUES (?, ?, 1)");
+  for (const s of topicRows) hit.run(TOPIC_ID, s.rowid);
+
+  const wordRows = indexed.filter((s) => s.body.includes(WORD_TERM));
+  db.prepare("INSERT INTO word VALUES (1, ?, ?)").run(WORD_TERM, wordRows.length);
+  const whit = db.prepare("INSERT INTO word_hit VALUES (1, ?)");
+  for (const s of wordRows) whit.run(s.rowid);
+
+  return db;
+}
+
+// --- 突き合わせ -----------------------------------------------------------
+
+/** 検索SQLが返す行数。カーソル無し・LIMIT は全件が入る大きさにする。 */
+function fetched(db: DatabaseSync, opts: SearchOptions, plan?: QueryPlan): number {
+  const [sql, params] = searchQuery({ ...opts, limit: 1000 }, plan, undefined);
+  return db.prepare(sql).all(...(params as never[])).length;
+}
+
+function counted(db: DatabaseSync, opts: SearchOptions, plan?: QueryPlan): number {
+  const [sql, params] = countQuery(opts, plan);
+  const row = db.prepare(sql).get(...(params as never[])) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+/** 検索の3経路。UI からは `resolveQuery()` がこのどれかを選ぶ。 */
+const MODES: { name: string; opts: SearchOptions; plan?: QueryPlan }[] = [
+  {
+    name: "FTS（3文字以上）",
+    opts: { query: TOPIC_TERM },
+    plan: { mode: "fts", match: toMatchExpr(TOPIC_TERM) },
+  },
+  {
+    name: "争点語（topic_hit）",
+    opts: { topicId: TOPIC_ID },
+  },
+  {
+    name: "2文字語（word_hit）",
+    opts: { query: WORD_TERM },
+    plan: { mode: "word", driver: WORD_TERM, filters: [] },
+  },
+  {
+    name: "2文字語 + 絞り込みの語",
+    opts: { query: `${WORD_TERM} 安全保障` },
+    plan: { mode: "word", driver: WORD_TERM, filters: ["安全保障"] },
+  },
+];
+
+/** 絞り込みの組み合わせ。**どれも件数SQLに効いていなければならない。** */
+const FILTERS: { name: string; extra: SearchOptions }[] = [
+  { name: "絞り込み無し", extra: {} },
+  { name: "会議名", extra: { meetingName: "内閣委員会" } },
+  { name: "議員", extra: { politicianId: 1 } },
+  { name: "会議名 + 議員", extra: { meetingName: "内閣委員会", politicianId: 1 } },
+  { name: "一致が0件になる会議名", extra: { meetingName: "存在しない委員会" } },
+];
+
+describe("searchQuery と countQuery が同じものを数える", () => {
+  for (const mode of MODES) {
+    for (const f of FILTERS) {
+      it(`${mode.name} × ${f.name}`, () => {
+        const db = fixture();
+        try {
+          const opts = { ...mode.opts, ...f.extra };
+          const rows = fetched(db, opts, mode.plan);
+          assert.equal(counted(db, opts, mode.plan), rows);
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+});
+
+describe("絞り込みが実際に効いている", () => {
+  it("会議名で絞ると件数が減る（減らなければ絞れていない）", () => {
+    const db = fixture();
+    try {
+      for (const mode of MODES) {
+        const all = counted(db, mode.opts, mode.plan);
+        const filtered = counted(db, { ...mode.opts, meetingName: "内閣委員会" }, mode.plan);
+        assert.ok(all > 0, `${mode.name}: 素の件数が0では検証にならない`);
+        assert.ok(filtered < all,
+                  `${mode.name}: 会議名で絞っても件数が ${all} のまま`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("結果の行がすべて指定した会議のもの", () => {
+    const db = fixture();
+    try {
+      for (const mode of MODES) {
+        const [sql, params] = searchQuery(
+          { ...mode.opts, meetingName: "内閣委員会", limit: 1000 }, mode.plan, undefined);
+        const rows = db.prepare(sql).all(...(params as never[])) as { meeting: string }[];
+        assert.ok(rows.length > 0, `${mode.name}: 0件では検証にならない`);
+        assert.ok(rows.every((r) => r.meeting === "内閣委員会"), mode.name);
+      }
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("検索の前提", () => {
+  it("索引に入るのは議員の発言だけ（参考人は検索に出ない）", () => {
+    const db = fixture();
+    try {
+      const [sql, params] = searchQuery(
+        { query: TOPIC_TERM, limit: 1000 },
+        { mode: "fts", match: toMatchExpr(TOPIC_TERM) }, undefined);
+      const rows = db.prepare(sql).all(...(params as never[])) as { speech_id: string }[];
+      // 参考人・政府参考人等にも「安全保障」を含む発言があるが、索引には入らない。
+      // （speech_id はデータから引く。行を足したときに番号がずれても壊れないように）
+      const outside = SPEECHES
+        .map((s, i) => ({ ...s, id: `S${i + 1}` }))
+        .filter((s) => s.kind !== "議員" && s.body.includes(TOPIC_TERM));
+      assert.ok(outside.length > 0, "索引外の発言が無ければ検証にならない");
+      for (const s of outside) {
+        assert.equal(rows.some((r) => r.speech_id === s.id), false, `${s.id}（${s.kind}）`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("2文字語は FTS では引けない（word_hit が要る理由）", () => {
+    const db = fixture();
+    try {
+      const n = db.prepare("SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?")
+        .get(toMatchExpr(WORD_TERM)) as { n: number };
+      assert.equal(n.n, 0, "trigram が2文字を引けてしまうなら word_hit の前提が変わる");
+
+      // word_hit なら引ける
+      const plan: QueryPlan = { mode: "word", driver: WORD_TERM, filters: [] };
+      assert.ok(counted(db, { query: WORD_TERM }, plan) > 0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("新しい順は rowid の降順で返る", () => {
+    const db = fixture();
+    try {
+      const [sql, params] = searchQuery({ topicId: TOPIC_ID, limit: 1000 }, undefined, undefined);
+      const rows = db.prepare(sql).all(...(params as never[])) as { rowid: number }[];
+      const ids = rows.map((r) => r.rowid);
+      assert.deepEqual(ids, [...ids].sort((a, b) => b - a));
+    } finally {
+      db.close();
+    }
+  });
+
+  it("カーソルより後（古い側）だけを返す", () => {
+    const db = fixture();
+    try {
+      const page1 = searchQuery({ topicId: TOPIC_ID, limit: 2 }, undefined, undefined);
+      const rows1 = db.prepare(page1[0]).all(...(page1[1] as never[])) as { rowid: number }[];
+      const cursor = rows1[rows1.length - 1].rowid;
+
+      const page2 = searchQuery({ topicId: TOPIC_ID, limit: 2 }, undefined, cursor);
+      const rows2 = db.prepare(page2[0]).all(...(page2[1] as never[])) as { rowid: number }[];
+      assert.ok(rows2.every((r) => r.rowid < cursor));
+    } finally {
+      db.close();
+    }
+  });
+});

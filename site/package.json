@@ -12,7 +12,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "dbserve": "node scripts/dev-data-server.js",
-    "check": "astro check"
+    "test": "node --test \"test/*.test.ts\"",
+    "check": "astro check && node --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",
