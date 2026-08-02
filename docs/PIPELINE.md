@@ -252,19 +252,39 @@ Settings → Secrets and variables → Actions。
 ## 初回の流し込み
 
 ワークフローは「R2 に前回の状態がある」前提で書いてあるが、
-無ければ落とさずに進む（`|| true`）。ただし**生データの初回投入だけは手元からやる**
-ほうが速い。1.2GB を取り直すと5時間かかる。
+無ければ落とさずに進む（`|| true`）。ただし**初回だけは手元から入れる**。
 
-```bash
-aws s3 sync data/raw/speeches s3://kokkai-timeline-state/raw/speeches \
-  --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-aws s3 cp data/politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url ...
-aws s3 cp data/words.json       s3://kokkai-timeline-state/words.json       --endpoint-url ...
+- 生データ1.2GB を取り直すと**5時間**かかる（NDLへ3秒間隔）
+- **過去年のDBはここでしか上がらない。** 日次ジョブが作り直すのは当年だけなので、
+  2021〜2025 を手で上げておかないと永久に欠ける
 
-for f in data/dist/kokkai-*.db data/dist/manifest.json; do
-  aws s3 cp "$f" "s3://kokkai-timeline/$(basename "$f")" --endpoint-url ...
-done
+PowerShell（Windows）で:
+
+```powershell
+$env:AWS_ACCESS_KEY_ID = '＜Access Key ID＞'
+$env:AWS_SECRET_ACCESS_KEY = '＜Secret Access Key＞'
+$env:AWS_DEFAULT_REGION = 'auto'
+# aws-cli v2 のチェックサム既定値で R2 が落ちることがある。先回りして外す
+$env:AWS_REQUEST_CHECKSUM_CALCULATION = 'when_required'
+$env:AWS_RESPONSE_CHECKSUM_VALIDATION = 'when_required'
+$R2 = 'https://＜アカウントID＞.r2.cloudflarestorage.com'
+
+aws s3 sync data\raw\speeches s3://kokkai-timeline-state/raw/speeches --endpoint-url $R2
+aws s3 cp data\politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url $R2
+aws s3 cp data\words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
+
+# cache-control は日次ジョブと同じにする（DBはURLに世代が入るので immutable）
+Get-ChildItem data\dist\kokkai-*.db | ForEach-Object {
+  aws s3 cp $_.FullName "s3://kokkai-timeline/$($_.Name)" --endpoint-url $R2 `
+    --cache-control "public, max-age=31536000, immutable"
+}
+aws s3 cp data\dist\manifest.json s3://kokkai-timeline/manifest.json --endpoint-url $R2 `
+  --cache-control "public, max-age=300"
 ```
+
+**確認**: ブラウザで `https://db.kokkai-timeline.com/manifest.json` を開く。
+JSONが見えればカスタムドメインと公開設定が通っている。
+403/404 ならその先へ進んでも無駄なので、ここで直す。
 
 そのあと Actions から `workflow_dispatch` で1回手動実行して、通ることを確かめる。
 
