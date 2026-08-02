@@ -174,8 +174,25 @@ R2 → バケット → Settings → CORS policy:
 
 ### 4. R2 の S3 API キーを作る
 
-R2 → Manage R2 API Tokens → Create API token。権限は **Object Read & Write**、
-対象は上の2バケット。出てくる Access Key ID / Secret Access Key を控える。
+R2 → Manage R2 API Tokens → Create API token。
+
+| 項目 | 値 |
+|---|---|
+| Token name | `github-actions-daily-update` |
+| Token type | **Account API Token** |
+| Permission | **Object Read & Write** |
+| バケット | `kokkai-timeline` と `kokkai-timeline-state` の**両方** |
+| TTL | 無期限 |
+
+- **User API Token にしない。** 個人ユーザに紐づくので、そのユーザがアカウントから
+  外れると無効になる。Account token は手で失効させるまで有効
+- **Admin Read & Write にしない。** バケットの作成・削除までできてしまう。
+  パイプラインがやるのはオブジェクトの読み書きだけ
+- **TTL を切らない。** 切るとその日に黙ってパイプラインが止まる
+- **Secret Access Key は一度しか表示されない**
+
+トークン名は「失効させたら何が壊れるか」が分かるものにする。
+Pages 用（手順6）は `github-actions-pages-deploy` にして対にしておく。
 
 ### 5. Cloudflare Pages のプロジェクトを作る
 
@@ -193,7 +210,12 @@ Workers & Pages → Create → Pages → **Direct Upload**（Git連携ではな�
 
 ### 6. Pages 用の API トークンを作る
 
-My Profile → API Tokens → Create Token。権限は **Account → Cloudflare Pages → Edit**。
+**R2 のトークンとは置き場所が違う。** My Profile → API Tokens → Create Token。
+
+| 項目 | 値 |
+|---|---|
+| Token name | `github-actions-pages-deploy` |
+| Permission | **Account → Cloudflare Pages → Edit** |
 
 ---
 
