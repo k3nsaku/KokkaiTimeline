@@ -1,4 +1,4 @@
-# 日次更新。当月の会議録を取り直し、当年のDBを作り直して R2 とサイトへ配る。
+# 日次更新。前月と当月の会議録を取り直し、その年のDBを作り直して R2 とサイトへ配る。
 #
 # 設計の前提は3つ:
 #   - **常時稼働プロセスを持たない。** ここが唯一の定期実行で、落ちても数日放置できる
@@ -44,7 +44,7 @@ env:
 jobs:
   update:
     runs-on: ubuntu-latest
-    # 取得は NDL への3秒間隔が効くので、会期中の当月は30分近くかかることがある
+    # 取得は NDL への3秒間隔が効くので、会期中は1か月あたり30分近くかかることがある
     timeout-minutes: 180
     permissions:
       # 議員ID台帳（data/politician_ids.json）を書き戻すため。
@@ -65,9 +65,17 @@ jobs:
       - name: 日付を決める
         id: when
         run: |
-          echo "year=$(date -u -d '9 hours' +%Y)" >> "$GITHUB_OUTPUT"
-          echo "month_start=$(date -u -d '9 hours' +%Y-%m-01)" >> "$GITHUB_OUTPUT"
-          echo "today=$(date -u -d '9 hours' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          today=$(date -u -d '9 hours' +%Y-%m-%d)
+          # **前月1日から取り直す。** 当月だけだと、月末の会議録が翌月に公開された分と、
+          # 前月以前に入った訂正を二度と拾えない（該当月の NDJSON が完成済み扱いになる）
+          from=$(date -u -d "$(date -u -d '9 hours' +%Y-%m-01) -1 month" +%Y-%m-%d)
+          {
+            echo "today=$today"
+            echo "from=$from"
+            echo "year=${today:0:4}"
+            echo "from_year=${from:0:4}"
+          } >> "$GITHUB_OUTPUT"
 
       # --- 前回の状態を戻す ---------------------------------------------------
       #
@@ -78,6 +86,12 @@ jobs:
           set -euo pipefail
           mkdir -p data/raw/speeches data/dist
           aws s3 sync "s3://$STATE_BUCKET/raw/speeches" data/raw/speeches $R2 --no-progress
+          # ★ 名寄せの材料。**無いと build_politicians.py がその場で終了する**
+          #   （data/raw/ は .gitignore なので、リポジトリからは絶対に来ない）
+          aws s3 cp "s3://$STATE_BUCKET/raw/wikidata_members.json" \
+            data/raw/wikidata_members.json $R2 || true
+          aws s3 cp "s3://$STATE_BUCKET/raw/wikidata_terms.json" \
+            data/raw/wikidata_terms.json $R2 || true
           # 初回はまだ無い。無ければ作り直すので落とさない
           aws s3 cp "s3://$STATE_BUCKET/politicians.json" data/politicians.json $R2 || true
           aws s3 cp "s3://$STATE_BUCKET/words.json" data/words.json $R2 || true
@@ -88,10 +102,26 @@ jobs:
 
       # --- 取得と構築 ---------------------------------------------------------
 
-      - name: 当月の会議録を取り直す
+      - name: Wikidata の議員リスト（無いときと月初だけ取り直す）
+        # SPARQL エンドポイントは共用資源なので毎日は叩かない（5秒間隔・数分かかる）。
+        # ただし**無ければ必ず取る**。無いまま進むと議員マスタの更新で止まる。
+        # 手元にあるなら、取り直しに失敗しても前回ぶんで続ける（Wikidata の一時障害で
+        # 日次更新ごと落とさない）
+        run: |
+          if [ ! -f data/raw/wikidata_members.json ] || [ ! -f data/raw/wikidata_terms.json ]; then
+            echo "議員リストが無いので取得する"
+            python scripts/fetch_wikidata.py
+          elif [ "$(date -u -d '9 hours' +%d)" = "01" ]; then
+            python scripts/fetch_wikidata.py \
+              || echo "★ 月初の取り直しに失敗。前回の議員リストで続ける"
+          else
+            echo "前回の議員リストを使う"
+          fi
+
+      - name: 前月と当月の会議録を取り直す
         run: |
           python scripts/fetch_range.py \
-            --from "${{ steps.when.outputs.month_start }}" \
+            --from "${{ steps.when.outputs.from }}" \
             --until "${{ steps.when.outputs.today }}" \
             --force
 
@@ -108,10 +138,17 @@ jobs:
 
       - name: 配信用の年DBを作り直す
         run: |
+          set -euo pipefail
           if [ "${{ inputs.all_years }}" = "true" ]; then
             python scripts/build_db.py --split-by-year --page-size 8192
           else
-            python scripts/build_db.py --year "${{ steps.when.outputs.year }}" --page-size 8192
+            # 1月は前年12月ぶんを取り直しているので、前年のDBも作り直す。
+            # --year は複数指定できる。目録は出力先を走査するので他の年は消えない
+            years="--year ${{ steps.when.outputs.year }}"
+            if [ "${{ steps.when.outputs.from_year }}" != "${{ steps.when.outputs.year }}" ]; then
+              years="$years --year ${{ steps.when.outputs.from_year }}"
+            fi
+            python scripts/build_db.py $years --page-size 8192
           fi
 
       - name: 2文字語の語彙が年をまたいで揃っているか確かめる
@@ -150,6 +187,9 @@ jobs:
         run: |
           set -euo pipefail
           aws s3 sync data/raw/speeches "s3://$STATE_BUCKET/raw/speeches" $R2 --no-progress
+          # 名寄せの材料。次回はここから戻す（.gitignore なのでリポジトリには残らない）
+          aws s3 cp data/raw/wikidata_members.json "s3://$STATE_BUCKET/raw/wikidata_members.json" $R2
+          aws s3 cp data/raw/wikidata_terms.json "s3://$STATE_BUCKET/raw/wikidata_terms.json" $R2
           aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
           aws s3 cp data/words.json "s3://$STATE_BUCKET/words.json" $R2
 
