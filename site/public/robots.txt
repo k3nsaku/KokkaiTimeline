@@ -1,0 +1,7 @@
+# 検索結果ページと発言ページは中身がクライアント側にしか無いので索引させない。
+# ただし **Disallow では止めない** — クロールを止めると noindex を読んでもらえない。
+# 各ページの <meta name="robots" content="noindex"> に任せる。
+User-agent: *
+Allow: /
+
+Sitemap: https://kokkai-timeline.com/sitemap-index.xml

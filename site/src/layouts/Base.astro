@@ -14,6 +14,11 @@ export interface Props {
 
 const { title, description, noindex = false } = Astro.props;
 const fullTitle = title === "国会タイムライン" ? title : `${title} | 国会タイムライン`;
+
+// 正規URL。`build.format: "file"` で `/politician/9.html` が出るが、配信されるURLは
+// 拡張子なしなので、正規URLからは `.html` を落とす。クエリ文字列も持たせない
+// （検索条件は共有できるが、索引としては同じページ）
+const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site);
 ---
 
 <html lang="ja">
@@ -23,9 +28,13 @@ const fullTitle = title === "国会タイムライン" ? title : `${title} | 国
     <title>{fullTitle}</title>
     {description && <meta name="description" content={description} />}
     {noindex && <meta name="robots" content="noindex" />}
+    <link rel="canonical" href={canonical.href} />
     <meta property="og:title" content={fullTitle} />
     {description && <meta property="og:description" content={description} />}
     <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical.href} />
+    <meta property="og:site_name" content="国会タイムライン" />
+    <meta property="og:locale" content="ja_JP" />
     <meta name="twitter:card" content="summary" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>

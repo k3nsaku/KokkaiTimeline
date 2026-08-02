@@ -1,5 +1,6 @@
 // @ts-check
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 import { devDataServer } from "./scripts/dev-data-server.js";
 
 /**
@@ -16,8 +17,18 @@ import { devDataServer } from "./scripts/dev-data-server.js";
  */
 export default defineConfig({
   output: "static",
+  // 正規URL・OGP・サイトマップの絶対URLに使う。www は付けない（apex に寄せる）
+  site: "https://kokkai-timeline.com",
   trailingSlash: "ignore",
-  integrations: [devDataServer()],
+  integrations: [
+    devDataServer(),
+    // 事前生成した議員1,111ページ・争点語79ページを見つけてもらうため。
+    // 検索結果と発言ページは中身がクライアント側にしか無いので載せない
+    // （noindex を付けてあるページと一致させる）
+    sitemap({
+      filter: (page) => !/\/(search|speech)(\.html)?$/.test(page),
+    }),
+  ],
   build: {
     // 発言ページは 650,785 件あって事前生成できない（§3.3 参照）。
     // ディレクトリ形式にすると `/speech/xxx/index.html` が要るため、ファイル形式にする

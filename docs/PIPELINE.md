@@ -87,29 +87,21 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 
 ### 2. 公開バケットにカスタムドメインを付ける
 
-**ドメインが1個要る。** 条件は「**同じ Cloudflare アカウントにゾーンとして
-登録されていること**」（Cloudflare の要件）。Registrar で取れば取った時点でゾーンになる。
-他所で取ったものはネームサーバを向けるか、partial (CNAME) setup で登録する。
+ドメインは **`kokkai-timeline.com`**（Cloudflare Registrar で取得済み。
+同じアカウントのゾーンなので、そのまま使える）。
 
-R2 → バケット → Settings → Public access → Custom domain。
-例: `db.<ドメイン>`。ここが `PUBLIC_DB_BASE` になる。
+| ホスト | 向き先 |
+|---|---|
+| **`db.kokkai-timeline.com`** | R2（公開バケット） |
+| `kokkai-timeline.com` | Cloudflare Pages（サイト） |
+
+R2 → バケット → Settings → Public access → **Connect Domain** →
+`db.kokkai-timeline.com`。DNSレコードは Cloudflare が自動で足す。
 
 **カスタムドメインにするのは CDN キャッシュを効かせるため。** Cloudflare は
 `r2.dev` を「レート制限があり開発用途に限る」とし、キャッシュを含む機能は
 カスタムドメイン経由でしか使えないと明記している。1検索で約80リクエスト飛ぶので、
 `r2.dev` のままでは実用にならない。
-
-**要るのは1個だけ。** サイト側（Pages）は `<プロジェクト名>.pages.dev` が無料で付くので、
-ドメインを当てるかどうかは任意。当てるならサブドメインを分ければ1個で足りる:
-
-| ホスト | 向き先 | 必須か |
-|---|---|---|
-| `db.<ドメイン>` | R2（公開バケット） | **必須** |
-| `<ドメイン>` / `www.<ドメイン>` | Pages | 任意（`pages.dev` でもよい） |
-
-> パイプラインが通るかの確認だけなら `r2.dev` でもできる。`PUBLIC_DB_BASE` は
-> GitHub の Variable なので、あとで差し替えて再ビルドすれば切り替わる。
-> **ただしそのまま公開しない。**
 
 ### 3. 公開バケットに CORS を設定する
 
@@ -119,7 +111,10 @@ R2 → バケット → Settings → CORS policy:
 ```json
 [
   {
-    "AllowedOrigins": ["https://<サイトのドメイン>"],
+    "AllowedOrigins": [
+      "https://kokkai-timeline.com",
+      "https://kokkai-timeline.pages.dev"
+    ],
     "AllowedMethods": ["GET", "HEAD"],
     "AllowedHeaders": ["range"],
     "ExposeHeaders": ["content-range", "content-length", "etag"],
@@ -131,6 +126,10 @@ R2 → バケット → Settings → CORS policy:
 `ExposeHeaders` に `content-range` が要る。sql.js-httpvfs は Range で読むので、
 これが見えないとファイルの大きさを判断できない。
 
+`pages.dev` も入れてあるのは、カスタムドメインを当てる前に疎通を確かめられるようにするため。
+**プレビュー配置（`<ハッシュ>.kokkai-timeline.pages.dev`）は別オリジンになるので通らない。**
+確認は本番配置か、カスタムドメインでやること。
+
 ### 4. R2 の S3 API キーを作る
 
 R2 → Manage R2 API Tokens → Create API token。権限は **Object Read & Write**、
@@ -139,11 +138,16 @@ R2 → Manage R2 API Tokens → Create API token。権限は **Object Read & Wri
 ### 5. Cloudflare Pages のプロジェクトを作る
 
 Workers & Pages → Create → Pages → **Direct Upload**（Git連携ではない）。
-名前は任意。ここが `PAGES_PROJECT`。
+名前は `kokkai-timeline`。ここが `PAGES_PROJECT`。
 
 > Git連携にしないのは、サイトのビルドに `data/politicians.json` などの
 > 生成物が要るため。それらはリポジトリに入れていないので、Cloudflare 側では
 > ビルドできない。GitHub Actions でビルドして成果物だけ送る。
+
+初回のデプロイが済んだら、Pages → Custom domains → `kokkai-timeline.com` を当てる。
+`www` は使わない（サイト側の正規URLを apex に揃えてある。
+`astro.config.mjs` の `site` と `<link rel="canonical">`）。
+`www` からのアクセスを拾いたければ、Redirect Rule で apex に 301 する。
 
 ### 6. Pages 用の API トークンを作る
 
@@ -166,11 +170,11 @@ Settings → Secrets and variables → Actions。
 
 ### Variables
 
-| 名前 | 例 |
+| 名前 | 値 |
 |---|---|
 | `R2_PUBLIC_BUCKET` | `kokkai-timeline` |
 | `R2_STATE_BUCKET` | `kokkai-timeline-state` |
-| `PUBLIC_DB_BASE` | `https://db.<ドメイン>` |
+| `PUBLIC_DB_BASE` | `https://db.kokkai-timeline.com` |
 | `PAGES_PROJECT` | `kokkai-timeline` |
 
 ### リポジトリを public にするか

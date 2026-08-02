@@ -15,6 +15,7 @@
     "check": "astro check"
   },
   "dependencies": {
+    "@astrojs/sitemap": "^3.7.3",
     "astro": "^5.14.1",
     "sql.js-httpvfs": "^0.8.12"
   },

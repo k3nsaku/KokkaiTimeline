@@ -172,6 +172,8 @@ Cloudflare アカウントが要るため未実施。ただし待ち時間は
 - [x] 失敗時の通知 — GitHub が定期実行の失敗をメールする。追加の通知は入れない
 - [x] **DBの差し替えでページが壊れないようにする**（§4-7）
 - [x] **語彙の食い違いを検出して落とす**（§4-1）
+- [x] ドメイン取得（`kokkai-timeline.com` / Cloudflare Registrar・DNSSEC有効）
+- [x] サイトの実名対応（`site` 設定・正規URL・OGP・`sitemap-index.xml` 1,194件・`robots.txt`）
 - [ ] **Cloudflare のアカウント側の設定**（`docs/PIPELINE.md`「Cloudflare 側でやること」）
       R2バケット2つ・カスタムドメイン・CORS・APIキー・Pagesプロジェクト
 - [ ] GitHub の Secrets / Variables 登録
@@ -305,7 +307,7 @@ Wikidata の項目作成が追いついていないだけ。**恒久的な欠落
 |---|---|
 | 静的サイトジェネレータの選定 | ✅ **Astro**（2026-08-02）。理由は §6 |
 | 争点語リストの初版 | ✅ 79件。ただし**編集方針としてのレビューは未了**（§3.2） |
-| ドメイン名 | 未定。**1個は必ず要る**（R2のカスタムドメイン用。`r2.dev` はレート制限があり本番に使えない）。サイト側は `pages.dev` でよいので、サブドメインを分ければ1個で足りる |
+| ドメイン名 | ✅ **`kokkai-timeline.com`**（2026-08-02・Cloudflare Registrar / DNSSEC有効）。サイトは apex、DBは `db.kokkai-timeline.com` |
 | GitHubリポジトリを public にするか | 未定。**Actions を実質無制限で使うには public が前提** |
 | アクセス解析を入れるか | 未定。入れるならプライバシーポリシーが重くなる |
 
