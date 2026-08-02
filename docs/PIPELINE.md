@@ -71,6 +71,22 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 
 ---
 
+## 設定の進み具合（2026-08-02 時点）
+
+| # | 作業 | 状態 |
+|---|---|---|
+| — | ドメイン `kokkai-timeline.com`（Registrar / DNSSEC有効） | ✅ |
+| 1 | R2 バケット2つ（`kokkai-timeline` APAC / `kokkai-timeline-state`） | ✅ |
+| 2 | カスタムドメイン `db.kokkai-timeline.com` | ✅ 疎通確認済み |
+| 3 | CORS ポリシー | ✅ curl で確認済み |
+| 3.5 | **Cache Rule `r2-db-cache`** | ✅ RTT 77ms→8ms を確認 |
+| 4 | R2 APIキー `github-actions-daily-update` | ✅ |
+| — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
+| 5 | **Cloudflare Pages プロジェクト** | ❌ **ここから** |
+| 6 | **Pages 用トークン `github-actions-pages-deploy`** | ❌ |
+| — | **GitHub の Secrets / Variables** | ❌ |
+| — | **`workflow_dispatch` で手動実行** | ❌ |
+
 ## Cloudflare 側でやること
 
 **ここはダッシュボードでの手作業。** 全部やり終えるまでワークフローは動かない。
@@ -328,7 +344,25 @@ aws s3 cp data\dist\manifest.json s3://kokkai-timeline/manifest.json --endpoint-
 JSONが見えればカスタムドメインと公開設定が通っている。
 403/404 ならその先へ進んでも無駄なので、ここで直す。
 
+**バイト数の突き合わせ**（切れた転送を見逃すと、壊れたDBが配られる）:
+
+```powershell
+aws s3 ls s3://kokkai-timeline/ --endpoint-url $R2
+```
+
+出てくるサイズが `data\dist\` の実物と一致すること。2026-08-02 の投入時は
+6個のDBと `manifest.json` すべてが一致し、目録に記録されたサイズとも整合していた。
+
 そのあと Actions から `workflow_dispatch` で1回手動実行して、通ることを確かめる。
+
+### 初回実行で特に見るところ
+
+- **`2文字語の語彙が年をまたいで揃っているか` の手順で落ちないか。**
+  落ちたら語彙がずれている（「語彙を作り直すとき」を読む）
+- **`議員ID台帳が増えていたらコミットする` が push できるか。**
+  ここが失敗したら放置しない。台帳を失うと公開後のURLが全部変わる
+- **目録の `years` が6年そろっているか。** CI は当年しかDBを置かないので、
+  前回の目録を引き継げていないと当年1年に痩せる
 
 ---
 

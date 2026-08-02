@@ -1,16 +1,48 @@
 # 開発計画と進捗
 
 - 最終更新: 2026-08-02
-- 現在地: **コードは §3.1〜§3.4 まで揃った。次は Cloudflare 側の設定（人の作業）と、
-  §3.5 の法務。ここが済めば公開できる**
+- 現在地: **コードは全部揃っていて、データも R2 に載って配信できる状態。
+  残っているのは Pages と GitHub の接続、そして §3.5 の法務。**
 
 | 節 | 状態 |
 |---|---|
-| 3.1 プロトタイプ | ✅ 完了（R2実機での確認だけ残） |
+| 3.1 プロトタイプ | ✅ 完了。**R2実機での実測も済んだ**（§2） |
 | 3.2 データ整備 | ✅ 完了（争点語リストのレビューは公開前に持ち越し） |
 | 3.3 サイト実装 | ✅ 主要機能が通しで動く（`site/`） |
-| **3.4 パイプライン** | **✅ ワークフローは書けた。Cloudflare の設定が残っている** → `docs/PIPELINE.md` |
-| 3.5 公開の前提（法務） | 未着手。**これが揃うまで公開しない** |
+| **3.4 パイプライン** | **⏳ あと3つ**（下の「次にやること」） |
+| 3.5 公開の前提（法務） | ❌ 未着手。**これが揃うまで公開しない** |
+
+### 次にやること（この順）
+
+1. **Cloudflare Pages のプロジェクトを作る** — Direct Upload・名前 `kokkai-timeline`。
+   作成後に `kokkai-timeline.com` を Custom domains で当てる
+2. **Pages 用の API トークン** `github-actions-pages-deploy` — My Profile → API Tokens。
+   **R2 のトークンとは置き場所が違う**
+3. **GitHub に Secrets 4つ / Variables 4つ**を登録して、`workflow_dispatch` で手動実行
+4. そのあと §3.5（法務）。**ここが公開の関門**
+
+手順の詳細と値は **`docs/PIPELINE.md`**。
+
+### 済んでいること（2026-08-02 時点）
+
+| | |
+|---|---|
+| ドメイン | `kokkai-timeline.com`（Cloudflare Registrar / DNSSEC有効） |
+| R2 バケット | `kokkai-timeline`（公開・APAC）と `kokkai-timeline-state`（非公開） |
+| カスタムドメイン | `db.kokkai-timeline.com` → 公開バケット。**疎通確認済み** |
+| CORS | 設定済み。`Access-Control-Allow-Origin` と `Expose-Headers: content-range` を確認 |
+| **Cache Rule** | `r2-db-cache`。**これが無いとキャッシュされない**（§2） |
+| R2 APIキー | `github-actions-daily-update`（Account / Object Read & Write / 両バケット） |
+| データ投入 | 年DB6個 2.09GB + 目録 → 公開バケット。生データ1.2GB + 議員マスタ + 語彙 → 状態バケット。**全ファイルのバイト数が手元と一致することを確認済み** |
+
+**未登録**: Pages プロジェクト、Pages用トークン、GitHub の Secrets / Variables。
+
+### 決めていないこと（次のセッションで判断が要る）
+
+- **リポジトリを public にするか。** Actions の無料枠は public なら実質無制限、
+  private は月2,000分。このジョブは1回20〜60分＝月600〜1,800分で、入るが余裕が無い
+- 争点語79件のレビュー（§3.2）。公開前に必要
+- アクセス解析を入れるか（入れるとプライバシーポリシーが重くなる）
 
 ---
 
@@ -182,10 +214,12 @@
 - [x] **語彙の食い違いを検出して落とす**（§4-1）
 - [x] ドメイン取得（`kokkai-timeline.com` / Cloudflare Registrar・DNSSEC有効）
 - [x] サイトの実名対応（`site` 設定・正規URL・OGP・`sitemap-index.xml` 1,194件・`robots.txt`）
-- [ ] **Cloudflare のアカウント側の設定**（`docs/PIPELINE.md`「Cloudflare 側でやること」）
-      R2バケット2つ・カスタムドメイン・CORS・APIキー・Pagesプロジェクト
-- [ ] GitHub の Secrets / Variables 登録
-- [ ] 生データ約1.2GB の初回投入（手元から。取り直すと5時間かかる）
+- [x] R2 バケット2つ・カスタムドメイン・CORS・**Cache Rule**・APIキー
+- [x] データの初回投入（年DB 2.09GB / 生データ 1.2GB。バイト数一致を確認済み）
+- [ ] **Cloudflare Pages のプロジェクト**（Direct Upload・`kokkai-timeline`）と
+      `kokkai-timeline.com` の割り当て
+- [ ] **Pages 用の API トークン** `github-actions-pages-deploy`
+- [ ] GitHub の Secrets 4つ / Variables 4つ を登録して `workflow_dispatch` で通す
 - [ ] **リポジトリを public にするか決める**。private だと Actions が月2,000分で、
       このジョブは1回20〜60分＝月600〜1,800分。入るが余裕が無い
 
