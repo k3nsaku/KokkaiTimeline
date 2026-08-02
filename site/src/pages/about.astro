@@ -6,7 +6,7 @@
  *   プライバシーポリシーは未記入のまま**にしてある。埋めないまま公開しないこと。
  */
 import Base from "../layouts/Base.astro";
-import { politicians, topicSeries, manifest, trending } from "../lib/site-data";
+import { politicians, topicSeries, manifest, trending, wordCount } from "../lib/site-data";
 import { formatNumber } from "../lib/format";
 
 const people = politicians();
@@ -14,6 +14,7 @@ const years = manifest().years;
 const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
 const through = trending().through;
 const nTopics = topicSeries().topics.length;
+const nWords = wordCount();
 ---
 
 <Base title="このサイトについて" description="データの出どころ、できること、できないこと。">
@@ -35,17 +36,20 @@ const nTopics = topicSeries().topics.length;
     <li>収録期間: 2021年1月〜{through.slice(0, 4)}年{Number(through.slice(5, 7))}月</li>
     <li>発言: {formatNumber(totalSpeeches)}件（名寄せできた議員のぶん）</li>
     <li>議員: {formatNumber(people.length)}人</li>
-    <li>争点語: {nTopics}件</li>
+    <li>争点語: {nTopics}件（頻度推移を出す語。運営が選んでいる）</li>
+    <li>2文字語の索引: {formatNumber(nWords)}語（検索のため。機械抽出）</li>
   </ul>
 
   <h2>できないこと・気をつけて読むところ</h2>
   <dl class="caveats">
-    <dt>2文字の検索語は引けない</dt>
+    <dt>2文字の語は「よく出てくるもの」しか引けない</dt>
     <dd>
-      全文検索の索引（trigram）が3文字未満のトークンを作れないため、
-      「増税」「憲法」「年金」「原発」は検索では0件になる。
-      これらは<a href="/topics">争点語</a>として事前に集計してあり、そこからなら引ける。
-      争点語に無い2文字語は引けない。
+      全文検索の索引（trigram）は3文字未満のトークンを作れない。
+      日本語の政治キーワードは2文字が多いので、
+      「増税」「憲法」「年金」「原発」がまるごと引けなくなってしまう。
+      そこで2文字の語だけ別の索引を持っている。会議録の全期間で
+      {formatNumber(nWords)}語ぶんあり、これに入っていない2文字語は引けない
+      （検索するとその旨が出る）。ひらがなだけの2文字語も入っていない。
     </dd>
 
     <dt>頻度は必ず分母で割ってある</dt>

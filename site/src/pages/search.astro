@@ -63,8 +63,8 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
   <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
 
   <script>
-    import { search, countHits, meetingNames, tooShortWords,
-             type SearchOptions, type SearchPage } from "../lib/db";
+    import { search, countHits, meetingNames, resolveQuery, splitTerms,
+             type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
     import { escapeHtml, formatNumber } from "../lib/format";
 
@@ -107,12 +107,15 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       return queryInput.value;
     }
 
-    let state: { opts: SearchOptions; term: string; topic: TopicLite | null;
-                 before: Record<number, number>; count: number } | null = null;
+    let state: { opts: SearchOptions; terms: string[]; topic: TopicLite | null;
+                 plan: QueryPlan | null; before: Record<number, number> } | null = null;
 
-    /** 争点語で引いた結果は snippet() のマーカーを持たないので、語を渡して強調する。 */
-    const renderOpts = () =>
-      ({ term: state?.topic ? state.term : "", groupByYear: true });
+    /** どの索引を使ったか。snippet() のマーカーが付くのは FTS のときだけなので、
+     *  それ以外では語を渡して強調する。 */
+    function renderOpts() {
+      const marked = !state?.topic && state?.plan?.mode === "fts";
+      return { terms: marked ? [] : state?.terms ?? [], groupByYear: true };
+    }
 
     async function run(pushUrl = true) {
       const query = queryInput.value.trim();
@@ -120,10 +123,6 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
       const topic = matchTopic(query);
       const chosen = selectedYears();
-      const opts: SearchOptions = {
-        query, topicId: topic?.id, years: chosen,
-        meetingName: meetingSelect.value || undefined, limit: 20,
-      };
 
       if (pushUrl) {
         const p = new URLSearchParams({ q: query, from: fromSelect.value, until: untilSelect.value });
@@ -133,33 +132,62 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
       results.innerHTML = "";
       moreWrap.hidden = true;
-      const short = tooShortWords(query);
-      statusEl.textContent = topic
-        ? `「${query}」は争点語として集計済み。検索中…`
-        : short.length
-          ? `検索中…（「${short.join("・")}」は2文字以下で全文検索では引けない）`
-          : "検索中…";
-
+      statusEl.textContent = "検索中…";
       const started = performance.now();
+
       try {
+        // 争点語なら topic_hit（別表記も合算される）。それ以外は語の長さで引き先が決まる。
+        // 解くのは1回だけで、ページ送りでは使い回す
+        const plan = topic ? null : await resolveQuery(query, chosen);
+        const opts: SearchOptions = {
+          query, topicId: topic?.id, plan: plan ?? undefined, years: chosen,
+          meetingName: meetingSelect.value || undefined, limit: 20,
+        };
+        state = { opts, terms: splitTerms(query), topic, plan, before: {} };
+
+        if (plan?.mode === "none") { showUnsupported(plan.unsupported); return; }
+
         const page = await search(opts);
-        state = { opts, term: query, topic, before: page.before, count: page.rows.length };
-        show(page, started, short);
+        state.before = page.before;
+        show(page, started);
       } catch (err) {
         statusEl.innerHTML = `<span class="error">検索に失敗した: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
     }
 
-    function show(page: SearchPage, started: number, short: string[]) {
+    /** 2文字以下の語が語彙にも争点語にも無い場合。**黙って0件にしない。** */
+    function showUnsupported(unsupported: string[]) {
+      statusEl.textContent = "0件";
+      const words = unsupported.map((w) => `「${escapeHtml(w)}」`).join("");
+      // 埋め込んである争点語から、その語を含むものを代わりに出す
+      const related = topics
+        .filter((t) => unsupported.some((w) => t.term.includes(w)))
+        .slice(0, 12);
+      const chips = related.length
+        ? `<p class="small">この語を含む争点語なら引ける:</p>
+           <ul class="chips">${related.map((t) =>
+             `<li><a class="chip" href="/topic/${t.id}">${escapeHtml(t.term)}</a></li>`).join("")}</ul>`
+        : `<p class="small">3文字以上のもう少し具体的な語で試すか、
+            <a href="/topics">争点語の一覧</a>から探す。</p>`;
+
+      results.innerHTML = `
+        <div class="notfound">
+          <p>${words}は検索できない。</p>
+          <p class="small muted">
+            2文字以下の語は、会議録に十分な回数出てくるものだけを索引にしている
+            （全文検索の索引は3文字未満を作れないため）。この語は届いていない。
+          </p>
+          ${chips}
+        </div>`;
+    }
+
+    function show(page: SearchPage, started: number) {
       const elapsed = Math.round(performance.now() - started);
       moreWrap.hidden = page.done;
 
       if (!page.rows.length) {
-        results.innerHTML = short.length
-          ? `<p class="status">「${escapeHtml(short.join("・"))}」は2文字以下で、全文検索の索引（trigram）を作れない。
-             <a href="/topics">争点語</a>に登録されている語なら引ける。</p>`
-          : `<p class="status">一致する発言が無かった。</p>`;
+        results.innerHTML = `<p class="status">一致する発言が無かった。</p>`;
         statusEl.textContent = `0件・${elapsed}ms`;
         return;
       }
@@ -171,9 +199,10 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       const opts = state!.opts;
       countHits(opts).then((n) => {
         if (state?.opts !== opts) return;   // その間に次の検索が始まっていたら捨てる
+        const how = state.topic ? "（争点語の集計から）"
+          : state.plan?.mode === "word" ? "（2文字語の索引から）" : "";
         statusEl.textContent =
-          `${formatNumber(n)}件${state.topic ? "（争点語の集計から）" : ""}` +
-          `・${opts.years!.length}年分を並列に検索・${elapsed}ms`;
+          `${formatNumber(n)}件${how}・${opts.years!.length}年分を並列に検索・${elapsed}ms`;
       }).catch((e) => console.warn("件数を数えられなかった", e));
     }
 
@@ -220,5 +249,11 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     .filters summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
     .filters .row { margin-top: 0.6rem; }
     .range { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+    .notfound {
+      border: 1px solid var(--line); border-radius: 8px;
+      background: var(--card); padding: 1rem 1.1rem; margin-top: 1rem;
+    }
+    .notfound p:first-child { margin-top: 0; font-weight: 600; }
   </style>
 </Base>

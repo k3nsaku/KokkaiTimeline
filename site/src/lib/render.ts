@@ -4,8 +4,8 @@ import type { SpeechRow } from "./db";
 import { escapeHtml, formatDate, highlight, highlightTerm } from "./format";
 
 export interface RenderOptions {
-  /** マーカーの無い抜粋（争点語・議員ページ）で強調したい語 */
-  term?: string;
+  /** マーカーの無い抜粋（争点語・2文字語・議員ページ）で強調したい語 */
+  terms?: string[];
   /** 年ごとの見出しを入れるか。議員ページや年またぎ検索で効く */
   groupByYear?: boolean;
   /** 発言者名を出すか。議員ページでは自明なので省く */
@@ -15,7 +15,7 @@ export interface RenderOptions {
 function speechCard(row: SpeechRow, opts: RenderOptions): string {
   const body = row.marked
     ? highlight(row.snippet ?? "")
-    : highlightTerm(row.snippet ?? "", opts.term ?? "");
+    : highlightTerm(row.snippet ?? "", opts.terms ?? []);
 
   const speaker = opts.showSpeaker === false ? "" : row.politician_id
     ? `<a class="speech-speaker" href="/politician/${row.politician_id}">${escapeHtml(row.speaker)}</a>`

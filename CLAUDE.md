@@ -61,14 +61,17 @@ python scripts/build_politicians.py --fix 浜田聡
 # 争点語の候補出し（reports/topic_candidates.md）→ data/topics.json は手で選ぶ
 python scripts/build_topics.py --propose
 
+# 2文字語の語彙（data/words.json）。FTSが3文字未満を引けないことへの対応
+python scripts/build_words.py
+
 # 頻度推移（data/dist/topics.json・258KB）と週次トレンド（trending.json・10KB）
 python scripts/build_topics.py
 ```
 
 **順番は `fetch_range` → `build_db`（単一DB）→ `build_politicians` / `build_topics`
-→ `build_db --split-by-year`。**
-`build_politicians.py` と `build_topics.py` は `data/kokkai.db` を材料にするので、
-単一DBが先に要る。
+/ `build_words` → `build_db --split-by-year`。**
+`build_politicians.py` `build_topics.py` `build_words.py` は `data/kokkai.db` を
+材料にするので、単一DBが先に要る。
 
 バックフィルの詳細は `docs/BACKFILL.md`。
 
@@ -113,8 +116,23 @@ speech_fts   : FTS5 + trigram。議員の発言のみを索引化（本文は sp
 politician   : 名寄せ後の議員マスタ（1,111人）。id は URL に出る
 affiliation  : 会派の時系列。party は特定できたときだけ入る（NULL あり）
 topic        : 争点語（79件）。リストは data/topics.json
-topic_hit    : 争点語 → 発言。2文字語対策 兼 FTS回避の索引
+topic_hit    : 争点語 → 発言。頻度推移の入口 兼 FTS回避の索引
+word         : 2文字語の語彙（16,058件）。リストは data/words.json
+word_hit     : 2文字語 → 発言。FTS が3文字未満を索引化できないことへの対応
 ```
+
+**`topic` と `word` は役割が違う。混ぜないこと。**
+
+| | topic | word |
+|---|---|---|
+| 何 | 争点語79件。**運営の編集方針** | 2文字語16,058件。**機械抽出** |
+| 用途 | 頻度推移・会派比較・検索の入口 | 2文字語を引けるようにするだけ |
+| 一覧表示 | する（`/topics`） | **しない**（引けるかを答えるだけ） |
+| 別表記 | `variants` で合算する | 無い |
+| 人名 | 落とす（一覧に出るので事故になる） | 落とさない（「石破」を引けてよい） |
+
+検索できる語を増やしたいときに **`topics.json` を膨らませない。** あれは
+「何を争点として扱うか」の判断であって、検索の索引ではない。
 
 配信物は年DBのほかに2つある。
 
@@ -173,7 +191,7 @@ UIの「新しい順」はこれに依存する。詳しくは下の落とし穴
 ### 全文検索（FTS5 + trigram）
 
 - **2文字以下の語は原理的に引けない。**「増税」「憲法」「年金」「原発」が全滅する。
-  → 争点語の集計テーブルで別途対応する（Phase 1 の必須タスク）。
+  → `word` / `word_hit`（2文字語の索引）で対応済み。下の「2文字語」を見ること。
 - **`detail=column` / `detail=none` は使えない。** trigram はフレーズクエリを使うため、
   位置情報を落とすと4文字以上が検索不能になる。`detail=full` 固定。
 - **`INSERT INTO speech_fts(speech_fts) VALUES('rebuild')` を使わない。**
@@ -211,7 +229,25 @@ UIの「新しい順」はこれに依存する。詳しくは下の落とし穴
 - **遅いのはヒット件数ではなく検索語の長さ。** trigram は N文字を N-2 トークンに展開する。
   ヒット14件の「デジタル田園都市国家構想」が、ヒット2,864件の「安全保障」の2.4倍遅い。
 - **争点語リストにある語は FTS を使わない。** `topic_hit` を引くほうが 3.3倍速い
-  （0.7秒 vs 2.3秒）。2文字語はそもそも FTS では引けない。
+  （0.7秒 vs 2.3秒）。
+
+### 2文字語
+
+FTS5 の trigram は3文字未満のトークンを作れない。`word` / `word_hit` で対応している。
+
+- **語彙の選び方と索引の作り方で数え方が違う。意図的。**
+  `build_words.py` は「漢字/カタカナが**ちょうど2文字だけ**連続する」箇所を数えて
+  語彙を決める（＝語として自立しているもの）。`build_db.py` の索引は
+  **部分文字列**で拾う（「憲法改正」の中の「憲法」を引けないと意味がない）。
+- **語彙は全期間（`data/kokkai.db`）から作る。** 年ごとに作ると、
+  ある年だけ語彙に無くて引けない語ができる。
+- **`RUN_PATTERN` を片方だけ変えない。** `build_words.py` と `build_db.py` の
+  `WORD_RUN_PATTERN` は同じものにすること。ずれると語彙にあるのに索引に入らない語が出る。
+- 複数語のときは**いちばん珍しい2文字語を起点**にして、残りは `instr()` で絞る。
+  走査する行数が起点の語の件数で頭打ちになる。
+- コストは実測で **DBサイズ +9.3%**（1年で約330万行 / 全体 1.91GB→2.09GB）、
+  索引の構築は1年あたり21秒。引くのは0.2ms（ローカル）。
+- **ひらがなだけの2文字語は引けない。** 語彙が漢字とカタカナの連続しか見ていないため。
 
 ### 名寄せ
 
@@ -255,6 +291,7 @@ UIの「新しい順」はこれに依存する。詳しくは下の落とし穴
   （生成物ではない。失うと作り直しになる）:
   `party_map.json` / `party_overrides.json` / `politician_ids.json` /
   `topics.json` / `topic_denylist.json`。
+  **`words.json` は生成物なのでコミットしない**（`build_words.py` で作り直せる）。
   特に `politician_ids.json` を失うと**公開後はURLが全部変わる**。
 
 ---

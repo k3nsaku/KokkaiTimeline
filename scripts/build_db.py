@@ -57,6 +57,7 @@ DEFAULT_DB = ROOT / "data" / "kokkai.db"
 DIST_DIR = ROOT / "data" / "dist"
 POLITICIANS_PATH = ROOT / "data" / "politicians.json"
 TOPICS_PATH = ROOT / "data" / "topics.json"
+WORDS_PATH = ROOT / "data" / "words.json"
 
 # sql.js-httpvfs は requestChunkSize 単位で HTTP Range を投げる。
 # page_size をそれに合わせると1ページ＝1リクエストになり、無駄な読みが出ない。
@@ -72,6 +73,11 @@ NON_SPEECH_SPEAKERS = {"会議録情報", "会議録情報等", "目次"}
 
 # 全文検索の対象にする発言者の種別
 INDEXED_KINDS = ("議員",)
+
+# 2文字語の索引を作るときに走査する範囲。漢字の連続とカタカナの連続。
+# scripts/build_words.py の RUN_PATTERN と**同じもの**にすること。
+# 語彙の側とずれると、語彙にあるのに索引に入らない語が出る
+WORD_RUN_PATTERN = re.compile(r"[一-鿿々]{2,}|[ァ-ヴー]{2,}")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meeting (
@@ -181,6 +187,28 @@ CREATE TABLE IF NOT EXISTS topic_hit (
     speech_rowid    INTEGER NOT NULL,
     n               INTEGER NOT NULL,   -- その発言中の出現回数
     PRIMARY KEY (topic_id, speech_rowid)
+) WITHOUT ROWID;
+
+-- 2文字語の語彙。FTS5(trigram) は3文字未満のトークンを作れないので、
+-- 「増税」「憲法」「年金」「原発」はこれが無いと**原理的に引けない**。
+-- 争点語（topic）とは役割が違う: あちらは運営が選ぶ編集方針で、頻度推移にも使う。
+-- こちらは機械抽出の語彙で、**一覧としては見せない**（引けるかどうかを決めるだけ）。
+-- リストは data/words.json、作るのは scripts/build_words.py。
+CREATE TABLE IF NOT EXISTS word (
+    id              INTEGER PRIMARY KEY,
+    term            TEXT NOT NULL UNIQUE,
+    -- **この年の件数**。複数語の検索でどれを起点にするか選ぶのに使う
+    n_speeches      INTEGER NOT NULL DEFAULT 0
+);
+
+-- 2文字語 → 発言。topic_hit と同じ形で、speech_rowid の降順スキャンで
+-- 「新しい順」を早期終了できるよう主キーの並びをそのまま使う。
+-- topic_hit と違って出現回数を持たない（並べ替えにも表示にも使わないため。
+-- 1行あたり数バイトの差でも、行数が2桁多いので効いてくる）
+CREATE TABLE IF NOT EXISTS word_hit (
+    word_id         INTEGER NOT NULL REFERENCES word(id),
+    speech_rowid    INTEGER NOT NULL,
+    PRIMARY KEY (word_id, speech_rowid)
 ) WITHOUT ROWID;
 
 -- 名寄せレポートの材料
@@ -327,6 +355,65 @@ def build_topic_index(con: sqlite3.Connection, topics: list[dict]) -> int:
     return len(hits)
 
 
+def load_words(path: Path) -> list[str]:
+    """2文字語の語彙。無ければ空で通す（2文字語を引けないDBになるだけ）。"""
+    if not path.exists():
+        logger.warning("%s が無い。2文字語の索引を作らない", path.name)
+        return []
+    return list(json.loads(path.read_text(encoding="utf-8"))["words"])
+
+
+def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
+    """2文字語の索引を作る。
+
+    **語彙の選定と数え方が違う。** `build_words.py` は「ちょうど2文字で自立している」
+    箇所だけを数えて語彙を決めるが、索引は**部分文字列**で拾う。
+    「憲法改正」の中の「憲法」を引けないと検索として意味がないため。
+
+    そのために漢字/カタカナの連続を取り出し、その中の2文字窓を全部見る。
+    2文字の漢字列は必ず長さ2以上の漢字連続の中にあるので、これで取りこぼさない。
+
+    行数が多い（1年で約350万行）ので、一定件数ごとに流し込む。
+    全部ためると数百MBのリストになる。
+    """
+    if not words:
+        return 0
+
+    ids = {term: i for i, term in enumerate(words, 1)}
+    con.executemany("INSERT OR REPLACE INTO word (id, term, n_speeches) VALUES (?,?,0)",
+                    [(i, term) for term, i in ids.items()])
+
+    counts: dict[int, int] = defaultdict(int)
+    batch: list[tuple[int, int]] = []
+    total = 0
+
+    def flush() -> None:
+        nonlocal batch
+        con.executemany("INSERT OR REPLACE INTO word_hit VALUES (?,?)", batch)
+        batch = []
+
+    for rowid, body in con.execute(
+            "SELECT rowid, body FROM speech WHERE speaker_kind = ?", INDEXED_KINDS[:1]):
+        found = set()
+        for run in WORD_RUN_PATTERN.findall(body):
+            for i in range(len(run) - 1):
+                word_id = ids.get(run[i:i + 2])
+                if word_id is not None:
+                    found.add(word_id)
+        for word_id in found:
+            counts[word_id] += 1
+        batch.extend((word_id, rowid) for word_id in found)
+        total += len(found)
+        if len(batch) >= 500_000:
+            flush()
+
+    flush()
+    con.executemany("UPDATE word SET n_speeches = ? WHERE id = ?",
+                    [(n, word_id) for word_id, n in counts.items()])
+    con.commit()
+    return total
+
+
 def load(con: sqlite3.Connection, raw_dir: Path, year: str | None = None,
          unit_map: dict[str, int] | None = None) -> tuple[int, int]:
     meetings: dict[str, tuple] = {}
@@ -446,7 +533,7 @@ def finalize(con: sqlite3.Connection, db_path: Path) -> None:
 
 def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
                dist_dir: Path, politicians: list[dict], unit_map: dict[str, int],
-               topics: list[dict]) -> dict:
+               topics: list[dict], words: list[str]) -> dict:
     """1年分のDBを作って統計を返す。
 
     議員マスタは**全期間分をそのまま入れる**（1,111人で数百KB）。年ごとに絞ると
@@ -461,6 +548,8 @@ def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
     insert_politicians(con, politicians)
     n_meetings, n_speeches = load(con, raw_dir, year, unit_map)
     n_hits = build_topic_index(con, topics)
+    logger.info("  2文字語の索引を構築中（語彙 %s件）…", f"{len(words):,}")
+    n_word_hits = build_word_index(con, words)
     if with_fts:
         logger.info("  FTS5(trigram) を構築中…")
         build_fts(con)
@@ -469,11 +558,12 @@ def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
     con.close()
 
     size = db_path.stat().st_size
-    logger.info("  会議 %s / 発言 %s（索引 %s / 争点語 %s） / %.1f MB / %.0f秒",
+    logger.info("  会議 %s / 発言 %s（索引 %s / 争点語 %s / 2文字語 %s） / %.1f MB / %.0f秒",
                 f"{n_meetings:,}", f"{n_speeches:,}", f"{indexed:,}", f"{n_hits:,}",
-                size / 1024**2, time.monotonic() - started)
+                f"{n_word_hits:,}", size / 1024**2, time.monotonic() - started)
     return {"year": year, "path": db_path, "meetings": n_meetings,
-            "speeches": n_speeches, "indexed": indexed, "hits": n_hits, "size": size}
+            "speeches": n_speeches, "indexed": indexed, "hits": n_hits,
+            "word_hits": n_word_hits, "size": size}
 
 
 def count_indexed(con: sqlite3.Connection) -> int:
@@ -508,22 +598,26 @@ def run_split(args: argparse.Namespace) -> None:
     years = args.year or available_years(args.raw)
     politicians, unit_map = load_politicians(args.politicians)
     topics = load_topics(args.topics)
-    logger.info("年ごとに分割して構築: %s（議員 %s人 / 争点語 %s件）",
-                " ".join(years), f"{len(politicians):,}", f"{len(topics):,}")
+    words = load_words(args.words)
+    logger.info("年ごとに分割して構築: %s（議員 %s人 / 争点語 %s件 / 2文字語 %s件）",
+                " ".join(years), f"{len(politicians):,}", f"{len(topics):,}", f"{len(words):,}")
     results = [build_year(args.raw, year, page_size=args.page_size,
                           with_fts=not args.no_fts, dist_dir=args.dist,
-                          politicians=politicians, unit_map=unit_map, topics=topics)
+                          politicians=politicians, unit_map=unit_map, topics=topics,
+                          words=words)
                for year in years]
 
     print(f"\n--- 年ごとDB（page_size={args.page_size} / {args.dist}）---")
-    print(f"{'年':<6}{'会議':>8}{'発言':>10}{'索引':>10}{'争点語':>10}{'サイズ':>12}")
+    print(f"{'年':<6}{'会議':>8}{'発言':>10}{'索引':>10}{'争点語':>10}{'2文字語':>12}{'サイズ':>12}")
     for r in results:
         print(f"{r['year']:<6}{r['meetings']:>8,}{r['speeches']:>10,}"
-              f"{r['indexed']:>10,}{r['hits']:>10,}{r['size'] / 1024**2:>10.1f} MB")
+              f"{r['indexed']:>10,}{r['hits']:>10,}{r['word_hits']:>12,}"
+              f"{r['size'] / 1024**2:>10.1f} MB")
     total = sum(r["size"] for r in results)
     print(f"{'合計':<6}{'':>8}{sum(r['speeches'] for r in results):>10,}"
           f"{sum(r['indexed'] for r in results):>10,}"
-          f"{sum(r['hits'] for r in results):>10,}{total / 1024**3:>10.2f} GB")
+          f"{sum(r['hits'] for r in results):>10,}"
+          f"{sum(r['word_hits'] for r in results):>12,}{total / 1024**3:>10.2f} GB")
     print(f"\nR2無料枠 10GB に対して {100 * total / (10 * 1024**3):.1f}%")
 
     manifest = write_manifest(args.dist)
@@ -548,6 +642,9 @@ def main() -> None:
                         help="scripts/build_politicians.py の出力。無ければ議員を紐づけない")
     parser.add_argument("--topics", type=Path, default=TOPICS_PATH,
                         help="争点語のリスト。無ければ争点語の索引を作らない")
+    parser.add_argument("--words", type=Path, default=WORDS_PATH,
+                        help="2文字語の語彙（scripts/build_words.py の出力）。"
+                             "無ければ2文字語の索引を作らない")
     args = parser.parse_args()
 
     if args.split_by_year or args.year:

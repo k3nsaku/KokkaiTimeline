@@ -105,7 +105,8 @@ const description =
   />
 
   <script>
-    import { politicianSpeeches, search, type SearchPage } from "../../lib/db";
+    import { politicianSpeeches, search, resolveQuery, splitTerms,
+             type SearchPage, type QueryPlan } from "../../lib/db";
     import { renderSpeeches } from "../../lib/render";
     import { escapeHtml } from "../../lib/format";
 
@@ -121,11 +122,14 @@ const description =
 
     let cursor: Record<number, number> = {};
     let term = "";
+    // 絞り込みの語をどの索引で引くかは1回だけ解く（2文字語は word_hit を引く）
+    let plan: QueryPlan | null = null;
 
     const load = (before?: Record<number, number>): Promise<SearchPage> =>
       term
-        // 議員 × キーワード。FTS の結果を politician_id で絞る
-        ? search({ query: term, politicianId: id, years, limit: 20, before })
+        // 議員 × キーワード。索引の結果を politician_id で絞る
+        ? search({ query: term, plan: plan ?? undefined, politicianId: id,
+                   years, limit: 20, before })
         : politicianSpeeches(id, years, 20, before ?? {});
 
     async function run(append: boolean) {
@@ -134,10 +138,17 @@ const description =
       moreWrap.hidden = true;
       const started = performance.now();
       try {
+        if (term && !append) plan = await resolveQuery(term, years);
+        if (plan?.mode === "none") {
+          results.innerHTML = "";
+          statusEl.textContent =
+            `「${plan.unsupported.join("・")}」は2文字以下で、索引に無いため引けない。`;
+          return;
+        }
         const page = await load(append ? cursor : undefined);
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",
-          renderSpeeches(page.rows, { term, groupByYear: true, showSpeaker: false }));
+          renderSpeeches(page.rows, { terms: splitTerms(term), groupByYear: true, showSpeaker: false }));
         moreWrap.hidden = page.done;
         const elapsed = Math.round(performance.now() - started);
         statusEl.textContent = page.rows.length || append

@@ -61,9 +61,9 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   <section>
     <h2>争点語から見る</h2>
     <p class="small muted">
-      運営が管理している語。<strong>2文字の語（憲法・年金・増税）はここからしか引けない</strong>
-      — 全文検索の索引が3文字未満を作れないため。
-      頻度推移と会派ごとの使われ方も見られる。
+      運営が選んでいる語。<strong>いつ議論されたかの推移</strong>と
+      <strong>会派ごとの使われ方</strong>を見られる。
+      検索が発言を探すためのものなのに対して、こちらは流れを見るためのもの。
     </p>
     <ul class="chips">
       {topics.map((topic) => (

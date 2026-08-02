@@ -34,12 +34,25 @@ export function highlight(snippet: string): string {
     .split(MARK_CLOSE).join("</mark>");
 }
 
-/** マーカーを持たない抜粋（争点語検索・議員ページ）に、あとから語を強調する。 */
-export function highlightTerm(text: string, term: string): string {
+/**
+ * マーカーを持たない抜粋（争点語・2文字語・議員ページ）に、あとから語を強調する。
+ *
+ * エスケープ済みの文字列に対して置換するので、`<mark>` を入れたあとの
+ * テキストをもう一度走査しないよう、長い語から順に一度だけ通す。
+ */
+export function highlightTerm(text: string, terms: string[]): string {
   const escaped = escapeHtml(text);
-  if (!term) return escaped;
-  const needle = escapeHtml(term);
-  return escaped.split(needle).join(`<mark>${needle}</mark>`);
+  const needles = [...new Set(terms.filter(Boolean))]
+    .map(escapeHtml)
+    .sort((a, b) => b.length - a.length);
+  if (!needles.length) return escaped;
+
+  const pattern = new RegExp(needles.map(escapeRegExp).join("|"), "g");
+  return escaped.replace(pattern, (hit) => `<mark>${hit}</mark>`);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];

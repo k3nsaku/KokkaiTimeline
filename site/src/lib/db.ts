@@ -54,6 +54,12 @@ export interface SearchOptions {
   limit?: number;
   /** 年 → その年で「ここより前」を続きとして読む rowid。keyset ページング用 */
   before?: Record<number, number>;
+  /**
+   * `resolveQuery()` の結果。**1回だけ解いて、ページ送りでは使い回す。**
+   * 省略すると FTS 扱いになる（＝2文字語は引けない）ので、
+   * 任意語の検索では必ず渡すこと。
+   */
+  plan?: QueryPlan;
 }
 
 export interface SearchPage {
@@ -160,18 +166,77 @@ function topicSql(opts: { politician: boolean; meeting: boolean; before: boolean
     ORDER BY h.speech_rowid DESC LIMIT ?`;
 }
 
+/**
+ * 2文字語の検索。FTS5 の trigram は3文字未満のトークンを作れないので、
+ * 「増税」「憲法」「年金」「原発」は**原理的に FTS では引けない**。
+ * `word` / `word_hit`（機械抽出の語彙、`scripts/build_words.py`）を引く。
+ *
+ * 複数語のときは**いちばん珍しい2文字語を起点**にして、残りは `instr()` で絞る。
+ * 走査する行数が起点の語の件数で頭打ちになるので、起点の選び方が効く。
+ */
+function wordSql(opts: {
+  politician: boolean; meeting: boolean; before: boolean; filters: number;
+}) {
+  return `
+    SELECT ${RESULT_COLS},
+           substr(s.body, max(1, instr(s.body, ?) - 40), 160) AS snippet
+    FROM word w
+    JOIN word_hit h ON h.word_id = w.id
+    JOIN speech s ON s.rowid = h.speech_rowid
+    JOIN meeting m ON m.issue_id = s.issue_id
+    WHERE w.term = ?
+      ${opts.before ? "AND h.speech_rowid < ?" : ""}
+      ${"AND instr(s.body, ?) > 0 ".repeat(opts.filters)}
+      ${opts.politician ? "AND s.politician_id = ?" : ""}
+      ${opts.meeting ? "AND m.name = ?" : ""}
+    ORDER BY h.speech_rowid DESC LIMIT ?`;
+}
+
 // --- 検索 -----------------------------------------------------------------
 
 /** trigram にそのまま渡すと記号が演算子として解釈されるので、フレーズとして囲む。 */
 export function toMatchExpr(input: string): string {
-  const words = input.trim().split(/[\s　]+/).filter(Boolean);
+  const words = splitTerms(input);
   // 二重引用符はフレーズの区切りなので、FTS5 の作法どおり2つ重ねて逃がす
   return words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
 }
 
-/** 検索語のうち FTS が引けない長さのものを返す（trigram は3文字未満を索引化できない）。 */
-export function tooShortWords(input: string): string[] {
-  return input.trim().split(/[\s　]+/).filter((w) => w.length > 0 && w.length < 3);
+export function splitTerms(input: string): string[] {
+  return input.trim().split(/[\s　]+/).filter(Boolean);
+}
+
+/**
+ * 検索語をどの索引で引くか決める。
+ *
+ *   fts  : 全部3文字以上。FTS5 trigram（1.5〜6秒）
+ *   word : 2文字以下の語がある。`word_hit` を引く
+ *   none : 2文字以下の語が語彙に無い。**引けない**ので、代わりの案を出す
+ *
+ * 語彙は全期間から作ってあり年によらないので、**判定は1年ぶんだけ引けばよい**。
+ */
+export type QueryPlan =
+  | { mode: "fts"; match: string }
+  | { mode: "word"; driver: string; filters: string[] }
+  | { mode: "none"; unsupported: string[] };
+
+export async function resolveQuery(input: string, years: number[]): Promise<QueryPlan> {
+  const terms = splitTerms(input);
+  const short = terms.filter((t) => t.length < 3);
+  if (!terms.length) return { mode: "none", unsupported: [] };
+  if (!short.length) return { mode: "fts", match: toMatchExpr(input) };
+
+  const probeYear = [...years].sort((a, b) => b - a)[0] ?? (await getManifest()).years.at(-1)!;
+  const rows = await query<{ term: string; n_speeches: number }>(
+    probeYear,
+    `SELECT term, n_speeches FROM word WHERE term IN (${short.map(() => "?").join(",")})`,
+    short);
+
+  const unsupported = short.filter((t) => !rows.some((r) => r.term === t));
+  if (unsupported.length) return { mode: "none", unsupported };
+
+  // いちばん珍しい2文字語を起点にする。走査する行数がこれで決まる
+  const driver = [...rows].sort((a, b) => a.n_speeches - b.n_speeches)[0].term;
+  return { mode: "word", driver, filters: terms.filter((t) => t !== driver) };
 }
 
 export async function search(opts: SearchOptions): Promise<SearchPage> {
@@ -181,6 +246,11 @@ export async function search(opts: SearchOptions): Promise<SearchPage> {
     .sort((a, b) => b - a);
   const limit = opts.limit ?? 20;
   const before = opts.before ?? {};
+  const plan = opts.plan;
+
+  if (plan?.mode === "none") {
+    return { rows: [], before: Object.fromEntries(years.map((y) => [y, 0])), done: true };
+  }
 
   const shape = {
     politician: opts.politicianId != null,
@@ -192,18 +262,32 @@ export async function search(opts: SearchOptions): Promise<SearchPage> {
     // その年を読み切っている（前ページで LIMIT に満たなかった）なら、もう投げない
     if (year in before && before[year] === 0) return [] as SpeechRow[];
     const cursor = before[year];
-    const sql = opts.topicId != null
-      ? topicSql({ ...shape, before: cursor != null })
-      : ftsSql({ ...shape, before: cursor != null });
+    const params: unknown[] = [];
+    let sql: string;
 
-    const params: unknown[] = [opts.topicId != null ? opts.topicId : toMatchExpr(opts.query ?? "")];
-    if (cursor != null) params.push(cursor);
+    if (opts.topicId != null) {
+      sql = topicSql({ ...shape, before: cursor != null });
+      params.push(opts.topicId);
+      if (cursor != null) params.push(cursor);
+    } else if (plan?.mode === "word") {
+      sql = wordSql({ ...shape, before: cursor != null, filters: plan.filters.length });
+      params.push(plan.driver, plan.driver);       // 1つ目は snippet を切り出す位置用
+      if (cursor != null) params.push(cursor);
+      params.push(...plan.filters);
+    } else {
+      sql = ftsSql({ ...shape, before: cursor != null });
+      params.push(plan?.mode === "fts" ? plan.match : toMatchExpr(opts.query ?? ""));
+      if (cursor != null) params.push(cursor);
+    }
+
     if (shape.politician) params.push(opts.politicianId);
     if (shape.meeting) params.push(opts.meetingName);
     params.push(limit);
 
     const rows = await query<SpeechRow>(year, sql, params);
-    return rows.map((r) => ({ ...r, year, marked: opts.topicId == null }));
+    // snippet() のマーカーが入るのは FTS 経由のときだけ
+    const marked = opts.topicId == null && plan?.mode !== "word";
+    return rows.map((r) => ({ ...r, year, marked }));
   });
 
   // 年DBは日付で綺麗に分かれている（build_db.py が年で分ける）ので、
@@ -235,29 +319,48 @@ export async function countHits(opts: SearchOptions): Promise<number> {
   const manifest = await getManifest();
   const years = (opts.years?.length ? opts.years : manifest.years)
     .filter((y) => manifest.years.includes(y));
+  const plan = opts.plan;
+
+  if (plan?.mode === "none") return 0;
 
   const counts = await eachYear(years, async (year) => {
-    if (opts.topicId != null) {
-      const sql = opts.politicianId != null
-        ? `SELECT COUNT(*) AS n FROM topic_hit h JOIN speech s ON s.rowid = h.speech_rowid
-           WHERE h.topic_id = ? AND s.politician_id = ?`
-        : "SELECT COUNT(*) AS n FROM topic_hit WHERE topic_id = ?";
-      const params = opts.politicianId != null ? [opts.topicId, opts.politicianId] : [opts.topicId];
-      const [row] = await query<{ n: number }>(year, sql, params);
-      return row?.n ?? 0;
-    }
-    const sql = opts.politicianId != null
-      ? `SELECT COUNT(*) AS n FROM speech_fts f JOIN speech s ON s.rowid = f.rowid
-         WHERE speech_fts MATCH ? AND s.politician_id = ?`
-      : "SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?";
-    const params = opts.politicianId != null
-      ? [toMatchExpr(opts.query ?? ""), opts.politicianId]
-      : [toMatchExpr(opts.query ?? "")];
-    const [row] = await query<{ n: number }>(year, sql, params);
+    const [row] = await query<{ n: number }>(year, ...countQuery(opts, plan));
     return row?.n ?? 0;
   });
 
   return counts.reduce((a, b) => a + b, 0);
+}
+
+/** 件数の SQL とパラメータ。議員での絞り込みが無ければ索引だけで数えられる。 */
+function countQuery(opts: SearchOptions, plan: QueryPlan | undefined): [string, unknown[]] {
+  const byPolitician = opts.politicianId != null;
+
+  if (opts.topicId != null) {
+    return byPolitician
+      ? [`SELECT COUNT(*) AS n FROM topic_hit h JOIN speech s ON s.rowid = h.speech_rowid
+          WHERE h.topic_id = ? AND s.politician_id = ?`, [opts.topicId, opts.politicianId]]
+      : ["SELECT COUNT(*) AS n FROM topic_hit WHERE topic_id = ?", [opts.topicId]];
+  }
+
+  if (plan?.mode === "word") {
+    // 絞り込みが何も無ければ word.n_speeches に答えが入っている（1行読むだけ）
+    if (!plan.filters.length && !byPolitician) {
+      return ["SELECT n_speeches AS n FROM word WHERE term = ?", [plan.driver]];
+    }
+    return [`SELECT COUNT(*) AS n FROM word w
+             JOIN word_hit h ON h.word_id = w.id
+             JOIN speech s ON s.rowid = h.speech_rowid
+             WHERE w.term = ?
+               ${"AND instr(s.body, ?) > 0 ".repeat(plan.filters.length)}
+               ${byPolitician ? "AND s.politician_id = ?" : ""}`,
+            [plan.driver, ...plan.filters, ...(byPolitician ? [opts.politicianId] : [])]];
+  }
+
+  const match = plan?.mode === "fts" ? plan.match : toMatchExpr(opts.query ?? "");
+  return byPolitician
+    ? [`SELECT COUNT(*) AS n FROM speech_fts f JOIN speech s ON s.rowid = f.rowid
+        WHERE speech_fts MATCH ? AND s.politician_id = ?`, [match, opts.politicianId]]
+    : ["SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?", [match]];
 }
 
 // --- 議員ページ -----------------------------------------------------------

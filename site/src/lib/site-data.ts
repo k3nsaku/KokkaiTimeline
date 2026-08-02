@@ -78,11 +78,19 @@ export interface Manifest {
   databases: { year: number; file: string; size: number }[];
 }
 
+/** 2文字語の語彙（`scripts/build_words.py`）。中身は使わず件数だけ要る。 */
+export interface Words {
+  min_df: number;
+  source_speeches: number;
+  words: Record<string, number>;
+}
+
 let cached: {
   politicians?: Politician[];
   topics?: TopicSeries;
   trending?: Trending;
   manifest?: Manifest;
+  words?: Words;
 } = {};
 
 export function politicians(): Politician[] {
@@ -103,6 +111,12 @@ export function trending(): Trending {
 export function manifest(): Manifest {
   cached.manifest ??= readJson<Manifest>("dist", "manifest.json");
   return cached.manifest;
+}
+
+/** 2文字語の語彙の件数。「何語まで引けるか」を正直に出すために使う。 */
+export function wordCount(): number {
+  cached.words ??= readJson<Words>("words.json");
+  return Object.keys(cached.words.words).length;
 }
 
 /** 表示に使う「現在の所属」。会派の時系列のうち最後のもの。 */

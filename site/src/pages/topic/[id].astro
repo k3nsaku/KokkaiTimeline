@@ -43,13 +43,6 @@ const description =
     {topic.variants.length > 0 && <>・別表記として {topic.variants.join("、")} も同じ語として数えている</>}
   </p>
 
-  {topic.term.length <= 2 && (
-    <p class="note small">
-      2文字の語なので、<strong>全文検索（trigram）では原理的に引けない</strong>。
-      このページの集計テーブルからだけ引ける。
-    </p>
-  )}
-
   <section>
     <h2>いつ議論されたか</h2>
     <Fragment set:html={chart} />
@@ -137,7 +130,7 @@ const description =
         const page = await search({ topicId, years, limit: 20, before: append ? cursor : undefined });
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",
-          renderSpeeches(page.rows, { term, groupByYear: true }));
+          renderSpeeches(page.rows, { terms: [term], groupByYear: true }));
         moreWrap.hidden = page.done;
         statusEl.textContent = `新しい順・${Math.round(performance.now() - started)}ms`;
       } catch (err) {
