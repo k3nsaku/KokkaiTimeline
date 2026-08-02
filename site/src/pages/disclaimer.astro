@@ -6,9 +6,8 @@
  * 未記入なら、このページは警告を出す（埋めるまで公開しない）。
  */
 import Base from "../layouts/Base.astro";
-import { OPERATOR, mailParts, operatorReady } from "../lib/operator";
-
-const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
+import Mail from "../components/Mail.astro";
+import { OPERATOR, missing, operatorReady } from "../lib/operator";
 ---
 
 <Base
@@ -19,8 +18,8 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
 
   {!operatorReady && (
     <p class="todo">
-      ⚠ <strong>未記入。</strong>運営者名と連絡先が <code>src/lib/operator.ts</code> に
-      入っていない。ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
+      ⚠ <strong>{missing.join("・")}が未記入</strong>（<code>src/lib/operator.ts</code>）。
+      ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
     </p>
   )}
 
@@ -85,15 +84,8 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
       <a href={OPERATOR.formUrl} rel="noopener">訂正依頼フォーム</a>
     </p>
   )}
-  {mail ? (
-    <p>
-      連絡先: <span class="mail" data-user={mail.user} data-domain={mail.domain}>
-        {mail.user} <span aria-hidden="true">＠</span> {mail.domain}
-      </span>
-    </p>
-  ) : (
-    <p class="todo small">⚠ 連絡先が未記入（<code>src/lib/operator.ts</code>）。</p>
-  )}
+  <p>連絡先:</p>
+  <Mail />
 
   <h3>直せないもの</h3>
   <p>
@@ -118,7 +110,7 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
   </ul>
 
   <h2 id="operator">運営者</h2>
-  {operatorReady ? (
+  {OPERATOR.name ? (
     <p>{OPERATOR.name}（個人）</p>
   ) : (
     <p class="todo small">
@@ -131,12 +123,4 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
     <a href="/about">このサイトについて</a>
   </p>
 
-  <style>
-    .todo {
-      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
-      background: var(--card); border-radius: 0 6px 6px 0;
-    }
-    /* メールアドレスをそのまま置かない（収集よけ）。表示は分かるようにしてある */
-    .mail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  </style>
 </Base>

@@ -9,7 +9,7 @@
 import Base from "../layouts/Base.astro";
 import { politicians, topicSeries, manifest, trending, wordCount } from "../lib/site-data";
 import { formatNumber } from "../lib/format";
-import { OPERATOR, operatorReady } from "../lib/operator";
+import { OPERATOR, missing, operatorReady } from "../lib/operator";
 
 const people = politicians();
 const years = manifest().years;
@@ -96,7 +96,7 @@ const nWords = wordCount();
 
   <h2>運営</h2>
   <p>
-    {operatorReady ? `${OPERATOR.name}（個人）が運営している。` : "個人が運営している。"}
+    {OPERATOR.name ? `${OPERATOR.name}（個人）が運営している。` : "個人が運営している。"}
     広告は載せていない。
   </p>
   <ul>
@@ -105,7 +105,7 @@ const nWords = wordCount();
   </ul>
   {!operatorReady && (
     <p class="todo small">
-      ⚠ 運営者表示と連絡先が未記入（<code>src/lib/operator.ts</code>）。
+      ⚠ {missing.join("・")}が未記入（<code>src/lib/operator.ts</code>）。
       ROADMAP §3.5。<strong>これが埋まるまで公開しない。</strong>
     </p>
   )}
@@ -120,9 +120,5 @@ const nWords = wordCount();
   <style>
     .caveats dt { font-weight: 600; margin-top: 1.25rem; }
     .caveats dd { margin: 0.2rem 0 0; }
-    .todo {
-      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
-      background: var(--card); border-radius: 0 6px 6px 0;
-    }
   </style>
 </Base>

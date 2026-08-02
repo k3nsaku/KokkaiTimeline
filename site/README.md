@@ -44,7 +44,14 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 ### 運営者名と連絡先は `src/lib/operator.ts` の1か所
 
 `/about` `/disclaimer` `/privacy` の3ページがここを見ている。
-**未記入のあいだは3ページとも⚠の警告を出す**（ROADMAP §3.5。埋まるまで公開しない）。
+**未記入のあいだは3ページとも⚠を出す**（`missing` に欠けている項目名が入る。
+ROADMAP §3.5。空になるまで公開しない）。
+
+メールの表示は `src/components/Mail.astro`。**アドレスをそのままHTMLに置かない**
+（ユーザ名とドメインを別属性に分け、画面には全角の＠で出す。素のHTMLに
+`user@domain` の並びが1度も現れないことを確認済み）。コピーボタンはJSで後から差し込む
+—— 動かない環境に押せないボタンを残さないため。スタイルを `is:global` にしてあるのは
+そのボタンにスコープ付きの属性が付かないから。
 アクセス解析を入れたら `analytics` を必ず埋めること — `/privacy` の記述が変わる。
 
 `operator.ts` から `db.ts` を import しないこと。`format.ts` と同じ理由で、

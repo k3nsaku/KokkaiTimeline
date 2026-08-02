@@ -37,14 +37,21 @@ export interface Operator {
 }
 
 export const OPERATOR: Operator = {
-  name: null,
+  name: "国会タイムライン 運営",
+  // ★ 公開前に必ず埋める。この1行が §3.5 の最後の関門
   email: null,
   formUrl: null,
   analytics: false,
 };
 
+/** 公開に必要な最低限のうち、まだ埋まっていないもの。空なら公開してよい。 */
+export const missing: string[] = [
+  OPERATOR.name ? null : "運営者の表示名",
+  OPERATOR.email ? null : "連絡先メール",
+].filter((v): v is string => v !== null);
+
 /** 公開に必要な最低限（表示名と連絡先）が埋まっているか。 */
-export const operatorReady = Boolean(OPERATOR.name && OPERATOR.email);
+export const operatorReady = missing.length === 0;
 
 /** メールアドレスをそのまま置くと収集されるので、表示は分割する。 */
 export function mailParts(email: string): { user: string; domain: string } {

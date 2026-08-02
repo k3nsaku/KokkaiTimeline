@@ -8,9 +8,9 @@
  * （ここの記述が変わる）。
  */
 import Base from "../layouts/Base.astro";
-import { OPERATOR, mailParts, operatorReady } from "../lib/operator";
+import Mail from "../components/Mail.astro";
+import { OPERATOR, missing, operatorReady } from "../lib/operator";
 
-const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
 const analytics = OPERATOR.analytics;
 ---
 
@@ -22,8 +22,8 @@ const analytics = OPERATOR.analytics;
 
   {!operatorReady && (
     <p class="todo">
-      ⚠ <strong>未記入。</strong>運営者名と連絡先が <code>src/lib/operator.ts</code> に
-      入っていない。ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
+      ⚠ <strong>{missing.join("・")}が未記入</strong>（<code>src/lib/operator.ts</code>）。
+      ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
     </p>
   )}
 
@@ -106,14 +106,8 @@ const analytics = OPERATOR.analytics;
   </p>
 
   <h2>連絡先</h2>
-  {mail ? (
-    <p>
-      {OPERATOR.name}（個人）／
-      <span class="mail">{mail.user} <span aria-hidden="true">＠</span> {mail.domain}</span>
-    </p>
-  ) : (
-    <p class="todo small">⚠ 連絡先が未記入（<code>src/lib/operator.ts</code>）。</p>
-  )}
+  <p>{OPERATOR.name}（個人）</p>
+  <Mail />
 
   <h2>変更</h2>
   <p>
@@ -125,11 +119,4 @@ const analytics = OPERATOR.analytics;
     <a href="/about">このサイトについて</a>
   </p>
 
-  <style>
-    .todo {
-      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
-      background: var(--card); border-radius: 0 6px 6px 0;
-    }
-    .mail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  </style>
 </Base>
