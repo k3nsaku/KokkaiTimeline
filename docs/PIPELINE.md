@@ -79,16 +79,27 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 
 | バケット | 用途 | Location | Storage class | 公開 |
 |---|---|---|---|---|
-| `kokkai-timeline` | 年DB（約2.1GB）と `manifest.json` | **APAC** | Standard | **公開**（カスタムドメイン） |
-| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ・語彙 | **ENAM** | Standard | 非公開 |
+| `kokkai-timeline` | 年DB（約2.1GB）と `manifest.json` | APAC（Automatic で可） | Standard | **公開**（カスタムドメイン） |
+| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ・語彙 | Automatic で可 | Standard | 非公開 |
+
+**Jurisdiction（`Specify` の EU など）は選ばない。** データ所在地の法規制向けの設定で、
+作成後は変更できない。地域ヒントとは別物。
 
 分けるのは、公開バケットにカスタムドメインを付けると**バケット全体が見える**ため。
 1.2GBの生データを配る必要はない。合計 3.3GB で、無料枠10GBに収まる。
 
-**Location は作成時にしか指定できない。** 公開バケットの読み手は日本の有権者なので
-APAC。状態バケットを読むのは GitHub Actions のランナー（主に米国）だけで、毎回
-生データを丸ごと落とすので ENAM。未指定の「Automatic」は**作成リクエストの発信元**に
-近い場所が選ばれるため、日本から作ると両方 APAC になる。状態バケットは明示すること。
+**Location は作成時にしか指定できない**（同じ名前で作り直しても、ヒントが尊重されるのは
+最初の1回だけ）。公開バケットの読み手は日本の有権者なので APAC。
+「Automatic」は**作成リクエストの発信元**に近い場所が選ばれるので、日本から作れば APAC になる。
+
+> **状態バケットの ENAM は「できれば」程度。** 読むのは GitHub Actions のランナー
+> （主に米国）だけで毎回1.2GB落とすため、理屈では ENAM が速い。ただし
+> **ダッシュボードの作成画面では地域ヒントを選べない**（`Specify` は Jurisdiction ＝
+> EU等のデータ所在地規制で、まったくの別物。選ばないこと）。
+> APAC のままでも日次ジョブが1〜3分伸びるだけなので、**Automatic で流してよい**。
+> どうしても ENAM にするなら S3 API から作る:
+> `aws s3api create-bucket --bucket kokkai-timeline-state
+> --create-bucket-configuration LocationConstraint=ENAM --endpoint-url ...`
 
 **Storage class は両方 Standard。** Infrequent Access は
 ①年DBが Range で常時読まれる（取り出し料金が乗る）
