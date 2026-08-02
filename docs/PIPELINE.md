@@ -269,6 +269,11 @@ $env:AWS_REQUEST_CHECKSUM_CALCULATION = 'when_required'
 $env:AWS_RESPONSE_CHECKSUM_VALIDATION = 'when_required'
 $R2 = 'https://＜アカウントID＞.r2.cloudflarestorage.com'
 
+# 疎通確認。**`aws s3 ls`（バケット一覧）は AccessDenied になるが、それが正しい。**
+# ListBuckets はアカウント全体を見る管理操作で、Object Read & Write には入っていない。
+# 確認はバケットの中を見る形でやる（空なら無出力・エラー無しが成功）
+aws s3 ls s3://kokkai-timeline/ --endpoint-url $R2
+
 aws s3 sync data\raw\speeches s3://kokkai-timeline-state/raw/speeches --endpoint-url $R2
 aws s3 cp data\politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url $R2
 aws s3 cp data\words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
@@ -299,6 +304,7 @@ GitHub は**定期実行が失敗すると、そのワークフローファイ�
 
 | 症状 | 見るところ |
 |---|---|
+| `aws s3 ls` が AccessDenied | **正常。** バケット一覧は管理操作で、Object Read & Write には含まれない。`aws s3 ls s3://<バケット>/` で確かめる |
 | 検索が過去年だけ0件 | 語彙の食い違い。上の「語彙を作り直すとき」 |
 | 検索がまったく動かない | R2 の CORS（手順3）。ブラウザのコンソールに CORS エラーが出る |
 | サイトは出るが発言が出ない | `PUBLIC_DB_BASE` の値、カスタムドメインの疎通 |
