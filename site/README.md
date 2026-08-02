@@ -8,7 +8,8 @@ cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
 npm run build      # dist/ に静的HTMLを出す（1,196ページ / 18MB）
-npm run check      # 型検査
+npm run test       # 回帰テスト（36件・0.1秒）
+npm run check      # 型検査 + テスト
 ```
 
 `npm run dev` / `npm run build` の前に `scripts/vendor.js` が自動で走り、
@@ -85,9 +86,51 @@ PUBLIC_DB_BASE=http://127.0.0.1:8788/db npm run build && npm run preview
 複数語で2文字語が混ざるときは、**いちばん珍しい2文字語を起点**にして残りを
 `instr()` で絞る。走査する行数が起点の語の件数で頭打ちになる。
 
+**引き先が3通りあるということは、直す場所も3か所あるということ。**
+絞り込み条件を足すときは、結果取得（`ftsSql` / `topicSql` / `wordSql`）と
+件数（`countQuery()`）の**両方を3経路すべて**直す。片方だけだと、
+一覧の中身と画面上部の件数が黙って食い違う。
+
+## 年をまたぐページ送り
+
+`search()` も `politicianSpeeches()` も、年ごとに別ワーカで **LIMIT 件ずつ**引く。
+その結果を扱うのは `mergePages()` ひとつ。
+
+- **年ごとの結果をそのまま連結しない。** 6年ぶんなら 20件のつもりが120件返るうえ、
+  「2026年の21件目」を飛ばして2025年へ進む。次ページで飛ばした分が後ろに付くので、
+  画面の「新しい順」がそこで崩れる。
+- 全体で LIMIT 件に切り、**1件も出さなかった年はカーソルを進めない**。
+  次ページで同じところから引き直すが、読んだページはワーカに残っているので安い。
+- 並べ替えは要らない。年DBは日付で綺麗に分かれているので、新しい年から順に
+  詰めれば全体が日付の降順になる。
+
+## 検索まわりのファイル構成とテスト
+
+DBとの通信と、SQL の組み立てを分けてある。**分けてあるのはテストのため。**
+
+| ファイル | 中身 | ブラウザが要るか |
+|---|---|---|
+| `src/lib/query.ts` | SQL の組み立て・`mergePages()`・検索語の正規化 | **要らない**（純粋な関数だけ） |
+| `src/lib/db.ts` | ワーカの管理・年ごとの並列問い合わせ | 要る（sql.js-httpvfs） |
+
+```bash
+npm run test    # site/test/*.test.ts。node:test + node:sqlite（依存パッケージ無し）
+```
+
+- `test/paging.test.ts` — 年DBを模した corpus をページ送りして、
+  **画面に並んだ順が全体の日付降順と1件ずつ一致するか**を見る
+- `test/query.test.ts` — 年DBと同じ形の小さなDBを `node:sqlite` でメモリに作り、
+  **`searchQuery()` が返した行数と `countQuery()` が返した数が一致するか**を
+  3経路 × 絞り込みの組み合わせで突き合わせる
+
+**`query.ts` に sql.js-httpvfs を import しない。** 1本でも通ると
+Node からテストを走らせられなくなる（`db.ts` 側に置くこと）。
+テストは `.ts` のまま Node が直接読むので、**enum や
+constructor の parameter property は使えない**（型を消すだけの変換のため）。
+
 ## 触る前に読むもの
 
-**`docs/PHASE1_PROTOTYPE.md` §2 の3つの制約。** `src/lib/db.ts` の SQL は
+**`docs/PHASE1_PROTOTYPE.md` §2 の3つの制約。** `src/lib/query.ts` の SQL は
 全部それに縛られている。特に:
 
 - **「新しい順」は `ORDER BY rowid DESC`。`date` で並べない**

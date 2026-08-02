@@ -10,20 +10,30 @@
 | 手順 | やること | 目安 |
 |---|---|---|
 | 1 | R2 から生データ・議員マスタ・語彙・目録を戻す | 1〜2分 |
-| 2 | **当月**の会議録を `--force` で取り直す | 会期中は10〜30分（NDLへ3秒間隔） |
-| 3 | 集計の材料になる単一DBを作り直す（`--no-fts`） | 3〜5分 |
-| 4 | 議員マスタ・争点語の集計・週次トレンド | 5〜15分 |
-| 5 | **当年**の配信用DBを作り直す | 30〜60秒 |
-| 6 | 年DBと目録を R2 へ | 1〜2分 |
-| 7 | サイトをビルドして Pages へ | 1〜2分 |
+| 2 | Wikidata の議員リスト（**無いときと月初だけ**） | 通常0分 / 取るときは数分 |
+| 3 | **前月と当月**の会議録を `--force` で取り直す | 会期中は20〜60分（NDLへ3秒間隔） |
+| 4 | 集計の材料になる単一DBを作り直す（`--no-fts`） | 3〜5分 |
+| 5 | 議員マスタ・争点語の集計・週次トレンド | 5〜15分 |
+| 6 | **当年**（1月は前年も）の配信用DBを作り直す | 30〜60秒 |
+| 7 | 年DBと目録を R2 へ | 1〜2分 |
+| 8 | サイトをビルドして Pages へ | 1〜2分 |
 
 過去年のDBは触らない。**変わるのは当年の1ファイルだけ**なので、
 CDN キャッシュは過去年ぶんが効き続ける。
+
+**取り直す範囲を当月だけにしない。** 会議録は会議の当日には出ない。月末の会議が
+翌月になって公開された分と、前月以前に入った訂正を、当月だけだと二度と拾えない
+（`fetch_range.py` はその月を完成済みとして扱うので、`--force` の範囲から外れた
+時点で永久に更新されなくなる）。前月1日から取り直すぶん、**1月は前年12月に触る**
+ので、当年に加えて前年のDBも作り直す（`--year` は複数指定できる）。
 
 ### 走らせないもの
 
 - **`scripts/build_words.py`（2文字語の語彙）** — 下の「語彙を作り直すとき」を読むこと
 - **全年の再構築** — 手動（`workflow_dispatch` の `all_years`）
+- **`scripts/fetch_wikidata.py` を毎日** — SPARQL エンドポイントは共用資源。
+  ただし**手元に `data/raw/wikidata_members.json` が無ければ必ず取る**
+  （無いまま進むと `build_politicians.py` がその場で終了して、以降の手順に届かない）
 
 ---
 
@@ -328,6 +338,10 @@ $R2 = 'https://＜アカウントID＞.r2.cloudflarestorage.com'
 aws s3 ls s3://kokkai-timeline/ --endpoint-url $R2
 
 aws s3 sync data\raw\speeches s3://kokkai-timeline-state/raw/speeches --endpoint-url $R2
+# ★ 名寄せの材料。**これを置き忘れると日次更新が議員マスタの更新で止まる。**
+#   data/raw/ は .gitignore なので、ランナーはここからしか受け取れない
+aws s3 cp data\raw\wikidata_members.json s3://kokkai-timeline-state/raw/wikidata_members.json --endpoint-url $R2
+aws s3 cp data\raw\wikidata_terms.json s3://kokkai-timeline-state/raw/wikidata_terms.json --endpoint-url $R2
 aws s3 cp data\politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url $R2
 aws s3 cp data\words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
 
