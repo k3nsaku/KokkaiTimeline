@@ -100,7 +100,9 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 `manifest.json` にも載る。食い違うと `build_db.py` が警告を出し、
 ワークフローは**その場で失敗する**（「語彙が年をまたいで揃っているか」の手順）。
 
-同じことが `data/topics.json`（争点語）にも当てはまる。争点語を足したら全年を作り直す。
+**同じことが `data/topics.json`（争点語）にも当てはまる。** ただし壊れ方は違う。
+語彙は「引けなくなる」だけだが、争点語は**`topic_hit` の `topic_id` がずれる**ので、
+`/topic/<id>` が**別の争点の発言を出す**。語を1つ足すだけでも全年を作り直すこと。
 
 ---
 
@@ -117,10 +119,23 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 | — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
 | 5 | Cloudflare Pages プロジェクト（Direct Upload） | ✅ 初回デプロイ済み |
 | 6 | Pages 用トークン `github-actions-pages-deploy` | ✅ |
-| — | **年DB6個の `cache-control` 打ち直し**（`immutable` を消す） | ❌ **ここから** |
-| — | **GitHub の Secrets / Variables** | ❌ |
-| — | **`workflow_dispatch` で手動実行** | ❌ |
-| — | `kokkai-timeline.com` を Pages に当てる | **§3.5（法務）の後**。当てた時点で実質公開 |
+| — | 年DB6個の `cache-control` 打ち直し（`immutable` を消す） | ✅ 6年とも確認・Purge 済み |
+| — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ ROADMAP §3.5 |
+| — | 争点語のレビュー（79→82件） | ✅ ROADMAP §3.2 |
+| — | **GitHub の Secrets / Variables** | ❌ **ここから** |
+| — | **`workflow_dispatch` を `all_years=true` で手動実行** | ❌ ★下記 |
+| — | `kokkai-timeline.com` を Pages に当てる | 上が通ってから。**当てた時点で実質公開** |
+
+> ### ★ 最初の実行は必ず `all_years=true`
+>
+> 2026-08-02 に争点語を 79 → 82 件に変えた。`topic_id` がずれるので、
+> **全年のDBを作り直さないと `/topic/<id>` が別の争点を引く。**
+>
+> 手元の `data/dist` は作り直し済みだが、**R2 にあるのは古い争点語で作られたもの**で、
+> 手元の `manifest.json` とも食い違っている。`all_years=true` の1回で
+> 作り直しとアップロードが両方済むので、**2.09GB を手で上げ直さなくてよい**。
+>
+> 手で上げるなら **DBを先に、目録を後に**（順番を逆にすると、まだ無いDBをサイトが引きにいく）。
 
 ## Cloudflare 側でやること
 
