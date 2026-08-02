@@ -172,6 +172,43 @@ R2 → バケット → Settings → CORS policy:
 **プレビュー配置（`<ハッシュ>.kokkai-timeline.pages.dev`）は別オリジンになるので通らない。**
 確認は本番配置か、カスタムドメインでやること。
 
+### 3.5. ★ Cache Rule を作る（**これが無いとキャッシュされない**）
+
+**カスタムドメインを付けただけではエッジに乗らない。** Cloudflare は
+**拡張子でキャッシュ判定していて、`.db` も `.json` も既定の対象外**
+（`cf-cache-status: DYNAMIC` ＝ リクエスト時点でキャッシュ対象外と判定された）。
+この構成は待ち時間が「リクエスト数 × RTT」でほぼ決まるので、ここを飛ばすと
+**RTT が 8ms → 77ms（約10倍）**になる。実測は下の表。
+
+Caching → Cache Rules → Create rule:
+
+| 項目 | 値 |
+|---|---|
+| Rule name | `r2-db-cache` |
+| 条件 | `(http.host eq "db.kokkai-timeline.com")` |
+| Cache eligibility | **Eligible for cache** |
+| Edge TTL | **Use cache-control header if present, bypass cache if not** |
+| Browser TTL | **Respect origin TTL** |
+| Status code TTL | 設定しない |
+
+- **TTL を固定値にしない**（`Ignore cache-control header and use this TTL`）。
+  目録まで1年握られて更新が反映されなくなる。アップロード時に付けた
+  `cache-control` に任せれば、**DBは1年（immutable）・目録は300秒**と個別に効く
+- `bypass cache if not` を選ぶのは、ヘッダを付け忘れたときに
+  「遅くなるだけ」で済ませるため。既定TTLで握らせると古い目録が配られうる
+- **Browser TTL は明示する。** 省くとゾーン全体の Browser Cache TTL が効いて、
+  目録の300秒が上書きされることがある
+
+計測（この環境 → Cloudflare エッジ / 8KB の Range リクエスト / keep-alive）:
+
+| | RTT 中央値 |
+|---|---|
+| Cache Rule 前（`DYNAMIC`） | **77ms**（浅い位置26〜32 / 深い位置73〜297） |
+| Cache Rule 後（`HIT`） | **8ms** |
+| 初回（`MISS`・接続確立込み） | 210〜260ms。**この1回でオブジェクト全体がエッジに載る** |
+
+`MISS` のあとは、それまで一度も読んでいない位置でも 8ms で返る。
+
 ### 4. R2 の S3 API キーを作る
 
 R2 → Manage R2 API Tokens → Create API token。
