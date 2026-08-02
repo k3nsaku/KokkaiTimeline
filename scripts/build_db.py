@@ -42,6 +42,7 @@ HTTP Range で1ファイルだけ読む sql.js-httpvfs から開けない。
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import re
@@ -211,6 +212,16 @@ CREATE TABLE IF NOT EXISTS word_hit (
     PRIMARY KEY (word_id, speech_rowid)
 ) WITHOUT ROWID;
 
+-- 年DBの素性。**年をまたいで食い違ってはいけないもの**を記録する。
+-- 特に vocabulary（2文字語の語彙の指紋）: 日次更新で当年だけ作り直す設計なので、
+-- 語彙を作り直すと当年だけ新しくなる。検索は「語彙は年によらない」前提で
+-- 新しい年1つだけを見て引けるか判定するため、**過去年が黙って0件になる**。
+-- write_manifest() が食い違いを検出して警告する
+CREATE TABLE IF NOT EXISTS meta (
+    key             TEXT PRIMARY KEY,
+    value           TEXT NOT NULL
+);
+
 -- 名寄せレポートの材料
 CREATE VIEW IF NOT EXISTS speaker_stats AS
 SELECT speaker, speaker_yomi, speaker_group,
@@ -361,6 +372,27 @@ def load_words(path: Path) -> list[str]:
         logger.warning("%s が無い。2文字語の索引を作らない", path.name)
         return []
     return list(json.loads(path.read_text(encoding="utf-8"))["words"])
+
+
+def fingerprint(items: list[str]) -> str:
+    """語彙の指紋。年をまたいで同じでなければならないものを比べるのに使う。"""
+    return hashlib.sha256("\n".join(items).encode("utf-8")).hexdigest()[:16]
+
+
+def file_version(path: Path) -> str:
+    """DBファイルの中身の指紋。**URL に付けて配信の世代を分ける**ために使う。
+
+    日次更新で当年のDBを差し替えると、開きっぱなしのページは
+    「古いページと新しいページが混ざったDB」を読むことになり、
+    `no such table: speech_fts` のような形で壊れる。
+    URL が世代ごとに変わっていれば、CDN のキャッシュもそのまま入れ替わる
+    （毎日パージしなくてよい）。
+    """
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()[:16]
 
 
 def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
@@ -545,6 +577,11 @@ def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
     logger.info("=== %s年 → %s ===", year, db_path.name)
 
     con = open_fresh(db_path, page_size)
+    con.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [
+        ("vocabulary", fingerprint(words)),
+        ("n_words", str(len(words))),
+        ("topics", fingerprint([t["term"] for t in topics])),
+    ])
     insert_politicians(con, politicians)
     n_meetings, n_speeches = load(con, raw_dir, year, unit_map)
     n_hits = build_topic_index(con, topics)
@@ -580,18 +617,69 @@ def write_manifest(dist_dir: Path) -> Path:
     サイトは「どの年DBがあるか」をこれで知る（年ごとに別ワーカを立てるため、
     年の一覧が要る）。**引数の年ではなくディレクトリを走査する**ので、
     `--year 2026` だけを作り直しても他の年が消えない。
+
+    ファイルが手元に無い年は、**前回の目録の記載を引き継ぐ**。日次更新（CI）は
+    当年しか手元に置かないので、走査だけにすると目録が当年1年になってしまい、
+    サイトが過去年を引かなくなる。引き継いだ年はログに出す。
     """
+    out = dist_dir / "manifest.json"
+    previous: dict[int, dict] = {}
+    if out.exists():
+        try:
+            previous = {e["year"]: e
+                        for e in json.loads(out.read_text(encoding="utf-8"))["databases"]}
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("既存の %s を読めなかった。走査した年だけで作り直す", out.name)
+
     files = []
     for path in sorted(dist_dir.glob("kokkai-*.db")):
         year = path.stem.removeprefix("kokkai-")
         if not year.isdigit():
             continue
-        files.append({"year": int(year), "file": path.name, "size": path.stat().st_size})
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            meta = dict(con.execute("SELECT key, value FROM meta"))
+        except sqlite3.OperationalError:
+            meta = {}                      # meta を持たない古いDB
+        finally:
+            con.close()
+        files.append({"year": int(year), "file": path.name, "size": path.stat().st_size,
+                      "version": file_version(path), "vocabulary": meta.get("vocabulary")})
+
+    built = {f["year"] for f in files}
+    for year, entry in sorted(previous.items()):
+        if year not in built:
+            logger.info("目録: %s年は手元に無いので前回の記載を引き継ぐ", year)
+            files.append(entry)
+    files.sort(key=lambda f: f["year"])
+
+    warn_vocabulary_drift(files)
 
     manifest = {"years": [f["year"] for f in files], "databases": files}
-    out = dist_dir / "manifest.json"
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return out
+
+
+def warn_vocabulary_drift(files: list[dict]) -> None:
+    """年をまたいで2文字語の語彙が食い違っていないか見る。
+
+    **食い違うと検索が黙って壊れる。** 検索は「語彙は年によらない」前提で
+    いちばん新しい年だけを見て「その2文字語を引けるか」を判定するので、
+    当年にしかない語を引くと**過去年が0件のまま返る**。エラーも出ない。
+
+    日次更新で `build_words.py` を回してしまうとこうなる。
+    語彙を作り直したら**全年を作り直すこと**（実測で約6分）。
+    """
+    # 指紋を持たないDB（meta 以前に作ったもの）も「別の語彙」として扱う。
+    # 中身が同じである保証がどこにも無いため、素通ししない
+    seen = {f["vocabulary"] for f in files}
+    if len(seen) <= 1:
+        return
+    logger.error("★ 2文字語の語彙が年によって違う。検索が過去年で黙って0件になる")
+    for f in files:
+        logger.error("   %s: vocabulary=%s", f["file"], f["vocabulary"] or "(無し)")
+    logger.error("   → data/words.json を固定したうえで**全年を作り直すこと**:")
+    logger.error("      python scripts/build_db.py --split-by-year --page-size 8192")
 
 
 def run_split(args: argparse.Namespace) -> None:

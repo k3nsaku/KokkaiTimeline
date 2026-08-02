@@ -22,7 +22,13 @@ export const DB_BASE = (import.meta.env.PUBLIC_DB_BASE ?? "/db").replace(/\/$/, 
 
 export interface Manifest {
   years: number[];
-  databases: { year: number; file: string; size: number }[];
+  databases: {
+    year: number; file: string; size: number;
+    /** そのファイルの中身の指紋。URL に付けて配信の世代を分ける */
+    version?: string;
+    /** 2文字語の語彙の指紋。年をまたいで一致していなければならない */
+    vocabulary?: string | null;
+  }[];
 }
 
 export interface SpeechRow {
@@ -84,14 +90,16 @@ export function getManifest(): Promise<Manifest> {
   return manifestPromise;
 }
 
-function workerFor(year: number): Promise<WorkerHttpvfs> {
+async function workerFor(year: number): Promise<WorkerHttpvfs> {
   let w = workers.get(year);
   if (!w) {
+    const manifest = await getManifest();
+    const entry = manifest.databases.find((d) => d.year === year);
+    // 世代を URL に入れる。日次更新でDBが差し替わっても、
+    // 新しく開いたページは別のURLとして取り直す（CDNのパージも要らない）
+    const url = `${DB_BASE}/kokkai-${year}.db` + (entry?.version ? `?v=${entry.version}` : "");
     w = createDbWorker(
-      [{
-        from: "inline",
-        config: { serverMode: "full", requestChunkSize: CHUNK, url: `${DB_BASE}/kokkai-${year}.db` },
-      }],
+      [{ from: "inline", config: { serverMode: "full", requestChunkSize: CHUNK, url } }],
       // ワーカ内で解決されるので絶対パスで渡す（相対だと /vendor/vendor/ を見に行く）
       new URL("/vendor/sqlite.worker.js", location.href).href,
       new URL("/vendor/sql-wasm.wasm", location.href).href,
@@ -104,9 +112,24 @@ function workerFor(year: number): Promise<WorkerHttpvfs> {
 async function query<T = Record<string, unknown>>(
   year: number, sql: string, params: unknown[] = [],
 ): Promise<T[]> {
-  const { db } = await workerFor(year);
-  // ★ 第2引数は配列で1個。展開して渡すと束縛されない
-  return (await db.query(sql, params as never)) as T[];
+  try {
+    const { db } = await workerFor(year);
+    // ★ 第2引数は配列で1個。展開して渡すと束縛されない
+    return (await db.query(sql, params as never)) as T[];
+  } catch (first) {
+    // 日次更新でDBが差し替わると、開きっぱなしのページは「古いページと新しい
+    // ページが混ざったDB」を読んで壊れる（`no such table: speech_fts` の形で出る）。
+    // 目録を取り直してワーカを作り直せば、新しい世代を頭から読み直せる。
+    // **やり直しは1回だけ。** 本当に誤っている問い合わせを無限に投げ直さない。
+    //
+    // 古いワーカは捨てるだけで、止められない（sql.js-httpvfs が Worker を
+    // 外に出さないため）。差し替えは1日1回なので、取りこぼしても1つ残るだけ。
+    console.warn(`${year}年のDBを読み直す`, first);
+    manifestPromise = null;
+    workers.delete(year);
+    const { db } = await workerFor(year);
+    return (await db.query(sql, params as never)) as T[];
+  }
 }
 
 /** 年ごとに同じ問い合わせを並列で投げる。ワーカが別なので本当に並列に動く。 */
