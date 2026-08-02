@@ -10,7 +10,7 @@ import Base from "../layouts/Base.astro";
 import { manifest, topicSeries } from "../lib/site-data";
 
 const years = manifest().years;
-// 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（79件・数KB）
+// 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）
 const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
 ---
 
@@ -58,7 +58,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
   <div id="results"></div>
   <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
 
-  {/* 年の一覧と争点語（79件・数KB）をページに埋めておく。
+  {/* 年の一覧と争点語（82件・数KB）をページに埋めておく。
       争点語かどうかで引き先が変わる（topic_hit か FTS か）ので、検索の前に要る */}
   <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
 

@@ -7,7 +7,7 @@ ROADMAP §3.3。**完全静的サイト**（Astro）。サーバもAPIも持た�
 cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
-npm run build      # dist/ に静的HTMLを出す（1,198ページ / 18MB）
+npm run build      # dist/ に静的HTMLを出す（1,201ページ / 18MB）
 npm run test       # 回帰テスト（36件・0.1秒）
 npm run check      # 型検査 + テスト
 ```
@@ -20,7 +20,7 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 中身の大半はクライアント側でDBから引くので、静的サイトジェネレータに求めたのは
 **ページの事前生成**と**素の `<script>` をそのまま書けること**の2つだけ。
 
-- 議員 1,111ページ・争点語 79ページを `getStaticPaths` で事前生成する。
+- 議員 1,111ページ・争点語 82ページを `getStaticPaths` で事前生成する。
   氏名で検索されたときに、中身のあるHTMLが返るのはここだけ
 - UIフレームワークを入れていない。`.astro` の `<script>` に素のTypeScriptを書く。
   Vite がバンドルと型検査をしてくれる。React も Svelte も要らなかった
@@ -35,8 +35,8 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 | `/politicians` | 静的 | 議員1,111人の一覧。絞り込みはDOM上で完結 |
 | `/politician/<id>` | **静的 ×1,111** | 氏名・所属会派の時系列は静的。発言はDBから |
 | `/speech/<speech_id>` | 静的1枚 + rewrite | 発言650,785件は事前生成できない（下記） |
-| `/topics` | 静的 | 争点語79件 |
-| `/topic/<id>` | **静的 ×79** | 頻度推移のSVGと会派比較は**ビルド時に生成**。発言はDBから |
+| `/topics` | 静的 | 争点語82件 |
+| `/topic/<id>` | **静的 ×82** | 頻度推移のSVGと会派比較は**ビルド時に生成**。発言はDBから |
 | `/about` | 静的 | データの出どころと限界 |
 | `/disclaimer` | 静的 | 免責事項・引用の考え方・**訂正依頼の窓口**・運営者表示 |
 | `/privacy` | 静的 | プライバシーポリシー |
