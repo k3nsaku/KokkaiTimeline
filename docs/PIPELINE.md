@@ -259,26 +259,54 @@ Pages 用（手順6）は `github-actions-pages-deploy` にして対にしてお
 
 ### 5. Cloudflare Pages のプロジェクトを作る
 
-Workers & Pages → Create → Pages → **Direct Upload**（Git連携ではない）。
-名前は `kokkai-timeline`。ここが `PAGES_PROJECT`。
+**手順6のトークンを先に作ること。** ダッシュボードからは作り切れない（下記）。
 
-> Git連携にしないのは、サイトのビルドに `data/politicians.json` などの
-> 生成物が要るため。それらはリポジトリに入れていないので、Cloudflare 側では
-> ビルドできない。GitHub Actions でビルドして成果物だけ送る。
+> **Git連携にしない。** サイトのビルドに `data/politicians.json` などの生成物が
+> 要るため。それらはリポジトリに入れていないので、Cloudflare 側ではビルドできない。
+> GitHub Actions でビルドして成果物だけ送る。
+
+> **Workers ではなく Pages。** ダッシュボードの `Create application` は Workers の
+> 入口で、Pages は「Looking to deploy Pages? Get started」の隅のリンクにある。
+> `Upload your static files` を選ぶと Pages ではなく **Worker** ができてしまう。
+> **無料枠が違う**（Pages は静的ファイルのリクエストが無制限、Workers は
+> 1日10万リクエスト）。バズっても財布が痛まない構成にするのが前提なので Pages。
+
+★ **ダッシュボードの Drag and drop は使えない。1,000ファイルが上限で、
+このサイトは 1,209ファイル**（議員ページだけで1,111枚ある）。**将来も超え続ける。**
+名前を入れた時点でプロジェクトだけは作られるので、アップロードは Wrangler でやる。
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = '＜手順6のトークン＞'
+$env:CLOUDFLARE_ACCOUNT_ID = '＜アカウントID＞'
+
+# ダッシュボードで作っていなければ
+npx --yes wrangler@4 pages project create kokkai-timeline --production-branch main
+
+npx --yes wrangler@4 pages project list   # Production branch が main か確かめる
+npx --yes wrangler@4 pages deploy site/dist --project-name kokkai-timeline --branch main
+```
+
+名前は `kokkai-timeline`。ここが `PAGES_PROJECT`。
+`--branch main` は Pages 上の「本番かプレビューか」のラベルで、**git のブランチ名
+（`master`）とは無関係**。Direct Upload なので Cloudflare は git を見ない。
+プロジェクトの Production branch と食い違うとプレビュー扱いになり、
+**カスタムドメインに出ない。**
 
 初回のデプロイが済んだら、Pages → Custom domains → `kokkai-timeline.com` を当てる。
 `www` は使わない（サイト側の正規URLを apex に揃えてある。
 `astro.config.mjs` の `site` と `<link rel="canonical">`）。
 `www` からのアクセスを拾いたければ、Redirect Rule で apex に 301 する。
 
-### 6. Pages 用の API トークンを作る
+### 6. Pages 用の API トークンを作る（**手順5より先**）
 
-**R2 のトークンとは置き場所が違う。** My Profile → API Tokens → Create Token。
+**R2 のトークンとは置き場所が違う。** アカウントのトップではなく
+My Profile → API Tokens → Create Token → 一番下の **Custom token**。
 
 | 項目 | 値 |
 |---|---|
 | Token name | `github-actions-pages-deploy` |
-| Permission | **Account → Cloudflare Pages → Edit** |
+| Permission | **Account → Cloudflare Pages → Edit** の1行だけ（Zone は要らない） |
+| TTL | **空のまま**（＝無期限）。欄を押すとカレンダーが開くが、日付を選ばずに Esc で閉じる |
 
 ---
 
