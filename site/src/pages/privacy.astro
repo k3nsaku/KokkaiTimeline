@@ -1,0 +1,135 @@
+---
+/**
+ * プライバシーポリシー（ROADMAP §3.5）。
+ *
+ * **このサイトの構造そのものが根拠になっている。** サーバを持たず、検索も集計も
+ * ブラウザの中で終わるので、書けることが素直に少ない。
+ * アクセス解析を入れたら `src/lib/operator.ts` の `analytics` を必ず埋めること
+ * （ここの記述が変わる）。
+ */
+import Base from "../layouts/Base.astro";
+import { OPERATOR, mailParts, operatorReady } from "../lib/operator";
+
+const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
+const analytics = OPERATOR.analytics;
+---
+
+<Base
+  title="プライバシーポリシー"
+  description="何を集めていないか、どこに通信が発生するか。"
+>
+  <h1>プライバシーポリシー</h1>
+
+  {!operatorReady && (
+    <p class="todo">
+      ⚠ <strong>未記入。</strong>運営者名と連絡先が <code>src/lib/operator.ts</code> に
+      入っていない。ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
+    </p>
+  )}
+
+  <h2>検索したことは送られない</h2>
+  <p>
+    このサイトはサーバを持たない静的サイトで、<strong>検索も集計もすべて閲覧者の端末の中で動く</strong>。
+    入力した検索語、選んだ議員や争点語、閲覧したページの記録は、どこにも送信していない。
+    運営者はそれらを受け取らないし、保存もしていない。
+  </p>
+  <p class="muted small">
+    仕組みとしては、年ごとに分けた SQLite ファイルをオブジェクトストレージに置き、
+    ブラウザが HTTP Range で必要な部分だけを読んでいる。
+    サーバに渡るのは「ファイルの何バイト目から何バイト目が欲しいか」だけで、
+    検索語そのものではない。
+  </p>
+
+  <h2>Cookie を使っていない</h2>
+  <p>
+    Cookie も、ローカルストレージも、その他の端末内への保存も行っていない。
+    設定を覚える仕組みが無いので、同意を求める表示も出さない。
+  </p>
+
+  <h2>アクセスに伴って発生する通信</h2>
+  <p>このサイトを表示すると、次の2か所と通信する。どちらも運営者が用意したものだ。</p>
+  <ul>
+    <li>
+      <strong>ページ本体</strong> — Cloudflare Pages で配信している
+    </li>
+    <li>
+      <strong>会議録のデータベース</strong> — <code>db.kokkai-timeline.com</code>（Cloudflare R2）。
+      検索や発言の表示のたびに、必要な部分だけを読みに行く
+    </li>
+  </ul>
+  <p>
+    配信元である Cloudflare には、通信に伴って IPアドレス・日時・
+    要求されたファイルなどが技術的なログとして記録される。これは配信と
+    不正利用の防止のために事業者側で扱われるもので、運営者はここから
+    個人を特定する用途では利用しない。取り扱いは
+    <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener">Cloudflare のプライバシーポリシー</a>による。
+  </p>
+  <p>
+    <strong>広告・第三者による解析・外部のフォント配信・SNSの埋め込みは使っていない。</strong>
+    上の2か所以外への通信は発生しない。
+  </p>
+
+  <h2>アクセス解析</h2>
+  {analytics ? (
+    <p>
+      アクセス状況の把握に
+      <a href={analytics.url} rel="noopener">{analytics.name}</a> を使っている。
+      {analytics.cookies
+        ? "この計測では Cookie を用いる。"
+        : "この計測では Cookie を用いず、個々の閲覧者を追跡しない。"}
+    </p>
+  ) : (
+    <p>
+      <strong>導入していない。</strong>入れる場合は、事前にここへ何を使っているかを明記する。
+    </p>
+  )}
+
+  <h2>問い合わせで受け取った情報</h2>
+  <p>
+    訂正依頼などで連絡をもらったときは、その内容と返信に必要な範囲の情報だけを、
+    やり取りと訂正の記録として扱う。それ以外の目的には使わず、第三者へ提供しない。
+    ただし、法令に基づく開示の求めがある場合を除く。
+  </p>
+  {OPERATOR.formUrl && (
+    <p class="muted small">
+      訂正依頼フォームは外部サービスを利用している。フォームに入力した内容は、
+      その提供者のサーバを経由して運営者に届く。
+    </p>
+  )}
+
+  <h2>会議録に含まれる個人に関する情報</h2>
+  <p>
+    このサイトが扱っているのは、国会で公開して行われた発言の記録
+    （国立国会図書館が公開しているもの）であり、
+    <strong>公人としての公的な活動の記録</strong>である。
+    掲載についての申し出は<a href="/disclaimer#corrections">訂正・削除の依頼</a>から受け付ける。
+  </p>
+
+  <h2>連絡先</h2>
+  {mail ? (
+    <p>
+      {OPERATOR.name}（個人）／
+      <span class="mail">{mail.user} <span aria-hidden="true">＠</span> {mail.domain}</span>
+    </p>
+  ) : (
+    <p class="todo small">⚠ 連絡先が未記入（<code>src/lib/operator.ts</code>）。</p>
+  )}
+
+  <h2>変更</h2>
+  <p>
+    内容を変更したときは、このページを更新する。
+  </p>
+
+  <p class="muted small">
+    <a href="/disclaimer">免責事項・訂正依頼</a> ／
+    <a href="/about">このサイトについて</a>
+  </p>
+
+  <style>
+    .todo {
+      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
+      background: var(--card); border-radius: 0 6px 6px 0;
+    }
+    .mail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</Base>

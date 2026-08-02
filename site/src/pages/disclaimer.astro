@@ -1,0 +1,142 @@
+---
+/**
+ * 免責事項・著作権の扱い・訂正依頼の窓口・運営者表示（ROADMAP §3.5）。
+ *
+ * **運営者名と連絡先は `src/lib/operator.ts` の1か所にある。**
+ * 未記入なら、このページは警告を出す（埋めるまで公開しない）。
+ */
+import Base from "../layouts/Base.astro";
+import { OPERATOR, mailParts, operatorReady } from "../lib/operator";
+
+const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
+---
+
+<Base
+  title="免責事項・訂正依頼"
+  description="このサイトの位置づけ、発言の引用の考え方、誤りを見つけたときの連絡先。"
+>
+  <h1>免責事項・訂正依頼</h1>
+
+  {!operatorReady && (
+    <p class="todo">
+      ⚠ <strong>未記入。</strong>運営者名と連絡先が <code>src/lib/operator.ts</code> に
+      入っていない。ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
+    </p>
+  )}
+
+  <h2>このサイトの位置づけ</h2>
+  <p>
+    国立国会図書館の国会会議録検索システムが公開しているAPIから会議録を取得し、
+    検索と時系列表示ができるように整理して表示している。
+    <strong>有権者が自分で判断するための材料を出すことが目的</strong>で、
+    独自の点数付け・ランキング・議員の評価はしない。
+    特定の候補者や政党への投票を勧めたり、妨げたりするものでもない。
+  </p>
+
+  <h2>正確性について</h2>
+  <p>
+    表示している発言は会議録そのものだが、<strong>その周辺の情報には機械処理が入っている</strong>。
+    次のものは誤りうる。
+  </p>
+  <ul>
+    <li>
+      <strong>発言者と議員の対応づけ（名寄せ）</strong> — 同姓同名の分離を含め、
+      読みと会派から機械的に判定している
+    </li>
+    <li>
+      <strong>会派から政党への対応</strong> — 会議録に書いてあるのは会派で、
+      政党名ではない。統一会派は1会派＝1政党とも限らない。
+      特定できないものは「不明」として扱い、推測では埋めていない
+    </li>
+    <li><strong>検索結果の抜粋位置</strong> — 語の前後を機械的に切り出している</li>
+  </ul>
+  <p>
+    <strong>最終的な確認は必ず原典（国会会議録）で行うこと。</strong>
+    どの発言にも原典へのリンクを付けてある。
+    このサイトの表示に基づいて利用者が行った判断について、運営者は責任を負わない。
+  </p>
+
+  <h2>発言の引用について</h2>
+  <p>
+    国会での発言は、著作権法40条1項が定める
+    「公開して行われた政治上の演説又は陳述」にあたり、方法を問わず利用できる。
+    ただし同項の但し書きは<strong>「同一の著作者のものを編集して利用する場合」を除いている</strong>。
+    そこでこのサイトでは、
+  </p>
+  <ul>
+    <li>議員ページと検索結果に出すのは<strong>抜粋（前後160字程度）だけ</strong>にしている</li>
+    <li>全文はその発言のページで1件ずつ表示し、必ず原典リンクを添えている</li>
+    <li>ある議員の発言を全文で並べた「発言集」は作らない</li>
+  </ul>
+
+  <h2 id="corrections">訂正・削除の依頼</h2>
+  <p>
+    所属会派・所属政党・名寄せの誤り、その他の不具合を見つけたら知らせてほしい。
+    次のことが書いてあると、そのまま直せる。
+  </p>
+  <ul>
+    <li>該当するページのURL</li>
+    <li>どこがどう誤っているか</li>
+    <li>正しい情報と、その根拠（議院の公表資料など）</li>
+  </ul>
+
+  {OPERATOR.formUrl && (
+    <p>
+      <a href={OPERATOR.formUrl} rel="noopener">訂正依頼フォーム</a>
+    </p>
+  )}
+  {mail ? (
+    <p>
+      連絡先: <span class="mail" data-user={mail.user} data-domain={mail.domain}>
+        {mail.user} <span aria-hidden="true">＠</span> {mail.domain}
+      </span>
+    </p>
+  ) : (
+    <p class="todo small">⚠ 連絡先が未記入（<code>src/lib/operator.ts</code>）。</p>
+  )}
+
+  <h3>直せないもの</h3>
+  <p>
+    <strong>会議録そのものの誤り</strong>は、こちらでは直せない。
+    表示は国立国会図書館のAPIが返すものをそのまま出している。
+    会議録の内容についての申し出は、国立国会図書館または各議院へ。
+  </p>
+  <p>
+    <strong>発言そのものの削除は原則として行わない。</strong>
+    国会の会議録は公開の記録で、原典も国立国会図書館が公開し続けている。
+    ただし、事情がある場合は個別に検討するので、上の窓口から知らせてほしい。
+  </p>
+
+  <h2>そのほか</h2>
+  <ul>
+    <li>外部サイトへのリンク先の内容について、運営者は責任を負わない</li>
+    <li>予告なく内容を変更し、また公開を停止することがある</li>
+    <li>
+      収録しているのは2021年1月以降の会議録で、<strong>全期間を網羅していない</strong>。
+      「発言が無い」ことは、その議員が何も述べていないことを意味しない
+    </li>
+  </ul>
+
+  <h2 id="operator">運営者</h2>
+  {operatorReady ? (
+    <p>{OPERATOR.name}（個人）</p>
+  ) : (
+    <p class="todo small">
+      ⚠ 未記入。<strong>ハンドルネームでよい</strong>
+      （販売も広告もしていないので、特定商取引法の表示義務は生じない）。
+    </p>
+  )}
+  <p class="muted small">
+    <a href="/privacy">プライバシーポリシー</a> ／
+    <a href="/about">このサイトについて</a>
+  </p>
+
+  <style>
+    .todo {
+      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
+      background: var(--card); border-radius: 0 6px 6px 0;
+    }
+    /* メールアドレスをそのまま置かない（収集よけ）。表示は分かるようにしてある */
+    .mail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</Base>

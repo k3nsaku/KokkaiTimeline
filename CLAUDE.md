@@ -82,7 +82,7 @@ Node 24 / Astro。詳細は **`site/README.md`**。
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
-npm run build    # dist/ に 1,196ページ・18MB
+npm run build    # dist/ に 1,198ページ・18MB
 npm run test     # 検索SQLとページ送りの回帰テスト（36件・0.1秒）
 npm run check    # 型検査 + テスト
 ```
@@ -233,11 +233,15 @@ UIの「新しい順」はこれに依存する。詳しくは下の落とし穴
   実体は sql.js の `exec(sql, params)`。展開して渡すと**黙って束縛されない**。
 - **wasm の URL は絶対パスで渡す。** ワーカ内で解決されるため相対パスだと壊れる。
 - **やり直しでは URL を変える（`&retry=`）。同じURLを引き直しても救えない。**
-  年DBは `immutable` で1年握らせるので、**壊れたものが一度ブラウザキャッシュに
-  入ると Ctrl+Shift+R でも読み直されない**。過去年は差し替わらないので `?v=` も
-  変わらず、利用者は手でキャッシュを消すまで直せない（実際に踏んだ。
+  過去年のDBは差し替わらないので `?v=` も変わらず、**壊れたものが一度ブラウザ
+  キャッシュに入ると、同じURLでは何度引いても同じものが返る**（実際に踏んだ。
   Chrome だけ全ページで `file is not a database`、シークレットと他ブラウザでは正常）。
   再現は `POISON=1 node scripts/dev-data-server.js`（`retry=` の無いURLにゼロを返す）。
+- **年DBの `cache-control` に `immutable` を付けない。**
+  付けると Ctrl+Shift+R でも読み直されず、利用者は手でキャッシュを消すまで直せない
+  （1日で2回踏んだので外した）。配信は
+  `public, max-age=3600, s-maxage=31536000`。**エッジは `s-maxage` で1年握るので
+  CDN の効きは落ちない。** 詳細は `docs/PIPELINE.md`。
 - **ページ送りに OFFSET を使わない。** 5ページ目（OFFSET 80）で134リクエスト・4.1秒。
   `rowid < ?` の keyset で進めれば何ページ目でも1ページ目と同じコストで済む。
 - **年またぎのマージソートは要らない。だが連結もしてはいけない。**

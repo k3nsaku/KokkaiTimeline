@@ -67,11 +67,11 @@ async function workerFor(year: number, bustCache = false): Promise<WorkerHttpvfs
     // 新しく開いたページは別のURLとして取り直す（CDNのパージも要らない）
     const url = `${DB_BASE}/kokkai-${year}.db`
       + (entry?.version ? `?v=${entry.version}` : "?v=0")
-      // やり直しのときだけ、URLを変えてブラウザキャッシュを外す。**これが無いと
-      // 壊れたキャッシュから抜け出せない。** 年DBは `immutable` で1年握らせるので、
-      // 一度おかしなものが入ると Ctrl+Shift+R でも読み直されず、
-      // 過去年は差し替わらないので `?v=` も変わらない（＝利用者は手でキャッシュを
-      // 消すまで直せない。実際に踏んだ）
+      // やり直しのときだけ、URLを変えてブラウザキャッシュを外す。
+      // 壊れたものがブラウザキャッシュに入ると、過去年は差し替わらないので
+      // `?v=` も変わらず、同じURLを引き直しても同じ壊れたものが返る（実際に踏んだ）。
+      // 配信側は `immutable` をやめた（ブラウザは1時間）ので放っておいても
+      // いつかは直るが、**利用者を1時間待たせない**ためにここで外す
       + (bustCache ? `&retry=${++retryCount}` : "");
     w = createDbWorker(
       [{ from: "inline", config: { serverMode: "full", requestChunkSize: CHUNK, url } }],

@@ -173,10 +173,15 @@ jobs:
         run: |
           set -euo pipefail
           # DBのURLには目録に載っている世代（中身の指紋）が `?v=` で付く。
-          # 中身が変われば別のURLになるので、**長く握らせてよいしパージも要らない**
+          # 中身が変われば別のURLになるので、**長く握らせてよいしパージも要らない**。
+          #
+          # ★ ただし `immutable` は付けない。ブラウザキャッシュに壊れたものが
+          #   入ったときに Ctrl+Shift+R でも直せなくなる（実際に踏んだ。
+          #   docs/PIPELINE.md「DBの差し替えとキャッシュ」）。
+          #   エッジは s-maxage で1年握るので CDN の効きは落ちない
           for db in data/dist/kokkai-*.db; do
             aws s3 cp "$db" "s3://$PUBLIC_BUCKET/$(basename "$db")" $R2 --no-progress \
-              --cache-control "public, max-age=31536000, immutable"
+              --cache-control "public, max-age=3600, s-maxage=31536000"
           done
           # 目録は**DBを上げ終わってから**。先に上げると、まだ無いDBをサイトが引きにいく。
           # これだけは短くする（新しい世代に気づく入口がここしかない）

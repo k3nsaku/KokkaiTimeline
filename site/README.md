@@ -7,7 +7,7 @@ ROADMAP §3.3。**完全静的サイト**（Astro）。サーバもAPIも持た�
 cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
-npm run build      # dist/ に静的HTMLを出す（1,196ページ / 18MB）
+npm run build      # dist/ に静的HTMLを出す（1,198ページ / 18MB）
 npm run test       # 回帰テスト（36件・0.1秒）
 npm run check      # 型検査 + テスト
 ```
@@ -38,6 +38,17 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 | `/topics` | 静的 | 争点語79件 |
 | `/topic/<id>` | **静的 ×79** | 頻度推移のSVGと会派比較は**ビルド時に生成**。発言はDBから |
 | `/about` | 静的 | データの出どころと限界 |
+| `/disclaimer` | 静的 | 免責事項・引用の考え方・**訂正依頼の窓口**・運営者表示 |
+| `/privacy` | 静的 | プライバシーポリシー |
+
+### 運営者名と連絡先は `src/lib/operator.ts` の1か所
+
+`/about` `/disclaimer` `/privacy` の3ページがここを見ている。
+**未記入のあいだは3ページとも⚠の警告を出す**（ROADMAP §3.5。埋まるまで公開しない）。
+アクセス解析を入れたら `analytics` を必ず埋めること — `/privacy` の記述が変わる。
+
+`operator.ts` から `db.ts` を import しないこと。`format.ts` と同じ理由で、
+ビルド時（Node側）に読まれるので、ブラウザ専用のコードを引き込むと SSR が落ちる。
 
 ### `/speech/<id>` の扱い
 

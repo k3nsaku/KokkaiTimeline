@@ -50,10 +50,33 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 世代がURLに入っていれば、新しく開いたページは別のURLとして取り直し、
 古いURLはエッジに残ったまま（＝中身が揃ったまま）になる。
-だからDBは `immutable` で長く握らせてよく、**短くするのは `manifest.json` だけ**。
+だからDBは長く握らせてよく、**短くするのは `manifest.json` だけ**。
 
 それでも取りこぼす場合の保険として、問い合わせが失敗したら
 **目録を取り直してワーカを作り直し、1回だけやり直す**（`site/src/lib/db.ts`）。
+やり直しでは `&retry=` を足してURLを変える。**同じURLを引き直しても救えない。**
+
+### ★ `immutable` は付けない（2026-08-02 に外した）
+
+| | |
+|---|---|
+| 年DB | `public, max-age=3600, s-maxage=31536000` |
+| `manifest.json` | `public, max-age=300` |
+
+`immutable` を付けていた時期に、**Chrome のブラウザキャッシュに壊れたものが入り、
+全ページが `SQLite: file is not a database` になる事故を1日に2回踏んだ**
+（シークレットと他ブラウザでは正常 ＝ プロファイル固有）。`immutable` は
+「再検証するな」の意味なので、**Ctrl+Shift+R でも直らず**、過去年は差し替わらないので
+`?v=` も変わらない。利用者は手でキャッシュを消すまで直せない。
+
+`?v=` で世代を分けている以上、`immutable` が防いでいるのは条件付きリクエストだけ。
+外しても:
+
+- **エッジは `s-maxage` で1年保持する**ので CDN の効きは落ちない（RTT 8ms のまま）
+- 中身が変われば `?v=` で別URLになるので、ブラウザ側を短くしても不整合は起きない
+- コストは1時間ごとの条件付きリクエスト1本（エッジが 304 を 8ms で返す）
+
+`site/src/lib/db.ts` の `&retry=` は残す。1時間待たずにその場で復旧させるため。
 
 ## ★ 語彙を作り直すとき
 
@@ -92,10 +115,12 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 | 3.5 | **Cache Rule `r2-db-cache`** | ✅ RTT 77ms→8ms を確認 |
 | 4 | R2 APIキー `github-actions-daily-update` | ✅ |
 | — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
-| 5 | **Cloudflare Pages プロジェクト** | ❌ **ここから** |
-| 6 | **Pages 用トークン `github-actions-pages-deploy`** | ❌ |
+| 5 | Cloudflare Pages プロジェクト（Direct Upload） | ✅ 初回デプロイ済み |
+| 6 | Pages 用トークン `github-actions-pages-deploy` | ✅ |
+| — | **年DB6個の `cache-control` 打ち直し**（`immutable` を消す） | ❌ **ここから** |
 | — | **GitHub の Secrets / Variables** | ❌ |
 | — | **`workflow_dispatch` で手動実行** | ❌ |
+| — | `kokkai-timeline.com` を Pages に当てる | **§3.5（法務）の後**。当てた時点で実質公開 |
 
 ## Cloudflare 側でやること
 
@@ -219,7 +244,8 @@ Caching → Cache Rules → Create rule:
 
 - **TTL を固定値にしない**（`Ignore cache-control header and use this TTL`）。
   目録まで1年握られて更新が反映されなくなる。アップロード時に付けた
-  `cache-control` に任せれば、**DBは1年（immutable）・目録は300秒**と個別に効く
+  `cache-control` に任せれば、**DBはエッジ1年・ブラウザ1時間、目録は300秒**と個別に効く
+  （`s-maxage` はエッジだけに効く。上の「`immutable` は付けない」）
 - `bypass cache if not` を選ぶのは、ヘッダを付け忘れたときに
   「遅くなるだけ」で済ませるため。既定TTLで握らせると古い目録が配られうる
 - **Browser TTL は明示する。** 省くとゾーン全体の Browser Cache TTL が効いて、
@@ -272,7 +298,7 @@ Pages 用（手順6）は `github-actions-pages-deploy` にして対にしてお
 > 1日10万リクエスト）。バズっても財布が痛まない構成にするのが前提なので Pages。
 
 ★ **ダッシュボードの Drag and drop は使えない。1,000ファイルが上限で、
-このサイトは 1,209ファイル**（議員ページだけで1,111枚ある）。**将来も超え続ける。**
+このサイトは 1,211ファイル**（議員ページだけで1,111枚ある）。**将来も超え続ける。**
 名前を入れた時点でプロジェクトだけは作られるので、アップロードは Wrangler でやる。
 
 ```powershell
@@ -373,14 +399,37 @@ aws s3 cp data\raw\wikidata_terms.json s3://kokkai-timeline-state/raw/wikidata_t
 aws s3 cp data\politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url $R2
 aws s3 cp data\words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
 
-# cache-control は日次ジョブと同じにする（DBはURLに世代が入るので immutable）
+# cache-control は日次ジョブと同じにする。**immutable は付けない**
+# （エッジは s-maxage で1年。上の「immutable は付けない」）
 Get-ChildItem data\dist\kokkai-*.db | ForEach-Object {
   aws s3 cp $_.FullName "s3://kokkai-timeline/$($_.Name)" --endpoint-url $R2 `
-    --cache-control "public, max-age=31536000, immutable"
+    --cache-control "public, max-age=3600, s-maxage=31536000"
 }
 aws s3 cp data\dist\manifest.json s3://kokkai-timeline/manifest.json --endpoint-url $R2 `
   --cache-control "public, max-age=300"
 ```
+
+### 既にR2にあるものの `cache-control` を打ち直す
+
+**`cache-control` はオブジェクトのメタデータなので、上げ直すまで古いままになる。**
+2026-08-02 より前に投入した年DBは `immutable` が付いているので、一度だけ打ち直す。
+400MBのDBを上げ直さなくても、**同じキーへのコピーでメタデータだけ差し替えられる**:
+
+```powershell
+Get-ChildItem data\dist\kokkai-*.db | ForEach-Object {
+  aws s3 cp "s3://kokkai-timeline/$($_.Name)" "s3://kokkai-timeline/$($_.Name)" `
+    --endpoint-url $R2 --metadata-directive REPLACE `
+    --cache-control "public, max-age=3600, s-maxage=31536000"
+}
+
+# 打ち直せたか確認（CacheControl の欄を見る）
+aws s3api head-object --bucket kokkai-timeline --key kokkai-2025.db --endpoint-url $R2
+```
+
+**中身は変わらないので `?v=` も変わらない。** エッジには古いヘッダのまま載った
+オブジェクトが残っているので、**打ち直したら Caching → Configuration →
+Purge Everything を1回だけ実行する**（しないと最長1年、古い `immutable` が配られ続ける）。
+パージ後の初回アクセスは `MISS` の 210〜260ms に戻るが、1回で載り直す。
 
 **確認**: ブラウザで `https://db.kokkai-timeline.com/manifest.json` を開く。
 JSONが見えればカスタムドメインと公開設定が通っている。

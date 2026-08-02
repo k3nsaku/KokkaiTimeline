@@ -2,12 +2,14 @@
 /**
  * このサイトについて。
  *
- * ★公開の前提（ROADMAP §3.5）はまだ揃っていない。**運営者表示・連絡先・
- *   プライバシーポリシーは未記入のまま**にしてある。埋めないまま公開しないこと。
+ * 免責事項・訂正依頼は `/disclaimer`、プライバシーポリシーは `/privacy`。
+ * ★運営者名と連絡先は `src/lib/operator.ts` の1か所にある（ROADMAP §3.5）。
+ *   **未記入のまま公開しないこと。**
  */
 import Base from "../layouts/Base.astro";
 import { politicians, topicSeries, manifest, trending, wordCount } from "../lib/site-data";
 import { formatNumber } from "../lib/format";
+import { OPERATOR, operatorReady } from "../lib/operator";
 
 const people = politicians();
 const years = manifest().years;
@@ -88,12 +90,25 @@ const nWords = wordCount();
   <h2 id="corrections">訂正依頼</h2>
   <p>
     所属会派・所属政党・名寄せの誤りを見つけたら知らせてほしい。
-    <!-- TODO(ROADMAP §3.5): 連絡先フォームを用意する。公開前に必須 -->
+    窓口と、書いてほしいことは
+    <a href="/disclaimer#corrections">免責事項・訂正依頼</a>にある。
   </p>
-  <p class="todo small">
-    ⚠ 未整備。ROADMAP §3.5（公開の前提）で、免責事項・訂正依頼窓口・
-    プライバシーポリシー・運営者表示をそろえる。<strong>これが揃うまで公開しない。</strong>
+
+  <h2>運営</h2>
+  <p>
+    {operatorReady ? `${OPERATOR.name}（個人）が運営している。` : "個人が運営している。"}
+    広告は載せていない。
   </p>
+  <ul>
+    <li><a href="/disclaimer">免責事項・訂正依頼</a>（正確性の限界、発言の引用の考え方）</li>
+    <li><a href="/privacy">プライバシーポリシー</a>（検索語は送信していない）</li>
+  </ul>
+  {!operatorReady && (
+    <p class="todo small">
+      ⚠ 運営者表示と連絡先が未記入（<code>src/lib/operator.ts</code>）。
+      ROADMAP §3.5。<strong>これが埋まるまで公開しない。</strong>
+    </p>
+  )}
 
   <h2>仕組み</h2>
   <p>
