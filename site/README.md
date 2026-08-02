@@ -123,6 +123,17 @@ npm run test    # site/test/*.test.ts。node:test + node:sqlite（依存パッ�
   **`searchQuery()` が返した行数と `countQuery()` が返した数が一致するか**を
   3経路 × 絞り込みの組み合わせで突き合わせる
 
+DBの読み直し（`db.ts` の `query()`）だけは Node から検証できないので、
+**配信側を壊して確かめる**仕掛けを `dev-data-server.js` に置いてある。
+
+```bash
+POISON=1 node scripts/dev-data-server.js   # retry= の付かないURLにゼロを返す
+```
+
+別オリジン構成（上の `npm run dbserve` の手順）で開くと、全年で
+`file is not a database` が出たうえで**自力で復旧する**のが正しい状態。
+復旧しなくなったら、やり直しが URL を変えられていない。
+
 **`query.ts` に sql.js-httpvfs を import しない。** 1本でも通ると
 Node からテストを走らせられなくなる（`db.ts` 側に置くこと）。
 テストは `.ts` のまま Node が直接読むので、**enum や

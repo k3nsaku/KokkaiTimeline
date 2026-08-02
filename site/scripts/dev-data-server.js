@@ -58,9 +58,13 @@ async function serve(req, res, filePath) {
   const headers = {
     "content-type": MIME[path.extname(filePath)] || "application/octet-stream",
     "accept-ranges": "bytes",
-    // 本番（R2 の別オリジン）と同じ条件で動かすため開発でも付けておく
+    // 本番（R2 の別オリジン）と同じ条件で動かすため開発でも付けておく。
+    // ★ accept-ranges を公開一覧から落とさないこと。別オリジンだと JS から
+    //   読めなくなり、sql.js-httpvfs が「バイト単位で取れない」と判断して
+    //   **DB全体を1チャンクとして読みに行く**（`file is not a database` で落ちる）。
+    //   同一オリジンでは露見しないので、R2 側の設定と揃えておく
     "access-control-allow-origin": "*",
-    "access-control-expose-headers": "content-range, content-length",
+    "access-control-expose-headers": "content-range, content-length, accept-ranges, etag",
     "cache-control": "no-store",
   };
 
@@ -83,6 +87,15 @@ async function serve(req, res, filePath) {
     "content-range": `bytes ${start}-${end}/${stat.size}`,
     "content-length": end - start + 1,
   });
+  // 壊れたブラウザキャッシュの再現。`POISON=1` で、`retry=` の付かないURLには
+  // 中身の代わりにゼロを返す（＝`file is not a database` になる）。
+  // db.ts の**やり直しが URL を変えてキャッシュを外せているか**を確かめるためだけの
+  // 仕掛け。この経路は壊れたときしか動かないので、無いと検証できない。
+  //   POISON=1 node scripts/dev-data-server.js
+  if (process.env.POISON && !req.url.includes("retry=")) {
+    res.end(Buffer.alloc(end - start + 1));
+    return;
+  }
   createReadStream(filePath, { start, end }).pipe(res);
 }
 

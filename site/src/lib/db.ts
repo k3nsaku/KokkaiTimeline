@@ -47,6 +47,8 @@ export interface Manifest {
 
 const workers = new Map<number, Promise<WorkerHttpvfs>>();
 let manifestPromise: Promise<Manifest> | null = null;
+/** やり直しのときにURLを変えるための通し番号（ブラウザキャッシュを外す用）。 */
+let retryCount = 0;
 
 export function getManifest(): Promise<Manifest> {
   manifestPromise ??= fetch(`${DB_BASE}/manifest.json`).then((r) => {
@@ -56,14 +58,21 @@ export function getManifest(): Promise<Manifest> {
   return manifestPromise;
 }
 
-async function workerFor(year: number): Promise<WorkerHttpvfs> {
+async function workerFor(year: number, bustCache = false): Promise<WorkerHttpvfs> {
   let w = workers.get(year);
   if (!w) {
     const manifest = await getManifest();
     const entry = manifest.databases.find((d) => d.year === year);
     // 世代を URL に入れる。日次更新でDBが差し替わっても、
     // 新しく開いたページは別のURLとして取り直す（CDNのパージも要らない）
-    const url = `${DB_BASE}/kokkai-${year}.db` + (entry?.version ? `?v=${entry.version}` : "");
+    const url = `${DB_BASE}/kokkai-${year}.db`
+      + (entry?.version ? `?v=${entry.version}` : "?v=0")
+      // やり直しのときだけ、URLを変えてブラウザキャッシュを外す。**これが無いと
+      // 壊れたキャッシュから抜け出せない。** 年DBは `immutable` で1年握らせるので、
+      // 一度おかしなものが入ると Ctrl+Shift+R でも読み直されず、
+      // 過去年は差し替わらないので `?v=` も変わらない（＝利用者は手でキャッシュを
+      // 消すまで直せない。実際に踏んだ）
+      + (bustCache ? `&retry=${++retryCount}` : "");
     w = createDbWorker(
       [{ from: "inline", config: { serverMode: "full", requestChunkSize: CHUNK, url } }],
       // ワーカ内で解決されるので絶対パスで渡す（相対だと /vendor/vendor/ を見に行く）
@@ -83,9 +92,15 @@ async function query<T = Record<string, unknown>>(
     // ★ 第2引数は配列で1個。展開して渡すと束縛されない
     return (await db.query(sql, params as never)) as T[];
   } catch (first) {
-    // 日次更新でDBが差し替わると、開きっぱなしのページは「古いページと新しい
-    // ページが混ざったDB」を読んで壊れる（`no such table: speech_fts` の形で出る）。
-    // 目録を取り直してワーカを作り直せば、新しい世代を頭から読み直せる。
+    // 読めなくなる理由は2つあって、どちらもここで拾う。
+    //
+    //   1. 日次更新でDBが差し替わった。開きっぱなしのページは「古いページと
+    //      新しいページが混ざったDB」を読んで壊れる（`no such table: speech_fts`）。
+    //      → 目録を取り直せば新しい世代を頭から読み直せる
+    //   2. ブラウザキャッシュに壊れたものが入った（`file is not a database`）。
+    //      → **URLを変えないと抜け出せない。** `immutable` で1年握らせているので
+    //        再読み込みでは読み直されず、過去年は `?v=` も変わらない
+    //
     // **やり直しは1回だけ。** 本当に誤っている問い合わせを無限に投げ直さない。
     //
     // 古いワーカは捨てるだけで、止められない（sql.js-httpvfs が Worker を
@@ -93,7 +108,7 @@ async function query<T = Record<string, unknown>>(
     console.warn(`${year}年のDBを読み直す`, first);
     manifestPromise = null;
     workers.delete(year);
-    const { db } = await workerFor(year);
+    const { db } = await workerFor(year, true);
     return (await db.query(sql, params as never)) as T[];
   }
 }
