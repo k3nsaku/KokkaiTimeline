@@ -124,6 +124,9 @@ const description =
     let term = "";
     // 絞り込みの語をどの索引で引くかは1回だけ解く（2文字語は word_hit を引く）
     let plan: QueryPlan | null = null;
+    /** 読み込みの世代。絞り込みを素早く切り替えると、前の重い検索が後から
+     *  返ってきて新しい画面に混ざる。**古い世代の結果は捨てる。** */
+    let generation = 0;
 
     const load = (before?: Record<number, number>): Promise<SearchPage> =>
       term
@@ -133,12 +136,17 @@ const description =
         : politicianSpeeches(id, years, 20, before ?? {});
 
     async function run(append: boolean) {
+      const gen = ++generation;
       if (!append) results.innerHTML = "";
       statusEl.textContent = "読み込み中…";
       moreWrap.hidden = true;
       const started = performance.now();
       try {
-        if (term && !append) plan = await resolveQuery(term, years);
+        if (term && !append) {
+          const resolved = await resolveQuery(term, years);
+          if (gen !== generation) return;
+          plan = resolved;
+        }
         if (plan?.mode === "none") {
           results.innerHTML = "";
           statusEl.textContent =
@@ -146,6 +154,7 @@ const description =
           return;
         }
         const page = await load(append ? cursor : undefined);
+        if (gen !== generation) return;
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",
           renderSpeeches(page.rows, { terms: splitTerms(term), groupByYear: true, showSpeaker: false }));
@@ -155,6 +164,7 @@ const description =
           ? `新しい順・${elapsed}ms`
           : term ? `「${term}」を含む発言は無かった。` : "発言が見つからない。";
       } catch (err) {
+        if (gen !== generation) return;
         statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }

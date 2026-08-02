@@ -97,11 +97,24 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       return years.filter((y) => y >= lo && y <= hi);
     }
 
+    /** まだ一覧に無い会議名を選べるようにする。
+     *  **無い <option> の値を select.value に入れても選択されない**ので、
+     *  URLで指定された会議名は一覧の到着を待たずにここで足しておく
+     *  （待つと、共有されたURLの最初の検索が絞り込み無しで走ってしまう）。 */
+    function ensureOption(value: string) {
+      if (!value || [...meetingSelect.options].some((o) => o.value === value)) return;
+      meetingSelect.insertAdjacentHTML("beforeend",
+        `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`);
+    }
+
     /** 検索条件はURLに持たせる。結果をそのまま共有できるし、戻るボタンも効く。 */
     function readUrl(): string {
       const p = new URLSearchParams(location.search);
       queryInput.value = p.get("q") ?? "";
-      if (p.get("meeting")) meetingSelect.value = p.get("meeting")!;
+      // 戻るボタンで絞り込み無しのURLへ戻ったら、選択も外す
+      const meeting = p.get("meeting") ?? "";
+      ensureOption(meeting);
+      meetingSelect.value = meeting;
       if (p.get("from")) fromSelect.value = p.get("from")!;
       if (p.get("until")) untilSelect.value = p.get("until")!;
       return queryInput.value;
@@ -109,6 +122,9 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
     let state: { opts: SearchOptions; terms: string[]; topic: TopicLite | null;
                  plan: QueryPlan | null; before: Record<number, number> } | null = null;
+    /** 検索の世代。**古い検索が後から返ってきても捨てる**ための番号。
+     *  重い検索の裏で条件を変えると、前の結果が新しい画面に混ざる。 */
+    let generation = 0;
 
     /** どの索引を使ったか。snippet() のマーカーが付くのは FTS のときだけなので、
      *  それ以外では語を渡して強調する。 */
@@ -121,6 +137,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       const query = queryInput.value.trim();
       if (!query) { statusEl.textContent = "キーワードを入れて検索する。"; return; }
 
+      const gen = ++generation;
       const topic = matchTopic(query);
       const chosen = selectedYears();
 
@@ -139,6 +156,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         // 争点語なら topic_hit（別表記も合算される）。それ以外は語の長さで引き先が決まる。
         // 解くのは1回だけで、ページ送りでは使い回す
         const plan = topic ? null : await resolveQuery(query, chosen);
+        if (gen !== generation) return;   // その間に次の検索が始まっていたら捨てる
         const opts: SearchOptions = {
           query, topicId: topic?.id, plan: plan ?? undefined, years: chosen,
           meetingName: meetingSelect.value || undefined, limit: 20,
@@ -148,9 +166,11 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         if (plan?.mode === "none") { showUnsupported(plan.unsupported); return; }
 
         const page = await search(opts);
+        if (gen !== generation) return;
         state.before = page.before;
-        show(page, started);
+        show(page, started, gen);
       } catch (err) {
+        if (gen !== generation) return;
         statusEl.innerHTML = `<span class="error">検索に失敗した: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
@@ -182,7 +202,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         </div>`;
     }
 
-    function show(page: SearchPage, started: number) {
+    function show(page: SearchPage, started: number, gen: number) {
       const elapsed = Math.round(performance.now() - started);
       moreWrap.hidden = page.done;
 
@@ -198,7 +218,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       // 総件数は別に数える。FTS の COUNT は結果取得と同じくらい重いので待たせない
       const opts = state!.opts;
       countHits(opts).then((n) => {
-        if (state?.opts !== opts) return;   // その間に次の検索が始まっていたら捨てる
+        if (gen !== generation || !state) return;   // その間に次の検索が始まっていたら捨てる
         const how = state.topic ? "（争点語の集計から）"
           : state.plan?.mode === "word" ? "（2文字語の索引から）" : "";
         statusEl.textContent =
@@ -208,10 +228,12 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
     moreBtn.addEventListener("click", async () => {
       if (!state) return;
+      const gen = generation;
       moreBtn.disabled = true;
       moreBtn.textContent = "読み込み中…";
       try {
         const page = await search({ ...state.opts, before: state.before });
+        if (gen !== generation) return;   // その間に条件が変わっていたら捨てる
         state.before = page.before;
         results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
         moreWrap.hidden = page.done;
@@ -226,16 +248,33 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     form.addEventListener("submit", (e) => { e.preventDefault(); run(); });
     window.addEventListener("popstate", () => { if (readUrl()) run(false); });
 
-    // 会議名は meeting テーブル（1年で約1,100行）から拾う。全年ぶんは要らないので直近だけ
-    meetingNames(years.slice(-1)).then((names) => {
-      meetingSelect.insertAdjacentHTML("beforeend",
-        names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join(""));
-      const wanted = new URLSearchParams(location.search).get("meeting");
-      if (wanted) meetingSelect.value = wanted;
-    }).catch((e) => console.warn("会議名を取れなかった", e));
+    // 会議名は meeting テーブル（1年で約1,100行）から拾う。
+    // **選んでいる期間の全年から拾う。** 直近年だけだと、過去年にしか無い会議
+    //（「予算委員会第一分科会」など）をUIから選べない。年ごとにキャッシュされる
+    let meetingGen = 0;
+    async function loadMeetingNames() {
+      const gen = ++meetingGen;
+      const keep = meetingSelect.value;   // 選択中の会議は期間外でも外さない
+      try {
+        const names = await meetingNames(selectedYears());
+        if (gen !== meetingGen) return;
+        meetingSelect.innerHTML = `<option value="">すべて</option>`;
+        meetingSelect.insertAdjacentHTML("beforeend",
+          names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join(""));
+        ensureOption(keep);
+        meetingSelect.value = keep;
+      } catch (e) {
+        console.warn("会議名を取れなかった", e);
+      }
+    }
+    for (const sel of [fromSelect, untilSelect]) {
+      sel.addEventListener("change", () => { loadMeetingNames(); });
+    }
 
+    // 一覧の到着は待たない。URL指定の会議名は readUrl() が <option> ごと作る
     if (readUrl()) run(false);
     else queryInput.focus();
+    loadMeetingNames();
   </script>
 
   <style>
