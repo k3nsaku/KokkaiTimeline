@@ -1,0 +1,192 @@
+---
+/**
+ * 議員ページ。1,111人ぶんを事前生成する。
+ *
+ * 静的に出すのは**氏名・よみ・院・所属会派の時系列・発言数**まで。
+ * 発言そのものはブラウザが年DBから引く（全部で650,785件あり事前生成できない）。
+ * それでも氏名で検索されたときに中身のあるページが返るのが事前生成の目的。
+ *
+ * ★タイムラインの SQL は `speech(politician_id)` の索引だけで
+ *   `ORDER BY rowid DESC` を降順スキャンさせる。索引に date を足すと
+ *   27リクエスト → 509リクエストになる（`docs/PHASE1_PROTOTYPE.md` §2-1系）。
+ */
+import Base from "../../layouts/Base.astro";
+import { politicians, manifest, latestAffiliation } from "../../lib/site-data";
+import { formatNumber } from "../../lib/format";
+
+export function getStaticPaths() {
+  return politicians().map((p) => ({ params: { id: String(p.id) }, props: { person: p } }));
+}
+
+const { person } = Astro.props;
+const years = manifest().years;
+const current = latestAffiliation(person);
+
+// 在籍していた年だけ問い合わせる。無関係な年のワーカを立てない
+const activeYears = years.filter((y) => {
+  const from = Number(person.first_date?.slice(0, 4) ?? 0);
+  const to = Number(person.last_date?.slice(0, 4) ?? 9999);
+  return y >= from && y <= to;
+});
+
+const affiliations = [...person.affiliations].sort((a, b) => b.start_date.localeCompare(a.start_date));
+
+const description =
+  `${person.name}（${current?.kaiha ?? "会派不明"}）の国会での発言 ${formatNumber(person.n_speeches)}件を` +
+  `時系列で見る。${person.first_date ?? ""}〜${person.last_date ?? ""}。`;
+---
+
+<Base title={person.name} description={description}>
+  <article>
+    <header class="person">
+      <h1>
+        {person.name}
+        {person.name_kana && <span class="kana">{person.name_kana}</span>}
+      </h1>
+      <dl class="facts">
+        <div><dt>院</dt><dd>{person.house ?? "—"}</dd></div>
+        <div><dt>会派</dt><dd>{current?.kaiha ?? "—"}</dd></div>
+        <div><dt>発言数</dt><dd>{formatNumber(person.n_speeches)}</dd></div>
+        <div><dt>期間</dt><dd class="small">{person.first_date} 〜 {person.last_date}</dd></div>
+      </dl>
+      <p class="small muted links">
+        {person.official_url && (<a href={person.official_url} rel="noopener nofollow">公式サイト</a>)}
+        {person.wikidata_id && (
+          <a href={`https://www.wikidata.org/wiki/${person.wikidata_id}`} rel="noopener">Wikidata</a>
+        )}
+      </p>
+    </header>
+
+    <section>
+      <h2>所属会派</h2>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr><th>会派</th><th>政党</th><th>期間</th><th class="num">発言数</th></tr>
+          </thead>
+          <tbody>
+            {affiliations.map((a) => (
+              <tr>
+                <td>{a.kaiha ?? "—"}</td>
+                {/* party が NULL なのは「特定できていない」であって「無所属」ではない */}
+                <td>{a.party ?? <span class="muted">特定できず</span>}</td>
+                <td class="small">{a.start_date} 〜 {a.end_date}</td>
+                <td class="num">{formatNumber(a.n_speeches)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">
+        期間は「その会派で発言した最初と最後の日」で、在籍期間そのものではない。
+      </p>
+    </section>
+
+    <section>
+      <h2>発言</h2>
+      <p class="filter-row">
+        <label class="sr-only" for="within">この議員の発言を絞り込む</label>
+        <input type="search" id="within" placeholder="この議員の発言をキーワードで絞り込む"
+               autocomplete="off" enterkeyhint="search" />
+        <button id="within-go">絞り込む</button>
+        <button id="within-clear" hidden>解除</button>
+      </p>
+      <p id="status" class="status" role="status" aria-live="polite">読み込み中…</p>
+      <div id="results"></div>
+      <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
+    </section>
+  </article>
+
+  <script
+    is:inline
+    type="application/json"
+    id="site-data"
+    set:html={JSON.stringify({ id: person.id, years: activeYears })}
+  />
+
+  <script>
+    import { politicianSpeeches, search, type SearchPage } from "../../lib/db";
+    import { renderSpeeches } from "../../lib/render";
+    import { escapeHtml } from "../../lib/format";
+
+    const { id, years } = JSON.parse(
+      document.getElementById("site-data")!.textContent!,
+    ) as { id: number; years: number[] };
+
+    const el = <T extends HTMLElement>(x: string) => document.getElementById(x) as T;
+    const statusEl = el("status"), results = el("results");
+    const moreWrap = el<HTMLParagraphElement>("more-wrap"), moreBtn = el<HTMLButtonElement>("more");
+    const within = el<HTMLInputElement>("within");
+    const clearBtn = el<HTMLButtonElement>("within-clear");
+
+    let cursor: Record<number, number> = {};
+    let term = "";
+
+    const load = (before?: Record<number, number>): Promise<SearchPage> =>
+      term
+        // 議員 × キーワード。FTS の結果を politician_id で絞る
+        ? search({ query: term, politicianId: id, years, limit: 20, before })
+        : politicianSpeeches(id, years, 20, before ?? {});
+
+    async function run(append: boolean) {
+      if (!append) results.innerHTML = "";
+      statusEl.textContent = "読み込み中…";
+      moreWrap.hidden = true;
+      const started = performance.now();
+      try {
+        const page = await load(append ? cursor : undefined);
+        cursor = page.before;
+        results.insertAdjacentHTML("beforeend",
+          renderSpeeches(page.rows, { term, groupByYear: true, showSpeaker: false }));
+        moreWrap.hidden = page.done;
+        const elapsed = Math.round(performance.now() - started);
+        statusEl.textContent = page.rows.length || append
+          ? `新しい順・${elapsed}ms`
+          : term ? `「${term}」を含む発言は無かった。` : "発言が見つからない。";
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        console.error(err);
+      }
+    }
+
+    moreBtn.addEventListener("click", async () => {
+      moreBtn.disabled = true;
+      await run(true);
+      moreBtn.disabled = false;
+    });
+
+    function applyFilter() {
+      term = within.value.trim();
+      clearBtn.hidden = !term;
+      cursor = {};
+      run(false);
+    }
+
+    el("within-go").addEventListener("click", applyFilter);
+    within.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); applyFilter(); }
+    });
+    clearBtn.addEventListener("click", () => { within.value = ""; applyFilter(); });
+
+    run(false);
+  </script>
+
+  <style>
+    .person h1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; }
+    .person .kana { font-size: 0.9rem; font-weight: 400; color: var(--muted); }
+
+    .facts { display: flex; flex-wrap: wrap; gap: 0.75rem 2.5rem; margin: 0.5rem 0 0.75rem; }
+    .facts dt { font-size: 0.75rem; color: var(--muted); }
+    .facts dd { margin: 0; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+
+    .links a + a { margin-left: 1rem; }
+
+    .filter-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    #within { flex: 1 1 18rem; }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap;
+    }
+  </style>
+</Base>

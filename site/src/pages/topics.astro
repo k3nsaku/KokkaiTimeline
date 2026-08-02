@@ -1,0 +1,76 @@
+---
+/**
+ * 争点語の一覧。分類ごとに並べる。
+ *
+ * ★このリストは**運営の編集方針そのもの**。初版79件は機械抽出から選んだだけで、
+ *   編集方針としてのレビューを経ていない（ROADMAP §3.2）。公開前に見直す。
+ */
+import Base from "../layouts/Base.astro";
+import { topicSeries } from "../lib/site-data";
+import { formatNumber } from "../lib/format";
+
+const data = topicSeries();
+
+const byCategory = new Map<string, typeof data.topics>();
+for (const topic of [...data.topics].sort((a, b) => b.n_speeches - a.n_speeches)) {
+  const key = topic.category ?? "その他";
+  byCategory.set(key, [...(byCategory.get(key) ?? []), topic]);
+}
+const categories = [...byCategory.entries()]
+  .sort((a, b) => b[1].length - a[1].length);
+
+const shortTerms = data.topics.filter((t) => t.term.length <= 2);
+---
+
+<Base
+  title="争点語"
+  description={`国会で議論されている争点語 ${data.topics.length}件。それぞれの頻度推移と会派ごとの使われ方を見られる。`}
+>
+  <h1>争点語</h1>
+  <p>
+    運営が管理している{data.topics.length}件の語。それぞれについて
+    <strong>月ごとの頻度推移</strong>と<strong>会派ごとの使われ方</strong>を見られる。
+  </p>
+  <p class="small muted">
+    この{shortTerms.length}件は2文字で、全文検索（trigram）では原理的に引けない
+    — {shortTerms.slice(0, 8).map((t) => t.term).join("、")}など。
+    事前に集計してあるので、ここからなら引ける。
+  </p>
+
+  {categories.map(([category, topics]) => (
+    <section>
+      <h2>{category}</h2>
+      <ul class="topic-grid">
+        {topics.map((topic) => (
+          <li>
+            <a href={`/topic/${topic.id}`}>
+              <span class="term">{topic.term}</span>
+              <span class="count small muted">{formatNumber(topic.n_speeches)}件</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))}
+
+  <p class="small muted note">
+    このリストは運営が選んでいる。網羅ではないし、選んだこと自体に判断が入っている。
+    載っていない語は<a href="/search">検索</a>から引ける（3文字以上に限る）。
+  </p>
+
+  <style>
+    .topic-grid {
+      list-style: none; padding: 0; margin: 0.5rem 0;
+      display: grid; gap: 0.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    }
+    .topic-grid a {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
+      padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--card); text-decoration: none; color: var(--fg);
+    }
+    .topic-grid a:hover { border-color: var(--accent); }
+    .term { font-weight: 600; }
+    .note { margin-top: 2.5rem; }
+  </style>
+</Base>

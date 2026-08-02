@@ -1,0 +1,4 @@
+# 発言は 650,785 件あって事前生成できない。/speech/<speech_id> を1枚の /speech で受ける。
+# 200 はリダイレクトではなく書き換え（URLはそのまま、中身だけ /speech を返す）。
+# 開発サーバでは scripts/dev-data-server.js が同じ書き換えをしている。
+/speech/*  /speech  200

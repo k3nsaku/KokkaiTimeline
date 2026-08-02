@@ -1,0 +1,26 @@
+{
+  "name": "kokkai-timeline-site",
+  "private": true,
+  "version": "0.0.0",
+  "description": "ROADMAP §3.3: 国会会議録の検索・議員タイムライン・頻度推移（完全静的サイト）",
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/vendor.js",
+    "predev": "node scripts/vendor.js",
+    "dev": "astro dev",
+    "prebuild": "node scripts/vendor.js",
+    "build": "astro build",
+    "preview": "astro preview",
+    "dbserve": "node scripts/dev-data-server.js",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "astro": "^5.14.1",
+    "sql.js-httpvfs": "^0.8.12"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/node": "^26.1.2",
+    "typescript": "^5.9.3"
+  }
+}

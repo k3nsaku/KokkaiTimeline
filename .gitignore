@@ -21,6 +21,11 @@ reports/
 node_modules/
 prototype/public/vendor/
 
+# サイト（site/.gitignore にも同じものを置いてある）
+site/dist/
+site/.astro/
+site/public/vendor/
+
 # Claude Code のローカル設定（launch.json は共有したいのでコミットする）
 .claude/settings.local.json
 

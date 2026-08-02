@@ -1,0 +1,128 @@
+---
+/**
+ * 発言1件のページ。**1発言 = 1URL**（SNSで共有する導線）。
+ *
+ * 発言は 650,785 件あり、事前生成できない。`/speech/<speech_id>` を
+ * この1枚で受ける（本番は `public/_redirects` の 200 rewrite、開発は
+ * `scripts/dev-data-server.js` の書き換え）。
+ *
+ * 事前生成できない以上、OGP は共通のものしか出せない。中身に応じた OG 画像や
+ * 説明文が要るようになったら、そこで初めてサーバか Workers を検討する
+ * （＝「常時稼働プロセスを持たない」制約に触れるので、必要になるまでやらない）。
+ */
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="発言" description="国会会議録の発言1件。" noindex>
+  <p class="small"><a href="/search">← 検索に戻る</a></p>
+
+  <article id="speech">
+    <p id="status" class="status" role="status" aria-live="polite">読み込み中…</p>
+  </article>
+
+  <section id="context-section" hidden>
+    <h2>この会議の前後</h2>
+    <div id="context"></div>
+  </section>
+
+  <script>
+    import { speechDetail, speechContext, type SpeechDetail } from "../lib/db";
+    import { escapeHtml, formatDate, paragraphs } from "../lib/format";
+
+    const statusEl = document.getElementById("status")!;
+    const article = document.getElementById("speech")!;
+    const contextSection = document.getElementById("context-section") as HTMLElement;
+    const contextEl = document.getElementById("context")!;
+
+    /** `/speech/<id>` でも `/speech?id=<id>` でも受ける。 */
+    function speechIdFromUrl(): string | null {
+      const fromPath = decodeURIComponent(location.pathname.replace(/^\/speech\/?/, ""));
+      if (fromPath) return fromPath;
+      return new URLSearchParams(location.search).get("id");
+    }
+
+    function renderSpeech(s: SpeechDetail): string {
+      const speaker = s.politician_id
+        ? `<a href="/politician/${s.politician_id}">${escapeHtml(s.speaker)}</a>`
+        : escapeHtml(s.speaker);
+
+      const meta = [
+        s.speaker_position, s.speaker_group,
+        `第${s.session}回国会`, `${s.house}・${s.meeting}${s.issue ? ` ${s.issue}` : ""}`,
+        formatDate(s.date),
+      ].filter(Boolean).map((x) => `<span>${escapeHtml(String(x))}</span>`).join("");
+
+      const body = paragraphs(s.body)
+        .map((p) => `<p>${escapeHtml(p)}</p>`).join("");
+
+      const links = [
+        `<a href="${escapeHtml(s.speech_url)}" rel="noopener">この発言の原典（国会会議録）</a>`,
+        s.meeting_url ? `<a href="${escapeHtml(s.meeting_url)}" rel="noopener">会議録全体</a>` : "",
+        s.pdf_url ? `<a href="${escapeHtml(s.pdf_url)}" rel="noopener">PDF</a>` : "",
+      ].filter(Boolean).join("");
+
+      return `
+        <h1 class="speech-title">${speaker}<span class="kind">${escapeHtml(s.speaker_kind)}</span></h1>
+        <div class="speech-meta detail">${meta}</div>
+        <div class="body">${body}</div>
+        <p class="sources small">${links}</p>
+        <p class="small muted">
+          表示しているのは国会会議録の本文そのまま。要約も編集もしていない。
+        </p>`;
+    }
+
+    async function main() {
+      const id = speechIdFromUrl();
+      if (!id) { statusEl.textContent = "発言IDが指定されていない。"; return; }
+
+      document.title = "発言 | 国会タイムライン";
+      try {
+        const s = await speechDetail(id);
+        if (!s) {
+          statusEl.innerHTML =
+            `<span class="error">この発言は見つからなかった（${escapeHtml(id)}）。</span>`;
+          return;
+        }
+        article.innerHTML = renderSpeech(s);
+        document.title = `${s.speaker}（${formatDate(s.date)} ${s.meeting}） | 国会タイムライン`;
+
+        const rows = await speechContext(s.issue_id, s.speech_order, 3);
+        if (rows.length > 1) {
+          contextEl.innerHTML = `<ul class="speech-list">${rows.map((r) => `
+            <li class="speech${r.speech_id === s.speech_id ? " here" : ""}">
+              <div class="speech-meta">
+                <span class="speech-speaker">${
+                  r.politician_id
+                    ? `<a href="/politician/${r.politician_id}">${escapeHtml(r.speaker)}</a>`
+                    : escapeHtml(r.speaker)}</span>
+                <span>${escapeHtml(r.speaker_kind)}</span>
+                ${r.speech_id === s.speech_id ? "<span>← いま見ている発言</span>" : ""}
+              </div>
+              <p class="speech-body">${
+                r.speech_id === s.speech_id
+                  ? escapeHtml(r.head)
+                  : `<a href="/speech/${encodeURIComponent(r.speech_id)}">${escapeHtml(r.head)}…</a>`
+              }</p>
+            </li>`).join("")}</ul>`;
+          contextSection.hidden = false;
+        }
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        console.error(err);
+      }
+    }
+
+    main();
+  </script>
+
+  <style is:global>
+    .speech-title {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem;
+    }
+    .speech-title .kind { font-size: 0.8rem; font-weight: 400; color: var(--muted); }
+    .speech-meta.detail { font-size: 0.85rem; margin-bottom: 1.25rem; }
+    .body p { margin: 0 0 1rem; }
+    .sources a + a { margin-left: 1rem; }
+    .speech.here { border-color: var(--accent); }
+  </style>
+</Base>

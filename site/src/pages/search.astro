@@ -1,0 +1,224 @@
+---
+/**
+ * 検索。中身はすべてブラウザが年DBから引くので、ここは骨組みだけ。
+ *
+ * 二段構え（`docs/PHASE1_PROTOTYPE.md` §6-1）:
+ *   争点語リストにある語 → topic_hit を引く（0.7秒。2文字語もここでだけ引ける）
+ *   それ以外の任意語     → FTS5 trigram（1.5〜6秒）
+ */
+import Base from "../layouts/Base.astro";
+import { manifest, topicSeries } from "../lib/site-data";
+
+const years = manifest().years;
+// 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（79件・数KB）
+const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
+---
+
+<Base title="検索" description="国会会議録の発言をキーワードで検索する。" noindex>
+  <h1>発言を検索する</h1>
+
+  <form id="search-form" class="search-form">
+    <div class="row">
+      <label class="grow">
+        <span class="label">キーワード</span>
+        <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
+               autocomplete="off" enterkeyhint="search" />
+      </label>
+      <button type="submit" class="primary">検索</button>
+    </div>
+
+    <details class="filters">
+      <summary>絞り込み</summary>
+      <div class="row">
+        <label>
+          <span class="label">会議名</span>
+          <select id="meeting" name="meeting"><option value="">すべて</option></select>
+        </label>
+        <label>
+          <span class="label">期間</span>
+          <span class="range">
+            <select id="from" name="from">
+              {years.map((y) => <option value={y}>{y}年</option>)}
+            </select>
+            〜
+            <select id="until" name="until">
+              {years.map((y) => <option value={y} selected={y === years.at(-1)}>{y}年</option>)}
+            </select>
+          </span>
+        </label>
+      </div>
+      <p class="small muted">
+        期間は年単位で絞る。年ごとに別のデータベースを引く仕組みなので、
+        年を減らすとそのぶん速くなる。
+      </p>
+    </details>
+  </form>
+
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="results"></div>
+  <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
+
+  {/* 年の一覧と争点語（79件・数KB）をページに埋めておく。
+      争点語かどうかで引き先が変わる（topic_hit か FTS か）ので、検索の前に要る */}
+  <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
+
+  <script>
+    import { search, countHits, meetingNames, tooShortWords,
+             type SearchOptions, type SearchPage } from "../lib/db";
+    import { renderSpeeches } from "../lib/render";
+    import { escapeHtml, formatNumber } from "../lib/format";
+
+    interface TopicLite { id: number; term: string; variants: string[] }
+
+    const { years, topics } = JSON.parse(
+      document.getElementById("site-data")!.textContent!,
+    ) as { years: number[]; topics: TopicLite[] };
+
+    const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+    const form = el<HTMLFormElement>("search-form");
+    const queryInput = el<HTMLInputElement>("q");
+    const meetingSelect = el<HTMLSelectElement>("meeting");
+    const fromSelect = el<HTMLSelectElement>("from");
+    const untilSelect = el<HTMLSelectElement>("until");
+    const statusEl = el<HTMLParagraphElement>("status");
+    const results = el<HTMLDivElement>("results");
+    const moreWrap = el<HTMLParagraphElement>("more-wrap");
+    const moreBtn = el<HTMLButtonElement>("more");
+
+    /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。 */
+    function matchTopic(query: string): TopicLite | null {
+      const q = query.trim();
+      return topics.find((t) => t.term === q || (t.variants ?? []).includes(q)) ?? null;
+    }
+
+    function selectedYears(): number[] {
+      const from = Number(fromSelect.value), until = Number(untilSelect.value);
+      const [lo, hi] = from <= until ? [from, until] : [until, from];
+      return years.filter((y) => y >= lo && y <= hi);
+    }
+
+    /** 検索条件はURLに持たせる。結果をそのまま共有できるし、戻るボタンも効く。 */
+    function readUrl(): string {
+      const p = new URLSearchParams(location.search);
+      queryInput.value = p.get("q") ?? "";
+      if (p.get("meeting")) meetingSelect.value = p.get("meeting")!;
+      if (p.get("from")) fromSelect.value = p.get("from")!;
+      if (p.get("until")) untilSelect.value = p.get("until")!;
+      return queryInput.value;
+    }
+
+    let state: { opts: SearchOptions; term: string; topic: TopicLite | null;
+                 before: Record<number, number>; count: number } | null = null;
+
+    /** 争点語で引いた結果は snippet() のマーカーを持たないので、語を渡して強調する。 */
+    const renderOpts = () =>
+      ({ term: state?.topic ? state.term : "", groupByYear: true });
+
+    async function run(pushUrl = true) {
+      const query = queryInput.value.trim();
+      if (!query) { statusEl.textContent = "キーワードを入れて検索する。"; return; }
+
+      const topic = matchTopic(query);
+      const chosen = selectedYears();
+      const opts: SearchOptions = {
+        query, topicId: topic?.id, years: chosen,
+        meetingName: meetingSelect.value || undefined, limit: 20,
+      };
+
+      if (pushUrl) {
+        const p = new URLSearchParams({ q: query, from: fromSelect.value, until: untilSelect.value });
+        if (meetingSelect.value) p.set("meeting", meetingSelect.value);
+        history.pushState(null, "", `?${p}`);
+      }
+
+      results.innerHTML = "";
+      moreWrap.hidden = true;
+      const short = tooShortWords(query);
+      statusEl.textContent = topic
+        ? `「${query}」は争点語として集計済み。検索中…`
+        : short.length
+          ? `検索中…（「${short.join("・")}」は2文字以下で全文検索では引けない）`
+          : "検索中…";
+
+      const started = performance.now();
+      try {
+        const page = await search(opts);
+        state = { opts, term: query, topic, before: page.before, count: page.rows.length };
+        show(page, started, short);
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">検索に失敗した: ${escapeHtml(String(err))}</span>`;
+        console.error(err);
+      }
+    }
+
+    function show(page: SearchPage, started: number, short: string[]) {
+      const elapsed = Math.round(performance.now() - started);
+      moreWrap.hidden = page.done;
+
+      if (!page.rows.length) {
+        results.innerHTML = short.length
+          ? `<p class="status">「${escapeHtml(short.join("・"))}」は2文字以下で、全文検索の索引（trigram）を作れない。
+             <a href="/topics">争点語</a>に登録されている語なら引ける。</p>`
+          : `<p class="status">一致する発言が無かった。</p>`;
+        statusEl.textContent = `0件・${elapsed}ms`;
+        return;
+      }
+
+      results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
+      statusEl.textContent = `${state!.opts.years!.length}年分を並列に検索・${elapsed}ms`;
+
+      // 総件数は別に数える。FTS の COUNT は結果取得と同じくらい重いので待たせない
+      const opts = state!.opts;
+      countHits(opts).then((n) => {
+        if (state?.opts !== opts) return;   // その間に次の検索が始まっていたら捨てる
+        statusEl.textContent =
+          `${formatNumber(n)}件${state.topic ? "（争点語の集計から）" : ""}` +
+          `・${opts.years!.length}年分を並列に検索・${elapsed}ms`;
+      }).catch((e) => console.warn("件数を数えられなかった", e));
+    }
+
+    moreBtn.addEventListener("click", async () => {
+      if (!state) return;
+      moreBtn.disabled = true;
+      moreBtn.textContent = "読み込み中…";
+      try {
+        const page = await search({ ...state.opts, before: state.before });
+        state.before = page.before;
+        results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
+        moreWrap.hidden = page.done;
+      } catch (err) {
+        console.error(err);
+      } finally {
+        moreBtn.disabled = false;
+        moreBtn.textContent = "さらに読み込む";
+      }
+    });
+
+    form.addEventListener("submit", (e) => { e.preventDefault(); run(); });
+    window.addEventListener("popstate", () => { if (readUrl()) run(false); });
+
+    // 会議名は meeting テーブル（1年で約1,100行）から拾う。全年ぶんは要らないので直近だけ
+    meetingNames(years.slice(-1)).then((names) => {
+      meetingSelect.insertAdjacentHTML("beforeend",
+        names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join(""));
+      const wanted = new URLSearchParams(location.search).get("meeting");
+      if (wanted) meetingSelect.value = wanted;
+    }).catch((e) => console.warn("会議名を取れなかった", e));
+
+    if (readUrl()) run(false);
+    else queryInput.focus();
+  </script>
+
+  <style>
+    .search-form { margin: 1rem 0 0.5rem; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+    .grow { flex: 1 1 20rem; }
+    label { display: block; }
+    .label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.15rem; }
+    #q { width: 100%; }
+    .filters { margin-top: 0.75rem; font-size: 0.95rem; }
+    .filters summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+    .filters .row { margin-top: 0.6rem; }
+    .range { display: inline-flex; align-items: center; gap: 0.4rem; }
+  </style>
+</Base>

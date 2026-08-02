@@ -1,0 +1,180 @@
+---
+/**
+ * 争点語のページ。頻度推移 + 会派ごとの使われ方 + 発言一覧。
+ *
+ * グラフは `data/dist/topics.json`（258KB）だけで描けるので**ビルド時に SVG にする**。
+ * DBを一切引かないので即座に出るし、検索エンジンにも中身が渡る。
+ * 発言一覧だけがブラウザからの `topic_hit` 引き（0.7秒）。
+ */
+import Base from "../../layouts/Base.astro";
+import { topicSeries, manifest } from "../../lib/site-data";
+import { toSeries, monthlyChart, kaihaRates } from "../../lib/chart";
+import { formatNumber } from "../../lib/format";
+
+export function getStaticPaths() {
+  const data = topicSeries();
+  return data.topics.map((topic) => ({ params: { id: String(topic.id) }, props: { topic } }));
+}
+
+const { topic } = Astro.props;
+const data = topicSeries();
+const years = manifest().years;
+
+const series = data.series[String(topic.id)] ?? {};
+const overall = toSeries(data.months, series["*"] ?? [], data.speech_totals["*"] ?? []);
+const chart = monthlyChart(overall, `${topic.term} の月ごとの出現率`);
+const byKaiha = kaihaRates(data.kaiha, series, data.speech_totals);
+
+// ピークの月。「いつ議論されたか」が争点語ページで一番知りたいこと
+const peak = [...overall].sort((a, b) => b.rate - a.rate)[0];
+
+const description =
+  `国会で「${topic.term}」がいつ、どの会派から発言されたか。` +
+  `${formatNumber(topic.n_speeches)}件の発言を月ごとの出現率で見る。`;
+---
+
+<Base title={`${topic.term} の頻度推移`} description={description}>
+  <p class="small"><a href="/topics">← 争点語の一覧</a></p>
+
+  <h1>{topic.term}</h1>
+  <p class="small muted">
+    {topic.category && <>分類: {topic.category}・</>}
+    {formatNumber(topic.n_speeches)}件の発言に{formatNumber(topic.n_occurrences)}回
+    {topic.variants.length > 0 && <>・別表記として {topic.variants.join("、")} も同じ語として数えている</>}
+  </p>
+
+  {topic.term.length <= 2 && (
+    <p class="note small">
+      2文字の語なので、<strong>全文検索（trigram）では原理的に引けない</strong>。
+      このページの集計テーブルからだけ引ける。
+    </p>
+  )}
+
+  <section>
+    <h2>いつ議論されたか</h2>
+    <Fragment set:html={chart} />
+    {peak && (
+      <p class="small muted">
+        最も多かったのは {peak.month.slice(0, 4)}年{Number(peak.month.slice(5, 7))}月
+        （{peak.hits}件 / {formatNumber(peak.total)}発言 ＝ 1,000発言あたり {peak.rate.toFixed(1)}件）。
+      </p>
+    )}
+  </section>
+
+  <section>
+    <h2>会派ごとの使われ方</h2>
+    <p class="small muted">
+      その会派の全発言に占める割合。<strong>発言数の多い会派ほど件数は増える</strong>ので、
+      件数のままでは比べられない。合計2,000発言に満たない会派は率が振れるため外してある。
+      政党ではなく<strong>会派</strong>で出しているのは、政党を特定できない発言が3.6%あるため。
+    </p>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>会派</th><th class="num">発言</th><th class="num">全発言</th>
+            <th class="num">1,000発言あたり</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {byKaiha.map((r) => (
+            <tr>
+              <td>{r.kaiha}</td>
+              <td class="num">{formatNumber(r.hits)}</td>
+              <td class="num muted">{formatNumber(r.total)}</td>
+              <td class="num">{r.rate.toFixed(1)}</td>
+              <td class="barcell">
+                <span
+                  class="minibar"
+                  style={`width: ${byKaiha[0].rate ? (100 * r.rate / byKaiha[0].rate).toFixed(1) : 0}%`}
+                ></span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">
+      よく使う会派が「賛成」「反対」のどちらかは、この数字からは分からない。
+      発言そのものを読んで判断すること。
+    </p>
+  </section>
+
+  <section>
+    <h2>この語を含む発言</h2>
+    <p id="status" class="status" role="status" aria-live="polite">読み込み中…</p>
+    <div id="results"></div>
+    <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
+  </section>
+
+  <script
+    is:inline
+    type="application/json"
+    id="site-data"
+    set:html={JSON.stringify({ topicId: topic.id, term: topic.term, years })}
+  />
+
+  <script>
+    import { search } from "../../lib/db";
+    import { renderSpeeches } from "../../lib/render";
+    import { escapeHtml } from "../../lib/format";
+
+    const { topicId, term, years } = JSON.parse(
+      document.getElementById("site-data")!.textContent!,
+    ) as { topicId: number; term: string; years: number[] };
+
+    const statusEl = document.getElementById("status")!;
+    const results = document.getElementById("results")!;
+    const moreWrap = document.getElementById("more-wrap") as HTMLParagraphElement;
+    const moreBtn = document.getElementById("more") as HTMLButtonElement;
+
+    let cursor: Record<number, number> | undefined;
+
+    async function run(append: boolean) {
+      const started = performance.now();
+      try {
+        // 争点語は FTS を通さず topic_hit を引く。3.3倍速く、2文字語もここでだけ引ける
+        const page = await search({ topicId, years, limit: 20, before: append ? cursor : undefined });
+        cursor = page.before;
+        results.insertAdjacentHTML("beforeend",
+          renderSpeeches(page.rows, { term, groupByYear: true }));
+        moreWrap.hidden = page.done;
+        statusEl.textContent = `新しい順・${Math.round(performance.now() - started)}ms`;
+      } catch (err) {
+        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        console.error(err);
+      }
+    }
+
+    moreBtn.addEventListener("click", async () => {
+      moreBtn.disabled = true;
+      await run(true);
+      moreBtn.disabled = false;
+    });
+
+    run(false);
+  </script>
+
+  <style is:global>
+    .chart { margin: 1rem 0; }
+    .chart svg { width: 100%; height: auto; display: block; }
+    .chart .bar { fill: var(--accent); }
+    .chart .bar.faint { fill: var(--accent); opacity: 0.32; }
+    .chart .grid { stroke: var(--line); stroke-width: 1; }
+    .chart .tick { fill: var(--muted); font-size: 10px; }
+    .chart .tick.right { text-anchor: end; }
+    .chart figcaption { margin-top: 0.4rem; }
+  </style>
+
+  <style>
+    .note {
+      border-left: 3px solid var(--accent); padding: 0.4rem 0.8rem;
+      background: var(--card); border-radius: 0 6px 6px 0;
+    }
+    .barcell { width: 30%; }
+    .minibar {
+      display: block; height: 0.6rem; background: var(--accent);
+      opacity: 0.7; border-radius: 2px; min-width: 1px;
+    }
+  </style>
+</Base>

@@ -1,0 +1,9 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "include": [".astro/types.d.ts", "src/**/*", "scripts/**/*", "astro.config.mjs"],
+  // public/vendor は sql.js-httpvfs の配布物（minify 済み）。型検査の対象にしない
+  "exclude": ["dist", "public", "node_modules"],
+  "compilerOptions": {
+    "types": ["astro/client", "node"]
+  }
+}

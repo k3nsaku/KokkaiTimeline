@@ -484,6 +484,26 @@ def count_indexed(con: sqlite3.Connection) -> int:
         INDEXED_KINDS).fetchone()[0]
 
 
+def write_manifest(dist_dir: Path) -> Path:
+    """`data/dist/manifest.json` を出力先の実物から作り直す。
+
+    サイトは「どの年DBがあるか」をこれで知る（年ごとに別ワーカを立てるため、
+    年の一覧が要る）。**引数の年ではなくディレクトリを走査する**ので、
+    `--year 2026` だけを作り直しても他の年が消えない。
+    """
+    files = []
+    for path in sorted(dist_dir.glob("kokkai-*.db")):
+        year = path.stem.removeprefix("kokkai-")
+        if not year.isdigit():
+            continue
+        files.append({"year": int(year), "file": path.name, "size": path.stat().st_size})
+
+    manifest = {"years": [f["year"] for f in files], "databases": files}
+    out = dist_dir / "manifest.json"
+    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return out
+
+
 def run_split(args: argparse.Namespace) -> None:
     years = args.year or available_years(args.raw)
     politicians, unit_map = load_politicians(args.politicians)
@@ -505,6 +525,9 @@ def run_split(args: argparse.Namespace) -> None:
           f"{sum(r['indexed'] for r in results):>10,}"
           f"{sum(r['hits'] for r in results):>10,}{total / 1024**3:>10.2f} GB")
     print(f"\nR2無料枠 10GB に対して {100 * total / (10 * 1024**3):.1f}%")
+
+    manifest = write_manifest(args.dist)
+    print(f"目録: {manifest}")
 
 
 def main() -> None:

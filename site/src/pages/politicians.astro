@@ -1,0 +1,90 @@
+---
+/**
+ * 議員一覧。1,111人ぶんを静的に出す（約100KB）。
+ * DBを引かないので絞り込みは即座に効くし、検索エンジンにも中身が渡る。
+ */
+import Base from "../layouts/Base.astro";
+import { politicians, latestAffiliation } from "../lib/site-data";
+import { formatNumber } from "../lib/format";
+
+const rows = [...politicians()]
+  .sort((a, b) => b.n_speeches - a.n_speeches)
+  .map((p) => {
+    const a = latestAffiliation(p);
+    return {
+      id: p.id, name: p.name, kana: p.name_kana ?? "", house: p.house ?? "",
+      // 会派を既定にする。政党は特定できないものが 3.6% あり、
+      // `無所属`（＝所属していないと分かっている）と混ざるため（CLAUDE.md）
+      kaiha: a?.kaiha ?? "", n: p.n_speeches,
+      last: p.last_date ?? "",
+    };
+  });
+---
+
+<Base title="議員一覧" description={`国会会議録で発言している議員 ${formatNumber(rows.length)}人の一覧。`}>
+  <h1>議員一覧</h1>
+  <p class="small muted">
+    会議録の発言を名寄せした{formatNumber(rows.length)}人。発言数の多い順。
+    所属は<strong>会派</strong>（会議録に書いてある事実）で、政党とは一致しないことがある。
+  </p>
+
+  <p class="filter">
+    <label class="sr-only" for="filter">絞り込み</label>
+    <input type="search" id="filter" placeholder="氏名・よみ・会派で絞り込む" autocomplete="off" />
+    <span id="count" class="small muted"></span>
+  </p>
+
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>氏名</th><th>院</th><th>会派</th>
+          <th class="num">発言数</th><th>最後の発言</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        {rows.map((r) => (
+          <tr data-key={`${r.name} ${r.kana} ${r.kaiha}`}>
+            <td>
+              <a href={`/politician/${r.id}`}>{r.name}</a>
+              {r.kana && <span class="kana"> {r.kana}</span>}
+            </td>
+            <td>{r.house}</td>
+            <td>{r.kaiha}</td>
+            <td class="num">{formatNumber(r.n)}</td>
+            <td class="small muted">{r.last}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const input = document.getElementById("filter") as HTMLInputElement;
+    const countEl = document.getElementById("count")!;
+    const trs = Array.from(document.querySelectorAll<HTMLTableRowElement>("#rows tr"));
+
+    function apply() {
+      const q = input.value.trim();
+      let shown = 0;
+      for (const tr of trs) {
+        const hit = !q || (tr.dataset.key ?? "").includes(q);
+        tr.hidden = !hit;
+        if (hit) shown++;
+      }
+      countEl.textContent = q ? `${shown.toLocaleString("ja-JP")}人` : "";
+    }
+
+    input.addEventListener("input", apply);
+  </script>
+
+  <style>
+    .filter { display: flex; gap: 0.75rem; align-items: center; margin: 1rem 0; }
+    #filter { min-width: min(22rem, 100%); }
+    .kana { color: var(--muted); font-size: 0.8rem; }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap;
+    }
+  </style>
+</Base>

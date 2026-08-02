@@ -1,0 +1,106 @@
+---
+/**
+ * トップ。検索の入口。
+ *
+ * 「いま国会で議論されていること」は `data/dist/trending.json`（10KB）から出す。
+ * ★中身は主に**審議中の法案の専門用語**であって「今週の争点」ではない。
+ *   表示の言葉を誇張しないこと（ROADMAP §3.3）。
+ */
+import Base from "../layouts/Base.astro";
+import { trending, topicSeries, politicians } from "../lib/site-data";
+import { formatDate, formatNumber } from "../lib/format";
+
+const t = trending();
+// windows は新しい順に並んでいる（build_topics.py の出力）
+const latest = t.windows[0];
+const terms = latest.terms.slice(0, 14);
+
+// 争点語は発言数の多い順に。ここが2文字語（憲法・年金）への唯一の入口でもある
+const topics = [...topicSeries().topics].sort((a, b) => b.n_speeches - a.n_speeches).slice(0, 12);
+
+const people = politicians();
+const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
+---
+
+<Base
+  title="国会タイムライン"
+  description="国会会議録の発言を横断検索し、議員ごとの時系列と争点語の頻度推移で見る。出典は国立国会図書館の国会会議録検索システム。"
+>
+  <h1>国会で、誰が何を言ったか</h1>
+  <p class="lede">
+    国会会議録の発言を検索し、議員ごとの時系列で並べる。
+    数字は出すが、評価も採点もしない。判断の材料を出すだけのサイト。
+  </p>
+
+  <form class="hero-search" action="/search" method="get">
+    <label class="sr-only" for="q">キーワード</label>
+    <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
+           enterkeyhint="search" autocomplete="off" />
+    <button type="submit" class="primary">検索</button>
+  </form>
+
+  <section>
+    <h2>直近の国会で急に増えた語</h2>
+    <p class="small muted">
+      {formatDate(latest.from)}〜{formatDate(latest.until)}の
+      {latest.sitting_days}開催日・{formatNumber(latest.n_speeches)}発言から。
+      <strong>出てくるのは主に審議中の法案の専門用語</strong>で、
+      「今週の争点」ではない。何が審議されているかの目印として見る。
+    </p>
+    <ul class="chips">
+      {terms.map((term) => (
+        <li>
+          <a class="chip" href={term.topic_id ? `/topic/${term.topic_id}` : `/search?q=${encodeURIComponent(term.term)}`}>
+            {term.term}<span class="muted small"> {term.n}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  <section>
+    <h2>争点語から見る</h2>
+    <p class="small muted">
+      運営が管理している語。<strong>2文字の語（憲法・年金・増税）はここからしか引けない</strong>
+      — 全文検索の索引が3文字未満を作れないため。
+      頻度推移と会派ごとの使われ方も見られる。
+    </p>
+    <ul class="chips">
+      {topics.map((topic) => (
+        <li><a class="chip" href={`/topic/${topic.id}`}>{topic.term}</a></li>
+      ))}
+      <li><a class="chip" href="/topics">すべて見る →</a></li>
+    </ul>
+  </section>
+
+  <section class="figures">
+    <h2>収録しているもの</h2>
+    <dl>
+      <div><dt>発言</dt><dd>{formatNumber(totalSpeeches)}件</dd></div>
+      <div><dt>議員</dt><dd>{formatNumber(people.length)}人</dd></div>
+      <div><dt>期間</dt><dd>2021年1月〜{t.through.slice(0, 4)}年{Number(t.through.slice(5, 7))}月</dd></div>
+    </dl>
+    <p class="small muted">
+      発言数は名寄せできた議員のぶん。参考人・政府参考人の発言もデータには持っているが、
+      検索の対象は議員の発言に限っている。
+    </p>
+  </section>
+
+  <style>
+    .lede { font-size: 1.05rem; max-width: 40rem; }
+
+    .hero-search { display: flex; gap: 0.5rem; margin: 1.5rem 0 2.5rem; max-width: 34rem; }
+    .hero-search input { flex: 1; }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap;
+    }
+
+    section { margin-block: 2.5rem; }
+
+    .figures dl { display: flex; flex-wrap: wrap; gap: 1.5rem 3rem; margin: 0.5rem 0; }
+    .figures dt { font-size: 0.8rem; color: var(--muted); }
+    .figures dd { margin: 0; font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+  </style>
+</Base>

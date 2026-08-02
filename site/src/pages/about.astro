@@ -1,0 +1,109 @@
+---
+/**
+ * このサイトについて。
+ *
+ * ★公開の前提（ROADMAP §3.5）はまだ揃っていない。**運営者表示・連絡先・
+ *   プライバシーポリシーは未記入のまま**にしてある。埋めないまま公開しないこと。
+ */
+import Base from "../layouts/Base.astro";
+import { politicians, topicSeries, manifest, trending } from "../lib/site-data";
+import { formatNumber } from "../lib/format";
+
+const people = politicians();
+const years = manifest().years;
+const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
+const through = trending().through;
+const nTopics = topicSeries().topics.length;
+---
+
+<Base title="このサイトについて" description="データの出どころ、できること、できないこと。">
+  <h1>このサイトについて</h1>
+
+  <p>
+    国会会議録から発言を集めて、横断検索と議員ごとの時系列表示を提供する。
+    有権者が政治家について判断するための材料を出すのが目的で、
+    <strong>独自の点数付け・ランキング・議員の評価はしない</strong>。
+  </p>
+
+  <h2>データの出どころ</h2>
+  <p>
+    すべて<a href="https://kokkai.ndl.go.jp/" rel="noopener">国立国会図書館 国会会議録検索システム</a>
+    の公開APIから取得している。報道記事は使っていない。
+    どの発言にも原典へのリンクを付けてあるので、必ずそこで確認できる。
+  </p>
+  <ul>
+    <li>収録期間: 2021年1月〜{through.slice(0, 4)}年{Number(through.slice(5, 7))}月</li>
+    <li>発言: {formatNumber(totalSpeeches)}件（名寄せできた議員のぶん）</li>
+    <li>議員: {formatNumber(people.length)}人</li>
+    <li>争点語: {nTopics}件</li>
+  </ul>
+
+  <h2>できないこと・気をつけて読むところ</h2>
+  <dl class="caveats">
+    <dt>2文字の検索語は引けない</dt>
+    <dd>
+      全文検索の索引（trigram）が3文字未満のトークンを作れないため、
+      「増税」「憲法」「年金」「原発」は検索では0件になる。
+      これらは<a href="/topics">争点語</a>として事前に集計してあり、そこからなら引ける。
+      争点語に無い2文字語は引けない。
+    </dd>
+
+    <dt>頻度は必ず分母で割ってある</dt>
+    <dd>
+      国会は通年で開いていない。件数のままグラフにすると、
+      単に開催日数の多い月が「争点」に見える。頻度推移はすべて
+      その月の総発言数で割った率で出している。
+    </dd>
+
+    <dt>集計の既定は政党ではなく会派</dt>
+    <dd>
+      会議録に書いてあるのは会派で、そこから政党を特定できない発言が3.6%ある。
+      「無所属」（政党に所属していないと分かっている）と「特定できず」は別物として扱っていて、
+      政党別の集計では混ぜていない。統一会派は名前が変わらないまま構成政党が入れ替わるため、
+      1会派＝1政党とも限らない。
+    </dd>
+
+    <dt>争点語のリストは運営が選んでいる</dt>
+    <dd>
+      網羅ではない。何を争点として扱うかという判断が入っている。
+    </dd>
+
+    <dt>頻度は賛否を意味しない</dt>
+    <dd>
+      ある語をよく使う会派が、その政策に賛成か反対かは頻度からは分からない。
+      発言そのものを読んで判断すること。
+    </dd>
+
+    <dt>検索の対象は議員の発言だけ</dt>
+    <dd>
+      参考人・公述人・政府参考人の発言もデータには持っているが、全文検索の索引は張っていない
+      （前後の文脈としては表示される）。
+    </dd>
+  </dl>
+
+  <h2 id="corrections">訂正依頼</h2>
+  <p>
+    所属会派・所属政党・名寄せの誤りを見つけたら知らせてほしい。
+    <!-- TODO(ROADMAP §3.5): 連絡先フォームを用意する。公開前に必須 -->
+  </p>
+  <p class="todo small">
+    ⚠ 未整備。ROADMAP §3.5（公開の前提）で、免責事項・訂正依頼窓口・
+    プライバシーポリシー・運営者表示をそろえる。<strong>これが揃うまで公開しない。</strong>
+  </p>
+
+  <h2>仕組み</h2>
+  <p>
+    サーバを持たない完全静的サイト。年ごとに分けた SQLite（1ファイル約370MB × {years.length}年）を
+    オブジェクトストレージに置き、ブラウザが HTTP Range で必要なページだけを読む。
+    検索も集計もすべて手元の端末で動いていて、何を検索したかはどこにも送られない。
+  </p>
+
+  <style>
+    .caveats dt { font-weight: 600; margin-top: 1.25rem; }
+    .caveats dd { margin: 0.2rem 0 0; }
+    .todo {
+      border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
+      background: var(--card); border-radius: 0 6px 6px 0;
+    }
+  </style>
+</Base>

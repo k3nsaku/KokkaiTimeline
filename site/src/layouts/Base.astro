@@ -1,0 +1,190 @@
+---
+/**
+ * 全ページ共通の枠。
+ *
+ * 中身の大半はブラウザがDBから引くので、ここで出すのは骨組みと、
+ * **事前生成できる分の本文**（議員の氏名・所属・争点語）だけ。
+ */
+export interface Props {
+  title: string;
+  description?: string;
+  /** 検索結果など、実質的な中身がクライアント側にしか無いページは索引させない */
+  noindex?: boolean;
+}
+
+const { title, description, noindex = false } = Astro.props;
+const fullTitle = title === "国会タイムライン" ? title : `${title} | 国会タイムライン`;
+---
+
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    {description && <meta name="description" content={description} />}
+    {noindex && <meta name="robots" content="noindex" />}
+    <meta property="og:title" content={fullTitle} />
+    {description && <meta property="og:description" content={description} />}
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <a class="skip" href="#main">本文へ</a>
+    <header class="site-header">
+      <div class="wrap header-inner">
+        <a class="brand" href="/">国会タイムライン</a>
+        <nav aria-label="サイト内">
+          <a href="/search">検索</a>
+          <a href="/politicians">議員</a>
+          <a href="/topics">争点語</a>
+          <a href="/about">このサイトについて</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="wrap">
+      <slot />
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>
+          出典: <a href="https://kokkai.ndl.go.jp/" rel="noopener">国立国会図書館 国会会議録検索システム</a>。
+          全文は各発言の原典リンクから確認できる。
+        </p>
+        <p class="muted">
+          このサイトは会議録の発言を整理して表示するもので、議員の評価・採点はしない。
+          誤りは<a href="/about#corrections">訂正依頼</a>から。
+        </p>
+      </div>
+    </footer>
+
+    <style is:global>
+      :root {
+        --bg: #fbfaf8;
+        --fg: #1b1b1d;
+        --muted: #5f6169;
+        --line: #dcdad4;
+        --card: #ffffff;
+        --accent: #1c5d99;
+        --mark: #ffe9a8;
+        --max: 56rem;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16171a;
+          --fg: #e8e6e1;
+          --muted: #9d9fa8;
+          --line: #33353b;
+          --card: #1e2024;
+          --accent: #7db3e0;
+          --mark: #5c4a12;
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+        line-height: 1.75;
+        font-size: 16px;
+        /* 日本語は行間が詰まると読めない。約物のぶら下げも効かせる */
+        text-spacing-trim: trim-start;
+      }
+
+      .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1rem; }
+
+      .skip {
+        position: absolute;
+        left: -9999px;
+      }
+      .skip:focus {
+        left: 1rem; top: 0.5rem; z-index: 10;
+        background: var(--card); padding: 0.5rem 1rem; border-radius: 6px;
+      }
+
+      a { color: var(--accent); }
+
+      .site-header {
+        border-bottom: 1px solid var(--line);
+        background: var(--card);
+        position: sticky; top: 0; z-index: 5;
+      }
+      .header-inner {
+        display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem;
+        align-items: baseline; padding-block: 0.75rem;
+      }
+      .brand { font-weight: 700; font-size: 1.05rem; text-decoration: none; color: var(--fg); }
+      .site-header nav { display: flex; gap: 1rem; font-size: 0.9rem; }
+
+      .site-footer {
+        margin-top: 4rem; padding: 1.5rem 0 3rem;
+        border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted);
+      }
+      .site-footer p { margin: 0.4rem 0; }
+
+      h1 { font-size: 1.6rem; line-height: 1.4; margin: 1.5rem 0 0.5rem; }
+      h2 { font-size: 1.2rem; margin: 2rem 0 0.5rem; }
+      h3 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
+
+      .muted { color: var(--muted); }
+      .small { font-size: 0.85rem; }
+
+      mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+      /* --- 発言カード（検索結果・議員ページ・前後表示で共通） --- */
+      .speech-list { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: 0.75rem; }
+      .speech {
+        background: var(--card); border: 1px solid var(--line);
+        border-radius: 8px; padding: 0.9rem 1rem;
+      }
+      .speech-meta {
+        font-size: 0.82rem; color: var(--muted);
+        display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-bottom: 0.35rem;
+      }
+      .speech-speaker { font-weight: 600; color: var(--fg); }
+      .speech-body { margin: 0; }
+      .speech-body a { text-decoration: none; color: inherit; }
+      .speech-body a:hover { text-decoration: underline; }
+
+      .year-heading {
+        margin: 1.5rem 0 0.5rem; font-size: 0.9rem; font-weight: 700; color: var(--muted);
+        border-bottom: 1px solid var(--line); padding-bottom: 0.25rem;
+      }
+
+      /* --- フォーム --- */
+      input[type="search"], input[type="text"], select, button {
+        font: inherit; padding: 0.5rem 0.7rem;
+        border: 1px solid var(--line); border-radius: 6px;
+        background: var(--card); color: var(--fg);
+      }
+      button { cursor: pointer; }
+      button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+      button:disabled { opacity: 0.5; cursor: default; }
+
+      .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0.5rem 0; list-style: none; }
+      .chip {
+        display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px;
+        border: 1px solid var(--line); background: var(--card);
+        font-size: 0.85rem; text-decoration: none; color: var(--fg);
+      }
+      .chip:hover { border-color: var(--accent); }
+
+      .status { color: var(--muted); font-size: 0.9rem; margin: 0.75rem 0; }
+      .error { color: #b4232a; }
+      @media (prefers-color-scheme: dark) { .error { color: #ff9d9d; } }
+
+      table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); }
+      th { color: var(--muted); font-weight: 600; }
+      td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+      .scroll-x { overflow-x: auto; }
+    </style>
+  </body>
+</html>
