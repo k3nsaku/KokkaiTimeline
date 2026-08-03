@@ -132,6 +132,26 @@ FTS5 の trigram は3文字未満のトークンを作れない。`word` / `word
   そこから語彙を戻すので、古いままだと**次の日次で巻き戻る**
   （最後に同じものが書き戻されるので自然には直らない）
 
+## 公開まわり（セキュリティ・コスト）
+
+- **★Cache Rule の Cache Key にクエリ文字列を全部入れない。** 既定だと
+  `?v=...&junk=1` のようにゴミを足すだけで別キーになり、**いくらでも MISS を作れる**
+  （実測で確認）。MISS はエッジを抜けて R2 の `GetObject`（Class B・月1,000万まで無料）
+  に届くので、**課金を外から積み増せる**。Cache Key の Query String は
+  **`v` だけ include** にする。`retry=` はブラウザキャッシュを外すためのもので、
+  エッジキーから外れても目的は達成される
+- **`_headers` の CSP を触ったら実機で確かめる。** 壊れてもエラーが出ず、
+  **機能だけ静かに消える**（`script-src 'self'` を入れた時点でメールのコピーボタンが消えた）
+- **`astro.config.mjs` の `inlineStylesheets: "never"` と `vite.build.assetsInlineLimit: 0`
+  を戻さない。** 戻すと Astro が小さいスクリプトをHTMLに直接埋め、CSP に弾かれる
+- **`connect-src` に年DBのホストが要る。** `PUBLIC_DB_BASE` を変えたら `_headers` も変える
+- **★ワークフローに `pull_request_target` を使わない。** public リポジトリで
+  **fork のコードに secrets を渡してしまう唯一の経路**。CI を足すなら `pull_request`
+  （fork からのトークンは読み取り専用になる）。いまの `daily.yml` は
+  `schedule` と `workflow_dispatch` だけなので、この穴は無い
+- **R2 の APIキーはバケット限定の Object Read & Write に留める。** アカウント管理権限を
+  付けない。漏れたときに書き換えられる範囲がそのまま被害の範囲になる
+
 ## 名寄せ
 
 - **突合の単位は `(発言者, 読み, 会派)`。** 読みだけだと同姓同名が1行に潰れて分離できなくなる

@@ -1,0 +1,25 @@
+# Cloudflare Pages が返すレスポンスヘッダ。**サイト（Pages）にだけ効く。**
+# 年DBを配る R2（db.kokkai-timeline.com）は別オリジンなので、ここでは制御できない。
+#
+# ★CSP を触ったら実機で確かめること。**壊れてもエラーが出ず、機能だけ静かに消える。**
+#   実際、`script-src 'self'` を入れた時点でメールのコピーボタンが黙って消えた
+#   （Astro が小さいスクリプトをHTMLに直接埋めていたため）。
+#   `astro.config.mjs` の `inlineStylesheets: "never"` と
+#   `vite.build.assetsInlineLimit: 0` がそれを防いでいる。**片方だけ戻さないこと。**
+#
+# 検証のしかた: dist を CSP 付きで配って全ページ型を触る
+#   （検索・議員・争点語・発言・免責事項）。Console に違反が出ないこと。
+
+/*
+  # 年DBの取得先を connect-src に入れてある。**PUBLIC_DB_BASE を変えたらここも変える。**
+  # 'wasm-unsafe-eval' は sql.js-httpvfs（SQLite の WASM）に要る。
+  # worker-src は 'self' で足りる（blob: ワーカは使っていない）。
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://db.kokkai-timeline.com; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
+  # frame-ancestors と同じ意味。CSP を解さない古いブラウザ向け
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  # 使っていない機能を明示的に切る。**clipboard は入れない**（コピーボタンが死ぬ）
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(), midi=()
+  # HTTPS 固定。includeSubDomains は付けない（db. を巻き込む必要がない）
+  Strict-Transport-Security: max-age=31536000

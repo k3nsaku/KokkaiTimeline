@@ -30,9 +30,20 @@ export default defineConfig({
     }),
   ],
   build: {
-    // 発言ページは 650,785 件あって事前生成できない（§3.3 参照）。
+    // 発言ページは 650,785 件あって事前生成できない。
     // ディレクトリ形式にすると `/speech/xxx/index.html` が要るため、ファイル形式にする
     format: "file",
+    // ★小さい <script> をHTMLに埋め込ませない。**CSP のため。**
+    //   既定だと Mail.astro のような短いコンポーネントスクリプトが
+    //   `<script type="module">`（src 無し）として直に書き出され、
+    //   `script-src 'self'` に弾かれて**エラーも出さずに機能だけ消える**
+    //   （実際にメールのコピーボタンが消えた）。外部ファイルなら 'self' で通る。
+    //   これを戻すなら public/_headers の CSP も一緒に見直すこと
+    inlineStylesheets: "never",
+  },
+  vite: {
+    // 同上。0 にすると小さいアセットも data: URI にせず外部ファイルにする
+    build: { assetsInlineLimit: 0 },
   },
 });
 

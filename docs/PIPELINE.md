@@ -129,6 +129,8 @@ R2・状態バケット・Pages まで手で反映済み。
 | 2 | カスタムドメイン `db.kokkai-timeline.com` | ✅ 疎通確認済み |
 | 3 | CORS ポリシー | ✅ curl で確認済み |
 | 3.5 | **Cache Rule `r2-db-cache`** | ✅ RTT 77ms→8ms を確認 |
+| 3.5b | **Cache Key の Query String を `v` だけに絞る** | ❌ **コストの穴。手順3.5 の囲みを読むこと** |
+| 3.6 | サイトの セキュリティヘッダ（`site/public/_headers`） | ✅ CSP 込み・実機で全ページ型を確認 |
 | 4 | R2 APIキー `github-actions-daily-update` | ✅ |
 | — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
 | 5 | Cloudflare Pages プロジェクト（Direct Upload） | ✅ 初回デプロイ済み |
@@ -276,6 +278,22 @@ Caching → Cache Rules → Create rule:
 | Edge TTL | **Use cache-control header if present, bypass cache if not** |
 | Browser TTL | **Respect origin TTL** |
 | Status code TTL | 設定しない |
+| **Cache Key → Query String** | ★**Include only: `v`**（下記） |
+
+> ### ★ Cache Key のクエリ文字列を絞る（コストの穴）
+>
+> **既定ではクエリ文字列がまるごとキャッシュキーに入る。** つまり
+> `kokkai-2025.db?v=...&junk=1` `&junk=2` … とゴミを変えるだけで、
+> **同じファイルに対していくらでも MISS を作れる**（実測で確認済み）。
+> MISS はエッジを抜けて R2 の `GetObject`（Class B）に届く。
+> 無料枠は月1,000万・超過は100万あたり $0.36 なので、**外から課金を積み増せる。**
+>
+> Cache Key の Query String を **`v` だけ include** にすれば、ゴミは同じキーに畳まれる。
+> **`retry=` が外れるが問題ない** — あれはブラウザキャッシュを外すためのもので、
+> エッジが自分のコピーを返せば目的は果たされる。
+>
+> 補助として、無料プランで1本使える **Rate limiting rule** を
+> `db.kokkai-timeline.com` に張っておくとなお良い。
 
 - **TTL を固定値にしない**（`Ignore cache-control header and use this TTL`）。
   目録まで1年握られて更新が反映されなくなる。アップロード時に付けた
@@ -295,6 +313,20 @@ Caching → Cache Rules → Create rule:
 | 初回（`MISS`・接続確立込み） | 210〜260ms。**この1回でオブジェクト全体がエッジに載る** |
 
 `MISS` のあとは、それまで一度も読んでいない位置でも 8ms で返る。
+
+### 3.6. サイト側のセキュリティヘッダ
+
+`site/public/_headers` に入れてある（Pages が読む。**R2 側には効かない**）。
+CSP・`X-Frame-Options`・`Permissions-Policy`・HSTS。
+
+**触ったら実機で確かめること。壊れてもエラーが出ず、機能だけ静かに消える。**
+`script-src 'self'` を入れた時点でメールのコピーボタンが黙って消えた
+（Astro が小さいスクリプトをHTMLに直接埋めていたため）。
+`astro.config.mjs` の `inlineStylesheets: "never"` と
+`vite.build.assetsInlineLimit: 0` がそれを防いでいる。**片方だけ戻さないこと。**
+
+`connect-src` に年DBのホストが入っているので、**`PUBLIC_DB_BASE` を変えたら
+`_headers` も変える**。
 
 ### 4. R2 の S3 API キーを作る
 
