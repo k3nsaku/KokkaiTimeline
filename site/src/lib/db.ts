@@ -25,7 +25,7 @@ export {
   type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
 
-/** page_size と一致させる。4096比でリクエスト18%減（PHASE1_PROTOTYPE §3）。 */
+/** page_size と一致させる。4096比でリクエスト18%減（docs/DECISIONS.md）。 */
 const CHUNK = 8192;
 
 /** 本番は R2 のカスタムドメイン。開発は Astro のミドルウェアが /db で配る。 */

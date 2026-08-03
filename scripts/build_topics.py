@@ -1,11 +1,11 @@
-"""Phase 1 §3.2: 争点語の集計を作る。
+"""争点語の集計を作る。
 
 これは2つの問題を同時に解く。
 
-1. **2文字以下の語が全文検索で引けない**（`docs/PHASE0_FINDINGS.md` §3）。
+1. **2文字以下の語が全文検索で引けない**（`docs/DECISIONS.md`）。
    FTS5 の trigram は3文字未満のトークンを作れないので、
    「増税」「憲法」「年金」「原発」が0件になる。
-2. **任意語のFTS検索は1.5〜6秒かかる**（`docs/PHASE1_PROTOTYPE.md` §4）。
+2. **任意語のFTS検索は1.5〜6秒かかる**（`docs/DECISIONS.md`）。
    よく引かれる語を事前に集計しておけば、主要な導線はFTSを通らずに済む。
 
 運営が管理する有限個の争点語について、発言との対応を先に作っておく。
@@ -34,7 +34,7 @@
 
 `--propose` を付けると、会議録から候補語を抽出して `reports/topic_candidates.md` に出す。
 外部ソース（報道・SNS）は使わない — 会議録だけで十分に機能することは
-`docs/PHASE0_FINDINGS.md` §10 で実証済み。
+`docs/DECISIONS.md` で実証済み。
 
 **候補はあくまで候補。何を争点語にするかは運営の判断**なので、自動では採用しない。
 
@@ -108,7 +108,7 @@ def make_word_filter(con: sqlite3.Connection, denylist: Path | None = None):
     発言者名は**議員に限らず全員**を材料にする（参考人・政府参考人の名前も落とすため）。
     """
     speakers = {row[0] for row in con.execute("SELECT DISTINCT speaker FROM speech")}
-    # 議員名の断片が語として混ざるので弾く（PHASE0_FINDINGS §10 の後処理2）
+    # 議員名の断片が語として混ざるので弾く（docs/DECISIONS.md の後処理2）
     name_parts = {n[i:j] for n in speakers
                   for i in range(len(n)) for j in range(i + 2, len(n) + 1)}
     # 姓（名前の先頭2〜4文字）。「高市」+「総理」のような合成を落とすのに使う
@@ -199,7 +199,7 @@ def propose(con: sqlite3.Connection, out: Path, limit: int, denylist: Path) -> N
                         f"{len(term)} | {fts} |")
         return rows + [""]
 
-    # 争点は「頻度が高い語」ではなく「跳ねた語」に出る（PHASE0_FINDINGS §10）。
+    # 争点は「頻度が高い語」ではなく「跳ねた語」に出る（docs/DECISIONS.md）。
     # 頻度上位は「日本」「議論」「重要」のような一般語で埋まって使えない。
     # ピーク年の実数にも下限を置く。総数だけだと薄く広がった語が混ざる
     burstable = [t for t in candidates if by_year[peak_year(t)][t] >= 100]

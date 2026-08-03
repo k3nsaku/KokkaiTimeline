@@ -26,7 +26,7 @@
 
 `--split-by-year` を付けると `data/dist/kokkai-YYYY.db` を年ごとに作る。
 日次更新で変わるのは当年分だけなので、R2 へのアップロードが1ファイルで済み、
-過去年は CDN キャッシュが効き続ける（`docs/PHASE0_FINDINGS.md` §5.1）。
+過去年は CDN キャッシュが効き続ける（`docs/DECISIONS.md`）。
 
 配信するDBは **WAL にしない**。WAL は本体ファイルの外に -wal を持つため、
 HTTP Range で1ファイルだけ読む sql.js-httpvfs から開けない。
@@ -62,7 +62,7 @@ WORDS_PATH = ROOT / "data" / "words.json"
 
 # sql.js-httpvfs は requestChunkSize 単位で HTTP Range を投げる。
 # page_size をそれに合わせると1ページ＝1リクエストになり、無駄な読みが出ない。
-# 8192 は実測で決めた値（docs/PHASE1_PROTOTYPE.md §3）。
+# 8192 は実測で決めた値（`docs/DECISIONS.md`）。
 # 4096 比でリクエスト18%減・DBサイズ4%減。16384 以上は転送量が2〜4倍になる。
 # **変えるときはブラウザ側の requestChunkSize も同じ値にすること。**
 DEFAULT_PAGE_SIZE = 8192
@@ -78,7 +78,7 @@ INDEXED_KINDS = ("議員",)
 # 2文字語の索引を作るときに走査する範囲。漢字・カタカナ・全角ラテン/数字の連続。
 # scripts/build_words.py の RUN_PATTERN と**同じもの**にすること。
 # 語彙の側とずれると、語彙にあるのに索引に入らない語が出る。
-# 全角ラテンを入れているのは `ＡＩ` `ＤＸ` `ＧＸ` `Ｇ７` のため（docs/ROADMAP.md §3.6-B）
+# 全角ラテンを入れているのは `ＡＩ` `ＤＸ` `ＧＸ` `Ｇ７` のため（`docs/DECISIONS.md`）
 WORD_RUN_PATTERN = re.compile(r"[一-鿿々]{2,}|[ァ-ヴー]{2,}|[Ａ-Ｚａ-ｚ０-９]{2,}")
 
 # 全角ラテンの小文字 → 大文字。**語彙（words.json）も同じ形で作られている。**
@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS meeting (
 -- ★ rowid は日付の昇順になるよう投入する（load() が並べ替えている）。
 --   これに依存して、UIの「新しい順」はすべて `ORDER BY rowid DESC` で書く。
 --   `ORDER BY date DESC` にすると一時B-TREEができてヒット全件を読みに行き、
---   HTTP Range 越しでは 200MB 単位の転送になる（docs/ROADMAP.md §2 の実測）。
+--   HTTP Range 越しでは 200MB 単位の転送になる（`docs/DECISIONS.md` の実測）。
 --   rowid 順なら FTS5 も通常のインデックスも降順スキャンで早期終了できる。
 CREATE TABLE IF NOT EXISTS speech (
     speech_id        TEXT PRIMARY KEY,
@@ -181,7 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_affiliation_politician ON affiliation(politician_
 
 -- 争点語。FTS5(trigram) が引けない2文字以下の語への対策であり、
 -- よく引かれる語をFTSから外して速くするための索引でもある
--- （docs/PHASE1_PROTOTYPE.md §6-1）。リストは data/topics.json。
+-- （`docs/DECISIONS.md`）。リストは data/topics.json。
 CREATE TABLE IF NOT EXISTS topic (
     id              INTEGER PRIMARY KEY,
     term            TEXT NOT NULL UNIQUE,

@@ -2,7 +2,7 @@
 
 `docs/ROADMAP.md` §2 の未検証リスク
 「**sql.js-httpvfs が 350MB のDBで実用速度を出せるか**」を潰すための計測用。
-本番のサイト実装ではない。結論は `docs/PHASE1_PROTOTYPE.md`。
+本番のサイト実装ではない。結論は `docs/DECISIONS.md`。
 
 ## 使い方
 

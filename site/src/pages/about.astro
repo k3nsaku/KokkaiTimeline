@@ -3,7 +3,7 @@
  * このサイトについて。
  *
  * 免責事項・訂正依頼は `/disclaimer`、プライバシーポリシーは `/privacy`。
- * ★運営者名と連絡先は `src/lib/operator.ts` の1か所にある（ROADMAP §3.5）。
+ * ★運営者名と連絡先は `src/lib/operator.ts` の1か所にある（docs/SCOPE.md）。
  *   **未記入のまま公開しないこと。**
  */
 import Base from "../layouts/Base.astro";
@@ -106,7 +106,7 @@ const nWords = wordCount();
   {!operatorReady && (
     <p class="todo small">
       ⚠ {missing.join("・")}が未記入（<code>src/lib/operator.ts</code>）。
-      ROADMAP §3.5。<strong>これが埋まるまで公開しない。</strong>
+      docs/SCOPE.md。<strong>これが埋まるまで公開しない。</strong>
     </p>
   )}
 

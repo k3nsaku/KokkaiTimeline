@@ -6,7 +6,7 @@
  * だけを扱う純粋な関数にしてある。ブラウザ無しで動くので、
  * `site/test/` から直接呼んで検証できる（実際にそこで壊れた履歴がある）。
  *
- * SQL は `docs/PHASE1_PROTOTYPE.md` の実測に縛られている。**書き換える前に読むこと。**
+ * SQL は `docs/DECISIONS.md` の実測に縛られている。**書き換える前に読むこと。**
  *
  *   1. 「新しい順」は必ず `ORDER BY rowid DESC`。`ORDER BY date DESC` にすると
  *      一時B-TREEができてヒット全件を読みに行く（検索で204MB転送）
@@ -102,7 +102,7 @@ export function toFullWidth(input: string): string {
  * 大文字化は**2文字語の経路だけ**に掛ける。理由:
  *
  *   - FTS 経路は畳んではいけない。FTS5 の trigram が自分で大小を畳むうえ、
- *     畳むと `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなる（`ROADMAP.md` §3.6-A）
+ *     畳むと `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなる（`docs/DECISIONS.md`）
  *   - word 経路は畳まないといけない。`w.term = ?` は BINARY 比較で、SQLite は
  *     畳んでくれない（NOCASE は ASCII 限定で全角に効かない）。`ai` と打たれると
  *     `ａｉ` になり、語彙の `ＡＩ` に当たらず「引けない」と出る
@@ -120,7 +120,7 @@ export function toWordKey(term: string): string {
  *
  * 全角化（`toFullWidth`）に加えて、**2文字以下の語だけ**大文字に畳む。
  * `g7` と打つと索引は `Ｇ７` を引くので、`ｇ７` と見せると嘘になるうえ、
- * `?q=ｇ７` と `?q=Ｇ７` が同じ検索の別URLになる（§3.6-A が潰したかったのはこれ）。
+ * `?q=ｇ７` と `?q=Ｇ７` が同じ検索の別URLになる（`docs/DECISIONS.md` の「画面とURLは実際に引いた語に寄せる」）。
  *
  * **3文字以上には掛けない。** `ＳＤＧｓ` を `ＳＤＧＳ` と書き換えて見せる筋合いは無い
  * （FTS は畳んで引くので、見せる側で寄せる必要も無い）。
@@ -386,7 +386,7 @@ export function countQuery(
  *
  * カーソルは年ごとに「ここより前の rowid」。LIMIT に満たなかった年は読み切りなので
  * 0 を入れ、次から問い合わせ自体をしない。OFFSET を使わないのは、5ページ目が
- * 134リクエスト・4.1秒になるため（`docs/PHASE1_PROTOTYPE.md` §4）。
+ * 134リクエスト・4.1秒になるため（`docs/DECISIONS.md`）。
  *
  * @param years   新しい順に並んだ対象年
  * @param perYear years と同じ並びの、年ごとの取得結果（それぞれ最大 limit 件）

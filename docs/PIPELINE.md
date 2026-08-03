@@ -1,4 +1,4 @@
-# 日次更新の運用（ROADMAP §3.4）
+# 日次更新の運用
 
 `.github/workflows/daily.yml`。**これがこのプロジェクト唯一の定期実行**で、
 落ちても数日放置できるように作ってある（会議録は消えないので、次に走れば追いつく）。
@@ -105,7 +105,7 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 aws s3 cp data/words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
 ```
 
-直近でこれをやったのは **2026-08-03（`ROADMAP.md` §3.6-B・2文字の全角ラテン）**。
+直近でこれをやったのは **2026-08-03（`docs/DECISIONS.md`・2文字の全角ラテン）**。
 語彙 16,058 → **16,264件**。`build_words.py` の `RUN_PATTERN` と `build_db.py` の
 `WORD_RUN_PATTERN` を**両方**直し（片方だけは禁止）、全年を作り直して
 R2・状態バケット・Pages まで手で反映済み。
@@ -134,8 +134,8 @@ R2・状態バケット・Pages まで手で反映済み。
 | 5 | Cloudflare Pages プロジェクト（Direct Upload） | ✅ 初回デプロイ済み |
 | 6 | Pages 用トークン `github-actions-pages-deploy` | ✅ |
 | — | 年DB6個の `cache-control` 打ち直し（`immutable` を消す） | ✅ 6年とも確認・Purge 済み |
-| — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ ROADMAP §3.5 |
-| — | 争点語のレビュー（79→82件） | ✅ ROADMAP §3.2 |
+| — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ docs/SCOPE.md |
+| — | 争点語のレビュー（79→82件） | ✅ docs/DECISIONS.md |
 | — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
 | — | **GitHub にリポジトリを作って push** | ❌ **ここから。まだリモートが無い** |
 | — | **GitHub の Secrets / Variables** | ❌ |
@@ -145,7 +145,7 @@ R2・状態バケット・Pages まで手で反映済み。
 
 > ### ★ 全年の作り直しは 2026-08-03 に手で済ませた
 >
-> 争点語を 79 → 82 件に変え（`topic_id` がずれる）、さらに §3.6-B で
+> 争点語を 79 → 82 件に変え（`topic_id` がずれる）、さらに
 > **2文字語の語彙を 16,058 → 16,264 件に変えた**（`vocabulary` の指紋が変わる）。
 > どちらも全年の作り直しが要るもので、**手元で作り直して R2 に上げ済み**。
 > `words.json` も状態バケットに置いた。

@@ -1,6 +1,6 @@
 ---
 /**
- * 免責事項・著作権の扱い・訂正依頼の窓口・運営者表示（ROADMAP §3.5）。
+ * 免責事項・著作権の扱い・訂正依頼の窓口・運営者表示（docs/SCOPE.md）。
  *
  * **運営者名と連絡先は `src/lib/operator.ts` の1か所にある。**
  * 未記入なら、このページは警告を出す（埋めるまで公開しない）。
@@ -19,7 +19,7 @@ import { OPERATOR, missing, operatorReady } from "../lib/operator";
   {!operatorReady && (
     <p class="todo">
       ⚠ <strong>{missing.join("・")}が未記入</strong>（<code>src/lib/operator.ts</code>）。
-      ROADMAP §3.5 の通り、<strong>ここが埋まるまで公開しない。</strong>
+      docs/SCOPE.md の通り、<strong>ここが埋まるまで公開しない。</strong>
     </p>
   )}
 

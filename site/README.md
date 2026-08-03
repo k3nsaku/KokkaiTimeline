@@ -1,6 +1,6 @@
 # site — 公開するサイト
 
-ROADMAP §3.3。**完全静的サイト**（Astro）。サーバもAPIも持たない。
+**完全静的サイト**（Astro）。サーバもAPIも持たない。
 発言の中身はブラウザが年ごとのDBを HTTP Range で直接引く。
 
 ```bash
@@ -8,7 +8,7 @@ cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
 npm run build      # dist/ に静的HTMLを出す（1,201ページ / 18MB）
-npm run test       # 回帰テスト（36件・0.1秒）
+npm run test       # 回帰テスト（54件・0.2秒）
 npm run check      # 型検査 + テスト
 ```
 
@@ -45,7 +45,7 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 
 `/about` `/disclaimer` `/privacy` の3ページがここを見ている。
 **未記入のあいだは3ページとも⚠を出す**（`missing` に欠けている項目名が入る。
-ROADMAP §3.5。空になるまで公開しない）。
+docs/SCOPE.md。空になるまで公開しない）。
 
 メールの表示は `src/components/Mail.astro`。**アドレスをそのままHTMLに置かない**
 （ユーザ名とドメインを別属性に分け、画面には全角の＠で出す。素のHTMLに
@@ -97,7 +97,7 @@ PUBLIC_DB_BASE=http://127.0.0.1:8788/db npm run build && npm run preview
 | 条件 | 引き先 | 速さ |
 |---|---|---|
 | 争点語（`topics.json`）に一致 | `topic_hit` | 0.7秒。別表記も合算される |
-| 2文字以下の語を含む | `word_hit`（語彙 16,058件） | FTSでは**原理的に引けない**もの |
+| 2文字以下の語を含む | `word_hit`（語彙 16,264件） | FTSでは**原理的に引けない**もの |
 | それ以外 | FTS5 trigram | 1.5〜6秒 |
 | 2文字語が語彙にも無い | 引けない | **黙って0件にせず**、含む争点語を出す |
 
@@ -105,14 +105,20 @@ PUBLIC_DB_BASE=http://127.0.0.1:8788/db npm run build && npm run preview
 `instr()` で絞る。走査する行数が起点の語の件数で頭打ちになる。
 
 **★ 検索語の全角化はこの3経路の手前、`query.ts` の `splitTerms()` でやっている**
-（`toFullWidth()`・`ROADMAP.md` §3.6-A）。会議録の英数字は全部全角で、
+（`toFullWidth()`・`docs/DECISIONS.md`）。会議録の英数字は全部全角で、
 素の半角で引くと0件になる。**引き先を足すときも必ずこの入口を通すこと。**
 
 - **NFKC を使わない。** 全角→半角に潰す**逆方向**の正規化で、やると全滅する。
   必要なのは `A-Za-z0-9` を `+0xFEE0` する片方向の写像だけ
-- **大文字にも寄せない。** FTS5 の trigram が全角ラテンの大小を畳むので幅だけで足りる。
-  寄せると `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなる。代わりに畳むのは
-  `matchTopic()`（争点語の突合）と `highlightTerm()`（強調）の2か所
+- **大小の扱いは経路で逆になる。揃えようとするとどちらかが壊れる。**
+  - **FTS 経路は畳まない。** trigram が全角ラテンの大小を自分で畳むので幅だけで足りる。
+    寄せると `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなるだけ。代わりに畳むのは
+    `matchTopic()`（争点語の突合）と `highlightTerm()`（強調）の2か所
+  - **word 経路は畳まないと引けない。** `w.term = ?` は BINARY 比較で、SQLite の
+    `NOCASE` も `upper()` も ASCII 限定なので全角に効かない。`toWordKey()` で
+    **2文字以下だけ**大文字に寄せる（3文字以上に掛けると `ＳＤＧｓ` が壊れる）。
+    語彙側も `build_words.py` の `fold()` が同じ写像を掛けてある
+  - 画面・入力欄・URL に出すのは `canonicalQuery()` の結果（＝実際に引いた語）
 - ハイライトに渡す `terms` も `splitTerms()` から取る（本文が全角なので、半角のままだと光らない）
 
 **引き先が3通りあるということは、直す場所も3か所あるということ。**
@@ -170,7 +176,7 @@ constructor の parameter property は使えない**（型を消すだけの変�
 
 ## 触る前に読むもの
 
-**`docs/PHASE1_PROTOTYPE.md` §2 の3つの制約。** `src/lib/query.ts` の SQL は
+**[docs/PITFALLS.md](../docs/PITFALLS.md) の「ブラウザからDBを引く」。** `src/lib/query.ts` の SQL は
 全部それに縛られている。特に:
 
 - **「新しい順」は `ORDER BY rowid DESC`。`date` で並べない**

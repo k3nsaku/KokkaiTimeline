@@ -1,5 +1,5 @@
 /**
- * 運営者の表示と連絡先（ROADMAP §3.5「公開の前提」）。
+ * 運営者の表示と連絡先（docs/SCOPE.md「法務の最小セット」）。
  *
  * **ここが未記入のまま公開しない。** 免責事項・プライバシーポリシー・訂正依頼の
  * 各ページはこの1か所を見ていて、埋まっていなければ「未記入」の警告を出す。
@@ -13,7 +13,7 @@ export interface Operator {
   /**
    * 表示名。**ハンドルネームでよい。**
    * 特定商取引法の表示義務が生じる取引（販売・広告収入を伴う勧誘）をしていないので、
-   * 本名・住所・電話番号は要らない（PROJECT_BRIEF §3）。
+   * 本名・住所・電話番号は要らない（docs/SCOPE.md）。
    */
   name: string | null;
   /**
@@ -31,7 +31,7 @@ export interface Operator {
   formUrl: string | null;
   /**
    * アクセス解析を入れているか。**入れたら必ず true にする**
-   * （プライバシーポリシーの記述が変わる）。ROADMAP §4-4 で未定。
+   * （プライバシーポリシーの記述が変わる）。docs/ROADMAP.md「決めていないこと」。
    */
   analytics: false | { name: string; url: string; cookies: boolean };
 }

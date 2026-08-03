@@ -8,7 +8,7 @@
  *
  * ★タイムラインの SQL は `speech(politician_id)` の索引だけで
  *   `ORDER BY rowid DESC` を降順スキャンさせる。索引に date を足すと
- *   27リクエスト → 509リクエストになる（`docs/PHASE1_PROTOTYPE.md` §2-1系）。
+ *   27リクエスト → 509リクエストになる（`docs/DECISIONS.md`）。
  */
 import Base from "../../layouts/Base.astro";
 import { politicians, manifest, latestAffiliation } from "../../lib/site-data";
@@ -178,7 +178,7 @@ const description =
 
     function applyFilter() {
       // 会議録の英数字は全部全角なので、半角で打たれた語を寄せてから引く。
-      // 入力欄も書き換えて、実際に引いた語を見せる（`ROADMAP.md` §3.6-A / §3.6-B）
+      // 入力欄も書き換えて、実際に引いた語を見せる（`docs/DECISIONS.md`）
       term = canonicalQuery(within.value).trim();
       within.value = term;
       clearBtn.hidden = !term;
