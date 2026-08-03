@@ -96,6 +96,11 @@ python scripts/build_db.py --split-by-year --page-size 8192    # 全年（約6�
 
 CI からやるなら `workflow_dispatch` を `all_years=true` で実行する。
 
+**次にこれをやるのは `ROADMAP.md` §3.6-B**（2文字の全角ラテン `ＡＩ` `ＤＸ` `ＧＸ` を
+語彙に入れる）。`build_words.py` の `RUN_PATTERN` と `build_db.py` の
+`WORD_RUN_PATTERN` を**両方**直してから、この手順で全年を作り直す。
+**初回の `all_years=true` に混ぜれば作り直しは1回で済む。**
+
 安全網として、各年DBの `meta` テーブルに語彙の指紋を入れてあり、
 `manifest.json` にも載る。食い違うと `build_db.py` が警告を出し、
 ワークフローは**その場で失敗する**（「語彙が年をまたいで揃っているか」の手順）。
