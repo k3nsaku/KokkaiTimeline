@@ -96,10 +96,19 @@ python scripts/build_db.py --split-by-year --page-size 8192    # 全年（約6�
 
 CI からやるなら `workflow_dispatch` を `all_years=true` で実行する。
 
-**次にこれをやるのは `ROADMAP.md` §3.6-B**（2文字の全角ラテン `ＡＩ` `ＤＸ` `ＧＸ` を
-語彙に入れる）。`build_words.py` の `RUN_PATTERN` と `build_db.py` の
-`WORD_RUN_PATTERN` を**両方**直してから、この手順で全年を作り直す。
-**初回の `all_years=true` に混ぜれば作り直しは1回で済む。**
+**★作り直したら `words.json` を状態バケットにも上げること。**
+日次は実行のたびに `s3://<state>/words.json` から語彙を**戻してから**DBを作る。
+ここが古いと、手元とR2の年DBをいくら新しくしても**次の日次で古い語彙に巻き戻る**
+（最後に同じものが書き戻されるので自然には直らない）。
+
+```bash
+aws s3 cp data/words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
+```
+
+直近でこれをやったのは **2026-08-03（`ROADMAP.md` §3.6-B・2文字の全角ラテン）**。
+語彙 16,058 → **16,264件**。`build_words.py` の `RUN_PATTERN` と `build_db.py` の
+`WORD_RUN_PATTERN` を**両方**直し（片方だけは禁止）、全年を作り直して
+R2・状態バケット・Pages まで手で反映済み。
 
 安全網として、各年DBの `meta` テーブルに語彙の指紋を入れてあり、
 `manifest.json` にも載る。食い違うと `build_db.py` が警告を出し、
@@ -127,20 +136,26 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 | — | 年DB6個の `cache-control` 打ち直し（`immutable` を消す） | ✅ 6年とも確認・Purge 済み |
 | — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ ROADMAP §3.5 |
 | — | 争点語のレビュー（79→82件） | ✅ ROADMAP §3.2 |
-| — | **GitHub の Secrets / Variables** | ❌ **ここから** |
-| — | **`workflow_dispatch` を `all_years=true` で手動実行** | ❌ ★下記 |
+| — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
+| — | **GitHub にリポジトリを作って push** | ❌ **ここから。まだリモートが無い** |
+| — | **GitHub の Secrets / Variables** | ❌ |
+| — | **Actions の Workflow permissions を Read and write に** | ❌ 台帳の書き戻しで落ちる |
+| — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ❌ |
 | — | `kokkai-timeline.com` を Pages に当てる | 上が通ってから。**当てた時点で実質公開** |
 
-> ### ★ 最初の実行は必ず `all_years=true`
+> ### ★ 全年の作り直しは 2026-08-03 に手で済ませた
 >
-> 2026-08-02 に争点語を 79 → 82 件に変えた。`topic_id` がずれるので、
-> **全年のDBを作り直さないと `/topic/<id>` が別の争点を引く。**
+> 争点語を 79 → 82 件に変え（`topic_id` がずれる）、さらに §3.6-B で
+> **2文字語の語彙を 16,058 → 16,264 件に変えた**（`vocabulary` の指紋が変わる）。
+> どちらも全年の作り直しが要るもので、**手元で作り直して R2 に上げ済み**。
+> `words.json` も状態バケットに置いた。
 >
-> 手元の `data/dist` は作り直し済みだが、**R2 にあるのは古い争点語で作られたもの**で、
-> 手元の `manifest.json` とも食い違っている。`all_years=true` の1回で
-> 作り直しとアップロードが両方済むので、**2.09GB を手で上げ直さなくてよい**。
+> **したがって Actions の初回は `all_years=false` でよい。** 当年だけ作り直す
+> 通常の経路が正しく回るかを見るほうが、いまは情報量が多い。
 >
-> 手で上げるなら **DBを先に、目録を後に**（順番を逆にすると、まだ無いDBをサイトが引きにいく）。
+> 手で上げるときは **DBを先に、目録を後に**（順番を逆にすると、まだ無いDBをサイトが引きにいく）。
+> **`words.json` を状態バケットに上げ忘れると、日次が古い語彙を戻してきて
+> `ＡＩ` が引けない状態に巻き戻る**（最後に同じものが書き戻されるので自然には直らない）。
 
 ## Cloudflare 側でやること
 
@@ -463,6 +478,40 @@ aws s3 ls s3://kokkai-timeline/ --endpoint-url $R2
 
 出てくるサイズが `data\dist\` の実物と一致すること。2026-08-02 の投入時は
 6個のDBと `manifest.json` すべてが一致し、目録に記録されたサイズとも整合していた。
+
+### 手で Pages に上げるとき（Actions を通さない場合）
+
+GitHub より先に本番で確かめたいときに使う。2026-08-03 に実際にこれで通した。
+
+**★ビルドに `PUBLIC_DB_BASE` を必ず付ける。** 付け忘れると `/db`（開発サーバ用の
+相対パス）を指した `dist` ができ、**上げてもDBを引けないサイトが本番に載る**。
+エラーも出ないので気づきにくい（実際に一度作ってしまった）。
+
+```powershell
+cd site
+$env:PUBLIC_DB_BASE = 'https://db.kokkai-timeline.com'
+npm run build
+cd ..
+```
+
+上げる前に、`dist` が本当に本番のDBを指しているか見る（0件ならビルドし直し）:
+
+```powershell
+Select-String -Path site\dist\_astro\*.js -Pattern 'db\.kokkai-timeline\.com' | Measure-Object
+```
+
+デプロイは Actions と同じコマンド。**`--branch main` は Pages の Production
+branch に合わせるラベル**で、手元の git のブランチ名とは無関係:
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = '＜github-actions-pages-deploy のトークン＞'
+$env:CLOUDFLARE_ACCOUNT_ID = '＜アカウントID＞'
+npx --yes wrangler@4 pages deploy site\dist --project-name kokkai-timeline --branch main
+```
+
+**確認は件数で取る。** 2026-08-03 の反映後、全年（2021〜2026）で
+`ＡＩ` 5,412 / `Ｇ７` 4,439 / `ＤＸ` 3,039 / `ＧＸ` 2,692 / `ＥＵ` 2,579。
+「引けない」と出たら、年DBか目録のどちらかが古いままか、パージが効いていない。
 
 そのあと Actions から `workflow_dispatch` で1回手動実行して、通ることを確かめる。
 

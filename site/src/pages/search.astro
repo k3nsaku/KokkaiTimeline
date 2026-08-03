@@ -63,7 +63,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
   <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
 
   <script>
-    import { search, countHits, meetingNames, resolveQuery, splitTerms, toFullWidth,
+    import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
     import { escapeHtml, formatNumber } from "../lib/format";
@@ -141,10 +141,11 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
     async function run(pushUrl = true) {
       // 会議録の英数字は全部全角。半角で打たれた語は寄せてから引く（`ROADMAP.md` §3.6-A）。
+      // 2文字以下の語は語彙が大文字なのでそこまで寄せる（§3.6-B）。
       // **入力欄とURLも書き換える。** 実際に引いた語を見せたいのと、
-      // 共有されたURLが1つに定まるため（`AI` と `ＡＩ` で別のURLにしない）
+      // 共有されたURLが1つに定まるため（`AI` `ＡＩ` `ａｉ` で別のURLにしない）
       const raw = queryInput.value.trim();
-      const query = toFullWidth(raw);
+      const query = canonicalQuery(raw);
       queryInput.value = query;
       convertedNote = query === raw ? "" : `・「${query}」として検索した`;
       if (!query) { statusEl.textContent = "キーワードを入れて検索する。"; return; }
@@ -192,9 +193,10 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     function showUnsupported(unsupported: string[]) {
       statusEl.textContent = "0件";
       const words = unsupported.map((w) => `「${escapeHtml(w)}」`).join("");
-      // 埋め込んである争点語から、その語を含むものを代わりに出す
+      // 埋め込んである争点語から、その語を含むものを代わりに出す。
+      // **大文字小文字は無視する**（matchTopic と同じ理由。`ai` で `生成ＡＩ` を出す）
       const related = topics
-        .filter((t) => unsupported.some((w) => t.term.includes(w)))
+        .filter((t) => unsupported.some((w) => t.term.toUpperCase().includes(w.toUpperCase())))
         .slice(0, 12);
       const chips = related.length
         ? `<p class="small">この語を含む争点語なら引ける:</p>

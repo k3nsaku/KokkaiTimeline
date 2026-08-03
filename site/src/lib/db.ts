@@ -15,12 +15,13 @@
 
 import { createDbWorker, type WorkerHttpvfs } from "sql.js-httpvfs";
 import {
-  countQuery, mergePages, searchQuery, splitTerms, timelineQuery, toMatchExpr, yearOfSpeechId,
+  countQuery, mergePages, searchQuery, splitTerms, timelineQuery, toMatchExpr,
+  wordPlan, wordProbeKeys, yearOfSpeechId,
   type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
 
 export {
-  splitTerms, toFullWidth, toMatchExpr, yearOfSpeechId,
+  canonicalQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey, yearOfSpeechId,
   type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
 
@@ -126,22 +127,19 @@ async function eachYear<T>(years: number[], run: (year: number) => Promise<T>): 
  */
 export async function resolveQuery(input: string, years: number[]): Promise<QueryPlan> {
   const terms = splitTerms(input);
-  const short = terms.filter((t) => t.length < 3);
   if (!terms.length) return { mode: "none", unsupported: [] };
-  if (!short.length) return { mode: "fts", match: toMatchExpr(input) };
+
+  const probe = wordProbeKeys(terms);
+  if (!probe.length) return { mode: "fts", match: toMatchExpr(input) };
 
   const probeYear = [...years].sort((a, b) => b - a)[0] ?? (await getManifest()).years.at(-1)!;
   const rows = await query<{ term: string; n_speeches: number }>(
     probeYear,
-    `SELECT term, n_speeches FROM word WHERE term IN (${short.map(() => "?").join(",")})`,
-    short);
+    `SELECT term, n_speeches FROM word WHERE term IN (${probe.map(() => "?").join(",")})`,
+    probe);
 
-  const unsupported = short.filter((t) => !rows.some((r) => r.term === t));
-  if (unsupported.length) return { mode: "none", unsupported };
-
-  // いちばん珍しい2文字語を起点にする。走査する行数がこれで決まる
-  const driver = [...rows].sort((a, b) => a.n_speeches - b.n_speeches)[0].term;
-  return { mode: "word", driver, filters: terms.filter((t) => t !== driver) };
+  // 引き当てた後の判断は query.ts（純粋関数）に置いてある。テストはそちらから
+  return wordPlan(terms, new Map(rows.map((r) => [r.term, r.n_speeches])));
 }
 
 export async function search(opts: SearchOptions): Promise<SearchPage> {

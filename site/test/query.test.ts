@@ -15,7 +15,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
-  countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr,
+  canonicalQuery, countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
+  wordPlan, wordProbeKeys,
   type QueryPlan, type SearchOptions,
 } from "../src/lib/query.ts";
 
@@ -47,11 +48,18 @@ const SPEECHES = [
   // ★会議録の英数字は全部全角。半角で打たれても引けなければならない（ROADMAP §3.6-A）。
   //   小文字を含む語（ＳＤＧｓ）は、大文字に寄せると引けなくなるので入れてある
   { issue: "B", pol: 3,    kind: "議員",       body: "ＬＧＢＴ理解増進法とＳＤＧｓの推進について伺う。" },
+  // ★2文字の全角ラテン（ROADMAP §3.6-B）。FTS では**原理的に引けない**ので語彙に入れる
+  { issue: "A", pol: 2,    kind: "議員",       body: "ＡＩの利活用とＧ７での議論について伺う。" },
+  { issue: "B", pol: 1,    kind: "議員",       body: "生成ＡＩの規制は憲法との関係でも論点になる。" },
 ];
 
 const TOPIC_ID = 1;
 const TOPIC_TERM = "安全保障";
 const WORD_TERM = "憲法";
+/** 2文字の全角ラテン。**語彙は大文字に畳んである**（`build_words.py` の `fold()`）。 */
+const LATIN_WORD = "ＡＩ";
+const DIGIT_WORD = "Ｇ７";
+const VOCABULARY = [WORD_TERM, LATIN_WORD, DIGIT_WORD];
 
 function fixture(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -108,10 +116,15 @@ function fixture(): DatabaseSync {
   const hit = db.prepare("INSERT INTO topic_hit VALUES (?, ?, 1)");
   for (const s of topicRows) hit.run(TOPIC_ID, s.rowid);
 
-  const wordRows = indexed.filter((s) => s.body.includes(WORD_TERM));
-  db.prepare("INSERT INTO word VALUES (1, ?, ?)").run(WORD_TERM, wordRows.length);
-  const whit = db.prepare("INSERT INTO word_hit VALUES (1, ?)");
-  for (const s of wordRows) whit.run(s.rowid);
+  // 語彙は部分文字列で索引化する（「憲法改正」の中の「憲法」も引けないと意味がない）。
+  // build_db.py の build_word_index() と同じ数え方
+  const word = db.prepare("INSERT INTO word VALUES (?, ?, ?)");
+  const whit = db.prepare("INSERT INTO word_hit VALUES (?, ?)");
+  VOCABULARY.forEach((term, i) => {
+    const rows = indexed.filter((s) => s.body.includes(term));
+    word.run(i + 1, term, rows.length);
+    for (const s of rows) whit.run(i + 1, s.rowid);
+  });
 
   return db;
 }
@@ -342,5 +355,131 @@ describe("検索語の全角化", () => {
   it("toMatchExpr も全角化された語をフレーズにする", () => {
     assert.equal(toMatchExpr("LGBT"), '"ＬＧＢＴ"');
     assert.equal(toMatchExpr("AI 規制"), '"ＡＩ" AND "規制"');
+  });
+});
+
+/**
+ * 2文字の全角ラテン（`ROADMAP.md` §3.6-B）。`ＡＩ` 5,394件・`ＤＸ` 3,038件・
+ * `ＧＸ` 2,692件・`Ｇ７` 4,438件。**FTS5 の trigram では原理的に引けない**ので、
+ * `word` / `word_hit` の語彙に入れてある。
+ *
+ * 語彙は**全角ラテンを大文字に畳んだ形**で持つ（`build_words.py` の `fold()`）。
+ * `w.term = ?` は BINARY 比較で SQLite が畳んでくれないため、
+ * 畳まないと `ai` と打たれた分が `ａｉ` になって当たらない。
+ */
+describe("2文字の全角ラテン", () => {
+  it("FTS では引けない（語彙に入れるしかない理由）", () => {
+    const db = fixture();
+    try {
+      for (const q of [LATIN_WORD, DIGIT_WORD]) {
+        const n = db.prepare("SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?")
+          .get(toMatchExpr(q)) as { n: number };
+        assert.equal(n.n, 0, `${q}: trigram が2文字を引けてしまうなら前提が変わる`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("半角・小文字で打っても word 経路で引ける", () => {
+    const db = fixture();
+    try {
+      // 「ＡＩ」を含む発言があること自体は先に押さえておく（0件では検証にならない）
+      const expected = SPEECHES.filter((s) => s.kind === "議員" && s.body.includes(LATIN_WORD));
+      assert.ok(expected.length > 1, "ＡＩ を含む議員の発言が複数無いと検証にならない");
+
+      for (const q of ["AI", "ai", "Ai", "ＡＩ", "ａｉ"]) {
+        const plan = wordPlan(splitTerms(q), new Map([[LATIN_WORD, expected.length]]));
+        assert.deepEqual(plan, { mode: "word", driver: LATIN_WORD, filters: [] }, q);
+        assert.equal(fetched(db, { query: q }, plan), expected.length, q);
+        assert.equal(counted(db, { query: q }, plan), expected.length, q);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("数字を含む語も引ける（Ｇ７・５Ｇ のため語彙に数字を入れてある）", () => {
+    const db = fixture();
+    try {
+      const expected = SPEECHES.filter((s) => s.kind === "議員" && s.body.includes(DIGIT_WORD));
+      assert.ok(expected.length > 0);
+      const plan = wordPlan(splitTerms("G7"), new Map([[DIGIT_WORD, expected.length]]));
+      assert.deepEqual(plan, { mode: "word", driver: DIGIT_WORD, filters: [] });
+      assert.equal(fetched(db, { query: "G7" }, plan), expected.length);
+      assert.equal(counted(db, { query: "G7" }, plan), expected.length);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("畳むのは2文字以下だけ（ＳＤＧｓ に掛けると壊れる）", () => {
+    // 掛けたらどうなるかを固定しておく。**3文字以上に掛けてはいけない**
+    assert.equal(toWordKey("ＳＤＧｓ"), "ＳＤＧＳ");
+    // 語彙に問い合わせるのは2文字以下だけなので、ＳＤＧｓ はそもそも来ない
+    assert.deepEqual(wordProbeKeys(splitTerms("SDGs")), []);
+    assert.deepEqual(wordProbeKeys(splitTerms("ai SDGs")), [LATIN_WORD]);
+    // 全部3文字以上なら語彙を引く必要が無い（＝FTS）
+    assert.equal(wordPlan(splitTerms("SDGs"), new Map()).mode, "fts");
+  });
+
+  it("畳むのはラテンだけ（漢字・カタカナ・記号に触らない）", () => {
+    assert.equal(toWordKey("憲法"), "憲法");
+    assert.equal(toWordKey("デジタル"), "デジタル");
+    assert.equal(toWordKey("ＡＩ"), "ＡＩ");
+  });
+
+  it("画面とURLには実際に引いた語を出す（同じ検索が別URLにならない）", () => {
+    for (const q of ["AI", "ai", "Ai", "ＡＩ", "ａｉ"]) {
+      assert.equal(canonicalQuery(q), LATIN_WORD, q);
+    }
+    assert.equal(canonicalQuery("g7"), DIGIT_WORD);
+    // 3文字以上は畳まない。**ここが崩れると `ＳＤＧｓ` を書き換えて見せることになる**
+    assert.equal(canonicalQuery("SDGs"), "ＳＤＧｓ");
+    assert.equal(canonicalQuery("ai SDGs 規制"), "ＡＩ ＳＤＧｓ 規制");
+    // 空白は打たれたまま（畳むと、2つ空けただけで「〜として検索した」が出る）
+    assert.equal(canonicalQuery("憲法  年金"), "憲法  年金");
+  });
+});
+
+/**
+ * `resolveQuery()` の判断部分。**DBに触らない純粋関数**に切り出してあるのでここで検証できる。
+ *
+ * ★ここが壊れると「引けるはずの語が黙って0件」になる。
+ *   特に driver を**値で**外すと、畳んだ結果（`ＡＩ`）と打たれた語（`ａｉ`）が
+ *   別物なので filters に残り、`instr(body, 'ａｉ')` が 0 を返して全滅する。
+ */
+describe("wordPlan（どの索引で引くかの判断）", () => {
+  const counts = new Map([[LATIN_WORD, 5232], ["憲法", 1369], ["増税", 314]]);
+
+  it("2文字語が1つなら filters は空", () => {
+    assert.deepEqual(wordPlan(splitTerms("ai"), counts),
+                     { mode: "word", driver: LATIN_WORD, filters: [] });
+  });
+
+  it("畳んだ語を filters に残さない（残すと instr が 0 を返す）", () => {
+    const plan = wordPlan(splitTerms("ai 増税"), counts);
+    assert.deepEqual(plan, { mode: "word", driver: "増税", filters: [LATIN_WORD] });
+    // 打たれたままの `ａｉ` が混ざっていたら本文（全角大文字）に当たらない
+    assert.equal(plan.mode === "word" && plan.filters.includes("ａｉ"), false);
+  });
+
+  it("いちばん珍しい語を起点にする（走査行数がこれで決まる）", () => {
+    assert.deepEqual(wordPlan(splitTerms("ai 憲法"), counts),
+                     { mode: "word", driver: "憲法", filters: [LATIN_WORD] });
+    assert.deepEqual(wordPlan(splitTerms("憲法 増税"), counts),
+                     { mode: "word", driver: "増税", filters: ["憲法"] });
+  });
+
+  it("3文字以上の語は畳まずに filters へ入れる", () => {
+    assert.deepEqual(wordPlan(splitTerms("ai SDGs"), counts),
+                     { mode: "word", driver: LATIN_WORD, filters: ["ＳＤＧｓ"] });
+  });
+
+  it("語彙に無ければ mode:none。出すのは打たれたままの語", () => {
+    assert.deepEqual(wordPlan(splitTerms("ｑｚ"), counts),
+                     { mode: "none", unsupported: ["ｑｚ"] });
+    assert.deepEqual(wordPlan(splitTerms("ai qz"), counts),
+                     { mode: "none", unsupported: ["ｑｚ"] });
   });
 });

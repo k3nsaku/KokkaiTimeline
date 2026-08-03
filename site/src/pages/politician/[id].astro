@@ -105,7 +105,7 @@ const description =
   />
 
   <script>
-    import { politicianSpeeches, search, resolveQuery, splitTerms, toFullWidth,
+    import { politicianSpeeches, search, resolveQuery, splitTerms, canonicalQuery,
              type SearchPage, type QueryPlan } from "../../lib/db";
     import { renderSpeeches } from "../../lib/render";
     import { escapeHtml } from "../../lib/format";
@@ -178,8 +178,8 @@ const description =
 
     function applyFilter() {
       // 会議録の英数字は全部全角なので、半角で打たれた語を寄せてから引く。
-      // 入力欄も書き換えて、実際に引いた語を見せる（`ROADMAP.md` §3.6-A）
-      term = toFullWidth(within.value).trim();
+      // 入力欄も書き換えて、実際に引いた語を見せる（`ROADMAP.md` §3.6-A / §3.6-B）
+      term = canonicalQuery(within.value).trim();
       within.value = term;
       clearBtn.hidden = !term;
       cursor = {};

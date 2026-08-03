@@ -75,10 +75,20 @@ NON_SPEECH_SPEAKERS = {"会議録情報", "会議録情報等", "目次"}
 # 全文検索の対象にする発言者の種別
 INDEXED_KINDS = ("議員",)
 
-# 2文字語の索引を作るときに走査する範囲。漢字の連続とカタカナの連続。
+# 2文字語の索引を作るときに走査する範囲。漢字・カタカナ・全角ラテン/数字の連続。
 # scripts/build_words.py の RUN_PATTERN と**同じもの**にすること。
-# 語彙の側とずれると、語彙にあるのに索引に入らない語が出る
-WORD_RUN_PATTERN = re.compile(r"[一-鿿々]{2,}|[ァ-ヴー]{2,}")
+# 語彙の側とずれると、語彙にあるのに索引に入らない語が出る。
+# 全角ラテンを入れているのは `ＡＩ` `ＤＸ` `ＧＸ` `Ｇ７` のため（docs/ROADMAP.md §3.6-B）
+WORD_RUN_PATTERN = re.compile(r"[一-鿿々]{2,}|[ァ-ヴー]{2,}|[Ａ-Ｚａ-ｚ０-９]{2,}")
+
+# 全角ラテンの小文字 → 大文字。**語彙（words.json）も同じ形で作られている。**
+# 畳む理由と、`ＳＤＧｓ` を壊さない理由は build_words.py の LATIN_FOLD を読むこと
+WORD_LATIN_FOLD = {c: c - 0x20 for c in range(0xFF41, 0xFF5B)}
+
+
+def fold_word_run(run: str) -> str:
+    """全角ラテンの並びだけ大文字に畳む。build_words.py の fold() と同じもの。"""
+    return run.translate(WORD_LATIN_FOLD) if run[0] > "鿿" else run
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meeting (
@@ -402,8 +412,9 @@ def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
     箇所だけを数えて語彙を決めるが、索引は**部分文字列**で拾う。
     「憲法改正」の中の「憲法」を引けないと検索として意味がないため。
 
-    そのために漢字/カタカナの連続を取り出し、その中の2文字窓を全部見る。
+    そのために漢字/カタカナ/全角ラテンの連続を取り出し、その中の2文字窓を全部見る。
     2文字の漢字列は必ず長さ2以上の漢字連続の中にあるので、これで取りこぼさない。
+    全角ラテンは大文字に畳んでから窓を切る（語彙も同じ形で作られている）。
 
     行数が多い（1年で約350万行）ので、一定件数ごとに流し込む。
     全部ためると数百MBのリストになる。
@@ -428,6 +439,7 @@ def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
             "SELECT rowid, body FROM speech WHERE speaker_kind = ?", INDEXED_KINDS[:1]):
         found = set()
         for run in WORD_RUN_PATTERN.findall(body):
+            run = fold_word_run(run)
             for i in range(len(run) - 1):
                 word_id = ids.get(run[i:i + 2])
                 if word_id is not None:

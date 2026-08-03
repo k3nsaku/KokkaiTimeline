@@ -67,7 +67,10 @@ export interface SearchPage {
  */
 export type QueryPlan =
   | { mode: "fts"; match: string }
+  /** driver / filters とも、2文字以下の語は `toWordKey()` で畳んだ形が入る
+   *  （語彙も本文もそれで引ける）。3文字以上の語は打たれたまま。 */
   | { mode: "word"; driver: string; filters: string[] }
+  /** 引けなかった語。**打たれたまま**を入れる（画面にそのまま出すため） */
   | { mode: "none"; unsupported: string[] };
 
 // --- 検索語 ---------------------------------------------------------------
@@ -93,6 +96,41 @@ export function toFullWidth(input: string): string {
 }
 
 /**
+ * 2文字語の語彙（`word.term`）を引くためのキー。**全角ラテンだけ大文字に畳む。**
+ *
+ * **ここは `toFullWidth()` と役割が違う。** 全角化は3経路すべてに掛けるが、
+ * 大文字化は**2文字語の経路だけ**に掛ける。理由:
+ *
+ *   - FTS 経路は畳んではいけない。FTS5 の trigram が自分で大小を畳むうえ、
+ *     畳むと `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなる（`ROADMAP.md` §3.6-A）
+ *   - word 経路は畳まないといけない。`w.term = ?` は BINARY 比較で、SQLite は
+ *     畳んでくれない（NOCASE は ASCII 限定で全角に効かない）。`ai` と打たれると
+ *     `ａｉ` になり、語彙の `ＡＩ` に当たらず「引けない」と出る
+ *
+ * **3文字以上の語には掛けないこと**（`ＳＤＧｓ` が `ＳＤＧＳ` になって本文に当たらない）。
+ * 語彙側は `scripts/build_words.py` の `fold()` が同じ写像を掛けてある。
+ */
+export function toWordKey(term: string): string {
+  return term.replace(/[ａ-ｚ]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) - 0x20));
+}
+
+/**
+ * 画面・入力欄・URL に出す形。**実際に引いた語に寄せる。**
+ *
+ * 全角化（`toFullWidth`）に加えて、**2文字以下の語だけ**大文字に畳む。
+ * `g7` と打つと索引は `Ｇ７` を引くので、`ｇ７` と見せると嘘になるうえ、
+ * `?q=ｇ７` と `?q=Ｇ７` が同じ検索の別URLになる（§3.6-A が潰したかったのはこれ）。
+ *
+ * **3文字以上には掛けない。** `ＳＤＧｓ` を `ＳＤＧＳ` と書き換えて見せる筋合いは無い
+ * （FTS は畳んで引くので、見せる側で寄せる必要も無い）。
+ * 空白は打たれたまま残す（畳むと、ただ2つ空けただけで但し書きが出る）。
+ */
+export function canonicalQuery(input: string): string {
+  return toFullWidth(input).replace(/[^\s　]+/g, (t) => (t.length < 3 ? toWordKey(t) : t));
+}
+
+/**
  * 検索語を空白で割る。**全角化はここを通す**ので、FTS・争点語・2文字語の
  * 3経路とも（`toMatchExpr` / `resolveQuery` 経由で）同じ正規化を受ける。
  * ハイライトに渡す語もここから取ること。半角のままだと本文に当たらない。
@@ -103,9 +141,44 @@ export function splitTerms(input: string): string[] {
 
 /** trigram にそのまま渡すと記号が演算子として解釈されるので、フレーズとして囲む。 */
 export function toMatchExpr(input: string): string {
-  const words = splitTerms(input);
+  return phraseAnd(splitTerms(input));
+}
+
+function phraseAnd(words: string[]): string {
   // 二重引用符はフレーズの区切りなので、FTS5 の作法どおり2つ重ねて逃がす
   return words.map((w) => `"${w.replace(/"/g, '""')}"`).join(" AND ");
+}
+
+/**
+ * 語彙（`word` テーブル）に有るか問い合わせるキー。**2文字以下の語だけ**を畳んで返す。
+ * 空なら全部3文字以上＝FTS で引けるので、語彙を引く必要そのものが無い。
+ */
+export function wordProbeKeys(terms: string[]): string[] {
+  return terms.filter((t) => t.length < 3).map(toWordKey);
+}
+
+/**
+ * 語彙の引き当て結果から `QueryPlan` を組む。**DBに触らない**ので `site/test/` から検証できる。
+ *
+ * @param terms  `splitTerms()` の結果（打たれたまま・全角化済み）
+ * @param counts `wordProbeKeys()` で引けた語 → その年の件数。引けなかった語は入っていない
+ */
+export function wordPlan(terms: string[], counts: Map<string, number>): QueryPlan {
+  // 2文字以下だけ畳む。**3文字以上に掛けてはいけない**（`ＳＤＧｓ` → `ＳＤＧＳ` で本文に当たらない）
+  const keys = terms.map((t) => (t.length < 3 ? toWordKey(t) : t));
+  const shortAt = terms.map((_, i) => i).filter((i) => terms[i].length < 3);
+  if (!shortAt.length) return { mode: "fts", match: phraseAnd(terms) };
+
+  // 出すのは**打たれたまま**の語。畳んだ形（`ＡＩ`）を見せても利用者には通じない
+  const unsupported = shortAt.filter((i) => !counts.has(keys[i])).map((i) => terms[i]);
+  if (unsupported.length) return { mode: "none", unsupported };
+
+  // いちばん珍しい2文字語を起点にする。走査する行数がこれで決まる。
+  // **残りは添字で外す。** 畳むと元の語と別物になりうるので、値で比較してはいけない
+  // （`ai 増税` の driver は `ＡＩ`。`ａｉ` が filters に残ると instr が 0 を返して全滅する）
+  const driverAt = shortAt.reduce((best, i) =>
+    counts.get(keys[i])! < counts.get(keys[best])! ? i : best);
+  return { mode: "word", driver: keys[driverAt], filters: keys.filter((_, i) => i !== driverAt) };
 }
 
 /** speech_id は `<issue_id>_<連番>` で、issue_id の末尾8桁が日付。年DBの選択に使う。 */
