@@ -63,7 +63,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
   <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
 
   <script>
-    import { search, countHits, meetingNames, resolveQuery, splitTerms,
+    import { search, countHits, meetingNames, resolveQuery, splitTerms, toFullWidth,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
     import { escapeHtml, formatNumber } from "../lib/format";
@@ -85,10 +85,14 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     const moreWrap = el<HTMLParagraphElement>("more-wrap");
     const moreBtn = el<HTMLButtonElement>("more");
 
-    /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。 */
+    /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。
+     *  **大文字小文字を無視して突き合わせる。** 争点語は `ＬＧＢＴ` `生成ＡＩ` のように
+     *  全角の大文字で書いてあるので、`lgbt` と打たれた分をここで拾えないと
+     *  3.3倍遅い FTS に落ちる（`topic_hit` を使えず、別表記の合算も効かない）。 */
     function matchTopic(query: string): TopicLite | null {
-      const q = query.trim();
-      return topics.find((t) => t.term === q || (t.variants ?? []).includes(q)) ?? null;
+      const q = toFullWidth(query).trim().toUpperCase();
+      return topics.find((t) => t.term.toUpperCase() === q
+        || (t.variants ?? []).some((v) => v.toUpperCase() === q)) ?? null;
     }
 
     function selectedYears(): number[] {
@@ -125,6 +129,8 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     /** 検索の世代。**古い検索が後から返ってきても捨てる**ための番号。
      *  重い検索の裏で条件を変えると、前の結果が新しい画面に混ざる。 */
     let generation = 0;
+    /** 半角で打たれた語を全角に寄せたときの但し書き。**黙って書き換えない。** */
+    let convertedNote = "";
 
     /** どの索引を使ったか。snippet() のマーカーが付くのは FTS のときだけなので、
      *  それ以外では語を渡して強調する。 */
@@ -134,7 +140,13 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     }
 
     async function run(pushUrl = true) {
-      const query = queryInput.value.trim();
+      // 会議録の英数字は全部全角。半角で打たれた語は寄せてから引く（`ROADMAP.md` §3.6-A）。
+      // **入力欄とURLも書き換える。** 実際に引いた語を見せたいのと、
+      // 共有されたURLが1つに定まるため（`AI` と `ＡＩ` で別のURLにしない）
+      const raw = queryInput.value.trim();
+      const query = toFullWidth(raw);
+      queryInput.value = query;
+      convertedNote = query === raw ? "" : `・「${query}」として検索した`;
       if (!query) { statusEl.textContent = "キーワードを入れて検索する。"; return; }
 
       const gen = ++generation;
@@ -208,12 +220,13 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
 
       if (!page.rows.length) {
         results.innerHTML = `<p class="status">一致する発言が無かった。</p>`;
-        statusEl.textContent = `0件・${elapsed}ms`;
+        statusEl.textContent = `0件・${elapsed}ms${convertedNote}`;
         return;
       }
 
       results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
-      statusEl.textContent = `${state!.opts.years!.length}年分を並列に検索・${elapsed}ms`;
+      statusEl.textContent =
+        `${state!.opts.years!.length}年分を並列に検索・${elapsed}ms${convertedNote}`;
 
       // 総件数は別に数える。FTS の COUNT は結果取得と同じくらい重いので待たせない
       const opts = state!.opts;
@@ -222,7 +235,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         const how = state.topic ? "（争点語の集計から）"
           : state.plan?.mode === "word" ? "（2文字語の索引から）" : "";
         statusEl.textContent =
-          `${formatNumber(n)}件${how}・${opts.years!.length}年分を並列に検索・${elapsed}ms`;
+          `${formatNumber(n)}件${how}・${opts.years!.length}年分を並列に検索・${elapsed}ms${convertedNote}`;
       }).catch((e) => console.warn("件数を数えられなかった", e));
     }
 

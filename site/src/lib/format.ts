@@ -39,6 +39,11 @@ export function highlight(snippet: string): string {
  *
  * エスケープ済みの文字列に対して置換するので、`<mark>` を入れたあとの
  * テキストをもう一度走査しないよう、長い語から順に一度だけ通す。
+ *
+ * **大文字小文字を無視する。** 検索語は全角に寄せるだけで大文字化していない
+ * （`query.ts` の `toFullWidth`）ので、`ｌｇｂｔ` と打たれた語で
+ * 本文の `ＬＧＢＴ` を光らせるにはここで畳む必要がある。FTS 側は畳んで引いてくるため、
+ * ここだけ厳密にすると「引けたのに光らない」になる。
  */
 export function highlightTerm(text: string, terms: string[]): string {
   const escaped = escapeHtml(text);
@@ -47,7 +52,7 @@ export function highlightTerm(text: string, terms: string[]): string {
     .sort((a, b) => b.length - a.length);
   if (!needles.length) return escaped;
 
-  const pattern = new RegExp(needles.map(escapeRegExp).join("|"), "g");
+  const pattern = new RegExp(needles.map(escapeRegExp).join("|"), "gi");
   return escaped.replace(pattern, (hit) => `<mark>${hit}</mark>`);
 }
 

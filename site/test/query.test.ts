@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
-  countQuery, searchQuery, toMatchExpr,
+  countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr,
   type QueryPlan, type SearchOptions,
 } from "../src/lib/query.ts";
 
@@ -44,6 +44,9 @@ const SPEECHES = [
   { issue: "B", pol: 2,    kind: "議員",       body: "安全保障と憲法の関係を整理したい。" },
   { issue: "B", pol: 3,    kind: "議員",       body: "安全保障の議論は丁寧にやるべきだ。" },
   { issue: "B", pol: null, kind: "政府参考人等", body: "安全保障の運用実態をご説明する。" },
+  // ★会議録の英数字は全部全角。半角で打たれても引けなければならない（ROADMAP §3.6-A）。
+  //   小文字を含む語（ＳＤＧｓ）は、大文字に寄せると引けなくなるので入れてある
+  { issue: "B", pol: 3,    kind: "議員",       body: "ＬＧＢＴ理解増進法とＳＤＧｓの推進について伺う。" },
 ];
 
 const TOPIC_ID = 1;
@@ -245,6 +248,39 @@ describe("検索の前提", () => {
     }
   });
 
+  it("半角で打った英数字でも引ける（会議録は全部全角）", () => {
+    const db = fixture();
+    try {
+      // 素の半角では0件。**これが直っていないと利用者は「ＡＩ」に辿り着けない**
+      const raw = db.prepare("SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?")
+        .get('"LGBT"') as { n: number };
+      assert.equal(raw.n, 0, "半角で引けてしまうなら全角化の前提が変わる");
+
+      // splitTerms を通せば引ける（3経路とも同じ入口を通る）
+      const plan: QueryPlan = { mode: "fts", match: toMatchExpr("LGBT") };
+      const rows = fetched(db, { query: "LGBT" }, plan);
+      assert.equal(rows, 1);
+      assert.equal(counted(db, { query: "LGBT" }, plan), rows);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("大文字に寄せない（ＳＤＧｓ のような語が引けなくなる）", () => {
+    const db = fixture();
+    try {
+      // FTS5 の trigram は全角ラテンの大小を畳むので、どちらで打っても引ける
+      for (const q of ["SDGs", "sdgs", "ＳＤＧｓ"]) {
+        const plan: QueryPlan = { mode: "fts", match: toMatchExpr(q) };
+        assert.equal(fetched(db, { query: q }, plan), 1, q);
+      }
+      // 全角化そのものは大小を保つ。ここで大文字化すると `ｉＰＳ` `ＩｏＴ` が壊れる
+      assert.equal(toFullWidth("SDGs"), "ＳＤＧｓ");
+    } finally {
+      db.close();
+    }
+  });
+
   it("新しい順は rowid の降順で返る", () => {
     const db = fixture();
     try {
@@ -270,5 +306,41 @@ describe("検索の前提", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+/**
+ * 検索語の全角化（`ROADMAP.md` §3.6-A）。
+ *
+ * **ここを NFKC で書き直さないための固定。** NFKC は全角→半角に潰す逆方向の
+ * 正規化で、使うと会議録（全部全角）に1件も当たらなくなる。
+ */
+describe("検索語の全角化", () => {
+  it("英数字だけを全角にする", () => {
+    assert.equal(toFullWidth("AI"), "ＡＩ");
+    assert.equal(toFullWidth("LGBT法案"), "ＬＧＢＴ法案");
+    assert.equal(toFullWidth("G7"), "Ｇ７");
+  });
+
+  it("全角で打たれた語を壊さない（NFKC との違い）", () => {
+    assert.equal(toFullWidth("ＡＩ"), "ＡＩ");
+    assert.equal("ＡＩ".normalize("NFKC"), "AI");   // ← これをやると全滅する
+  });
+
+  it("日本語と記号には触らない", () => {
+    assert.equal(toFullWidth("安全保障"), "安全保障");
+    assert.equal(toFullWidth("こども家庭庁・ＤＸ"), "こども家庭庁・ＤＸ");
+  });
+
+  it("splitTerms が全角化の入口（ここを通れば3経路とも直る）", () => {
+    assert.deepEqual(splitTerms("AI 規制"), ["ＡＩ", "規制"]);
+    assert.deepEqual(splitTerms("  LGBT　理解増進 "), ["ＬＧＢＴ", "理解増進"]);
+    // ハイライトに渡す語もここから取るので、本文（全角）に当たる形になる
+    assert.deepEqual(splitTerms("iPS細胞"), ["ｉＰＳ細胞"]);
+  });
+
+  it("toMatchExpr も全角化された語をフレーズにする", () => {
+    assert.equal(toMatchExpr("LGBT"), '"ＬＧＢＴ"');
+    assert.equal(toMatchExpr("AI 規制"), '"ＡＩ" AND "規制"');
   });
 });

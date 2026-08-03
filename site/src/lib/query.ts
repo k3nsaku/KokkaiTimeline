@@ -72,8 +72,33 @@ export type QueryPlan =
 
 // --- 検索語 ---------------------------------------------------------------
 
+/**
+ * 検索語の英数字を全角に寄せる。**会議録の英数字は全部全角で、半角で打つと0件になる**
+ * （`AI` 0件 / `ＡＩ` 5,394件、`LGBT` 0件 / `ＬＧＢＴ` 811件）。
+ *
+ * 実測（`data/kokkai.db` 全件）: 議員の発言 512,247件のうち**半角英字を含むのは
+ * 54件（0.01%）**しかなく、中身は URL と英語の引用だった。**寄せて失うものは無い。**
+ * 半角数字は 0.9% の発言にあるが（箇条書きの番号）、数字だけの語で引く場面は稀。
+ *
+ * **★ NFKC を使わないこと。** NFKC は全角→半角に潰す**逆方向**の正規化で、
+ * 使うと全滅する。ここでやるのは `A-Za-z0-9` を +0xFEE0 する片方向の写像だけ。
+ *
+ * **大文字小文字は寄せない。** FTS5 の trigram は全角ラテンも畳むので幅だけ揃えれば足りる
+ * （実測: `ｌｇｂｔ` も `ＬＧＢＴ` も 55件・`data/dist/kokkai-2025.db`）。
+ * 逆に大文字へ寄せると `ｉＰＳ` `ＳＤＧｓ` `ＩｏＴ`（全角ラテンの3.5%）が引けなくなる。
+ */
+export function toFullWidth(input: string): string {
+  return input.replace(/[A-Za-z0-9]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) + 0xfee0));
+}
+
+/**
+ * 検索語を空白で割る。**全角化はここを通す**ので、FTS・争点語・2文字語の
+ * 3経路とも（`toMatchExpr` / `resolveQuery` 経由で）同じ正規化を受ける。
+ * ハイライトに渡す語もここから取ること。半角のままだと本文に当たらない。
+ */
 export function splitTerms(input: string): string[] {
-  return input.trim().split(/[\s　]+/).filter(Boolean);
+  return toFullWidth(input).trim().split(/[\s　]+/).filter(Boolean);
 }
 
 /** trigram にそのまま渡すと記号が演算子として解釈されるので、フレーズとして囲む。 */

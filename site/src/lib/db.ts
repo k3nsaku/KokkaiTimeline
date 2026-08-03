@@ -20,7 +20,7 @@ import {
 } from "./query";
 
 export {
-  splitTerms, toMatchExpr, yearOfSpeechId,
+  splitTerms, toFullWidth, toMatchExpr, yearOfSpeechId,
   type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
 
