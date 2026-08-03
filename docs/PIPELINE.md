@@ -129,7 +129,7 @@ R2・状態バケット・Pages まで手で反映済み。
 | 2 | カスタムドメイン `db.kokkai-timeline.com` | ✅ 疎通確認済み |
 | 3 | CORS ポリシー | ✅ curl で確認済み |
 | 3.5 | **Cache Rule `r2-db-cache`** | ✅ RTT 77ms→8ms を確認 |
-| 3.5b | **Cache Key の Query String を `v` だけに絞る** | ❌ **コストの穴。手順3.5 の囲みを読むこと** |
+| 3.5b | クエリ文字列でキャッシュを素通りできる（コストの穴） | ⚠ **free では塞げない。** 手順3.5 の囲みを読むこと |
 | 3.6 | サイトの セキュリティヘッダ（`site/public/_headers`） | ✅ CSP 込み・実機で全ページ型を確認 |
 | 4 | R2 APIキー `github-actions-daily-update` | ✅ |
 | — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
@@ -278,42 +278,50 @@ Caching → Cache Rules → Create rule:
 | Edge TTL | **Use cache-control header if present, bypass cache if not** |
 | Browser TTL | **Respect origin TTL** |
 | Status code TTL | 設定しない |
-| **Cache Key → Query String** | ★**Include only: `v`**（下記） |
+| Cache key | **触れない**（`Custom Cache Key` は Enterprise 限定。下記） |
 
-> ### ★ Cache Key のクエリ文字列を絞る（コストの穴）
+> ### ★ クエリ文字列でキャッシュを素通りできる（free では塞ぎ切れない）
 >
 > **既定ではクエリ文字列がまるごとキャッシュキーに入る。** つまり
 > `kokkai-2025.db?v=...&junk=1` `&junk=2` … とゴミを変えるだけで、
-> **同じファイルに対していくらでも MISS を作れる**（実測で確認済み）。
+> **同じファイルに対していくらでも MISS を作れる**（2026-08-03 に実測して確認）。
 > MISS はエッジを抜けて R2 の `GetObject`（Class B）に届く。
 > 無料枠は月1,000万・超過は100万あたり $0.36 なので、**外から課金を積み増せる。**
 >
-> Cache Key の Query String を **`v` だけ include** にすれば、ゴミは同じキーに畳まれる。
-> **`retry=` が外れるが問題ない** — あれはブラウザキャッシュを外すためのもので、
-> エッジが自分のコピーを返せば目的は果たされる。
+> **正攻法は Cache Key の Query String を `v` だけ include にすることだが、
+> これは Enterprise 限定**（Cache Rules も Page Rules も `Custom Cache Key` は Enterprise）。
+> free で取れる手は3つで、どれも一長一短:
 >
-> 補助として、無料プランで1本使える **Rate limiting rule** を
-> `db.kokkai-timeline.com` に張っておくとなお良い。
-
-- **TTL を固定値にしない**（`Ignore cache-control header and use this TTL`）。
-  目録まで1年握られて更新が反映されなくなる。アップロード時に付けた
-  `cache-control` に任せれば、**DBはエッジ1年・ブラウザ1時間、目録は300秒**と個別に効く
-  （`s-maxage` はエッジだけに効く。上の「`immutable` は付けない」）
-- `bypass cache if not` を選ぶのは、ヘッダを付け忘れたときに
-  「遅くなるだけ」で済ませるため。既定TTLで握らせると古い目録が配られうる
-- **Browser TTL は明示する。** 省くとゾーン全体の Browser Cache TTL が効いて、
-  目録の300秒が上書きされることがある
-
-計測（この環境 → Cloudflare エッジ / 8KB の Range リクエスト / keep-alive）:
-
-| | RTT 中央値 |
-|---|---|
-| Cache Rule 前（`DYNAMIC`） | **77ms**（浅い位置26〜32 / 深い位置73〜297） |
-| Cache Rule 後（`HIT`） | **8ms** |
-| 初回（`MISS`・接続確立込み） | 210〜260ms。**この1回でオブジェクト全体がエッジに載る** |
-
-`MISS` のあとは、それまで一度も読んでいない位置でも 8ms で返る。
-
+> | | できること | 限界 |
+> |---|---|---|
+> | **① 通知を入れる**（推奨・すぐ） | R2 の使用量が跳ねたら気づける | 防げはしない。**だが気づければ手は打てる** |
+> | **② Rate limiting rule 1本**（無料枠） | 単発の雑な連打を止める | free は**カウント10秒・ブロック10秒に固定**。しかも閾値を下げすぎると正常な利用を弾く（下記） |
+> | **③ クエリ文字列を全部やめる** | **完全に塞げる** | 現構成の利点を1つ手放す。実際に叩かれてから（下記） |
+>
+> **②の閾値を下げすぎないこと。** 1回の検索は1年DBあたり平均80・最悪187リクエストの束で、
+> 6年を並列に引くので**1回の検索で約500、重い語だと1,000を超える**。
+> さらに「さらに読み込む」で積み増す。**10秒あたり2,000未満にすると普通の利用者が落ちる。**
+> その閾値だと単一IPで平均100req/s は通ってしまうので、**止まるのは事故と雑なスクレイパまで。**
+>
+> **③をやるなら**（＝実際に課金が動いてから）、`Cache Level: Ignore Query String` は
+> Page Rules 経由なら **free でも使える**。ただし `?v=` が効かなくなるので、
+> 単体でやると**DBを差し替えた瞬間にエッジが古いまま1年固まる**。必ずセットで:
+>
+> - 版をオブジェクトキーに入れる（`kokkai-2025-<指紋>.db`）か、
+> - 差し替えた年のURLをワークフローから purge する（API 1本）
+>
+> そのうえで WAF カスタムルール（free で5本）で
+> `http.host eq "db.kokkai-timeline.com" and http.request.uri.query ne ""` を Block すれば、
+> ゴミ付きリクエストはエッジより手前で落ちて **R2 に1回も届かない。**
+> 代償は「CDNのパージが要らない」という現構成の利点で、
+> **purge の失敗が新しい壊れ方（DBは新しいのにエッジが古い）を生む**。
+>
+> #### 叩かれたときにやること（先に決めておく）
+>
+> 1. Security → **Under Attack Mode** を入れる（一時的にサイトも重くなるが即効）
+> 2. Rate limiting rule の閾値を下げる
+> 3. 最後の手段: 公開バケットのカスタムドメインを外す。**サイトは壊れるが課金は止まる**
+>
 ### 3.6. サイト側のセキュリティヘッダ
 
 `site/public/_headers` に入れてある（Pages が読む。**R2 側には効かない**）。

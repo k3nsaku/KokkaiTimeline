@@ -134,12 +134,13 @@ FTS5 の trigram は3文字未満のトークンを作れない。`word` / `word
 
 ## 公開まわり（セキュリティ・コスト）
 
-- **★Cache Rule の Cache Key にクエリ文字列を全部入れない。** 既定だと
-  `?v=...&junk=1` のようにゴミを足すだけで別キーになり、**いくらでも MISS を作れる**
-  （実測で確認）。MISS はエッジを抜けて R2 の `GetObject`（Class B・月1,000万まで無料）
-  に届くので、**課金を外から積み増せる**。Cache Key の Query String は
-  **`v` だけ include** にする。`retry=` はブラウザキャッシュを外すためのもので、
-  エッジキーから外れても目的は達成される
+- **★クエリ文字列でキャッシュを素通りできる（未解決）。** `?v=...&junk=N` の N を
+  変えるだけで別キーになり、**いくらでも MISS を作れる**（実測で確認）。MISS は
+  R2 の `GetObject`（Class B・月1,000万まで無料）に届くので、**課金を外から積み増せる**。
+  **正攻法（Cache Key を `v` だけに絞る）は Enterprise 限定で、free では塞げない。**
+  取れる手と、叩かれたときの手順は `docs/PIPELINE.md` 手順3.5 の囲みにまとめてある。
+  **Rate limiting の閾値を下げすぎないこと** — 6年検索は1回で500〜1,000リクエストの束なので、
+  10秒あたり2,000未満にすると普通の利用者を弾く
 - **`_headers` の CSP を触ったら実機で確かめる。** 壊れてもエラーが出ず、
   **機能だけ静かに消える**（`script-src 'self'` を入れた時点でメールのコピーボタンが消えた）
 - **`astro.config.mjs` の `inlineStylesheets: "never"` と `vite.build.assetsInlineLimit: 0`
