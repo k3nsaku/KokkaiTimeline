@@ -38,7 +38,10 @@ export interface Operator {
 
 export const OPERATOR: Operator = {
   name: "国会タイムライン 運営",
-  email: "kokkai.timeline@gmail.com",
+  // Cloudflare Email Routing で Gmail へ転送している（2026-08-06）。
+  // 返信は Gmail 側のエイリアスからこのアドレスで送れる。
+  // **常時稼働プロセスは増えていない** — 転送は Cloudflare 側の設定だけで動く
+  email: "info@kokkai-timeline.com",
   formUrl: null,
   analytics: false,
 };
