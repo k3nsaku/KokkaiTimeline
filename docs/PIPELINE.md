@@ -143,6 +143,7 @@ R2・状態バケット・Pages まで手で反映済み。
 | — | GitHub の **Variables 4つ** | ✅ 2026-08-06 |
 | — | GitHub の **Secrets 4つ** | ❌ **ここから。値は本人しか出せない** |
 | — | **Actions の Workflow permissions を Read and write に** | ✅ 2026-08-06（台帳の書き戻し用） |
+| — | `daily.yml` が Actions に登録される | ✅ 2026-08-06。**初回 push では登録されなかった**（下の囲み） |
 | — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ❌ Secrets の後 |
 | — | `kokkai-timeline.com` を Pages に当てる | 上が通ってから。**当てた時点で実質公開** |
 
@@ -420,6 +421,21 @@ My Profile → API Tokens → Create Token → 一番下の **Custom token**。
 ## GitHub 側でやること
 
 Settings → Secrets and variables → Actions。
+
+> ### ★ 最初の push に含めたワークフローは Actions に登録されないことがある
+>
+> 2026-08-06 に踏んだ。**リポジトリ作成と同時の push で入った `daily.yml` が、
+> 5分待っても Actions に出てこなかった**（`gh api repos/<owner>/<repo>/actions/workflows`
+> が `total_count: 0`）。Actions は有効、public、既定ブランチは `master`、
+> YAML も妥当で、**症状はエラーではなく「ただ存在しない」。**
+>
+> GitHub はその push で**変更されたワークフローを登録する。**
+> ブランチを作る初回 push では取りこぼすことがあり、以後そのファイルを
+> 一度も変更しないと再登録の機会が来ない。
+>
+> **直し方: `daily.yml` に何か1行変更を入れて push すればよい**（10秒で登録される）。
+> 切り分けるなら、些細なワークフローを別名で1つ push してみること。
+> **そちらが即座に登録されるなら、YAML の中身は無実。**
 
 ### Secrets
 
