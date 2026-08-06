@@ -42,6 +42,22 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 ---
 
+## もう一つのワークフロー: CI（`.github/workflows/ci.yml`）
+
+**日次更新は `npm run build` しか回さない**（テストを通さずに本番へ配る）。
+その穴を塞ぐのが CI で、`site/**` を触った push と PR で `npm run check`
+（`astro check` + テスト54件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
+
+- **`npm run build` は回さない。** ビルドには `data/politicians.json` と
+  `data/dist/topics.json` が要るが、どちらも生成物でリポジトリに入っていない
+  （R2 が保管庫）。再現するには R2 の資格情報が要り、関門としては重すぎる
+- **`npm run check` はデータファイルを読まない。** `site-data.ts` の読み込みは
+  ページの事前生成のときだけ走る。生成物が無い clean clone で通ることを確認済み
+- `site/**` 以外（`scripts/` や `data/topics.json`）の変更では走らない。
+  **Python 側にテストは無い**ので、そこは今のところ関門が無い
+
+---
+
 ## ★ DBの差し替えとキャッシュ
 
 年DBのURLには **`?v=<中身の指紋>`** が付く（`manifest.json` の `version`）。

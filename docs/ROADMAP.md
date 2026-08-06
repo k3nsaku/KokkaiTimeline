@@ -65,8 +65,10 @@
 - [ ] **議員ページの頻度推移グラフ**（議員 × 争点語）。`dist/topics.json` は
       月×**会派**しか持っていないので、出すなら集計を足す必要がある
 - [ ] **ページ送りの実機確認。** keyset で実装済みだが、遅延20msを入れた計測はしていない
-- [ ] **CI（push ごとの `npm run check`）。** public にしたので足せる。
-      **日次更新はテストを通さずに配信している**（`daily.yml` は `npm run build` だけ）
+- [x] **CI（push ごとの `npm run check`）** — 2026-08-06。`.github/workflows/ci.yml`。
+      `site/**` を触った push と PR で型検査とテスト54件。
+      **日次更新は相変わらずテストを通さずに配信している**（`daily.yml` は
+      `npm run build` だけ）ので、関門はこの CI だけ。詳細は [PIPELINE.md](PIPELINE.md)
 - [ ] `/speech/<id>` の OGP。いまは全発言で共通
       （解決するには Workers が要り、「常時稼働を持たない」制約に触れる。
       共有が実際に伸びないと分かってから考える）

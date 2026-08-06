@@ -1,0 +1,54 @@
+# push と PR ごとに site/ の型検査とテストを回す。
+#
+# **日次更新（daily.yml）はテストを通さずに本番へ配る**（`npm run build` だけ）。
+# ここが唯一の関門なので、`src/lib/query.ts` を壊す変更はここで止める。
+#
+# ★ `npm run build` は回さない。ビルドには `data/politicians.json` と
+#   `data/dist/topics.json` が要るが、生成物なのでリポジトリには入っていない
+#   （R2 が保管庫。daily.yml が復元してからビルドしている）。
+#   ここで再現しようとすると R2 の資格情報が要り、関門としては重すぎる。
+
+name: CI
+
+on:
+  push:
+    paths:
+      - "site/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - ".github/workflows/ci.yml"
+
+# 同じブランチに続けて push したら古いほうは捨てる
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: 依存を入れる
+        run: npm ci
+        working-directory: site
+
+      - name: 型検査とテスト
+        # astro check + node --test（テスト54件）。
+        # データファイルは読まない（`site-data.ts` の読み込みはページの
+        # 事前生成のときだけ走る）ので、生成物が無くても通る
+        run: npm run check
+        working-directory: site
