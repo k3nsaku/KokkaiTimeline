@@ -199,7 +199,7 @@ jobs:
           aws s3 cp data/words.json "s3://$STATE_BUCKET/words.json" $R2
 
       - name: サイトをビルドする
-        # 議員1,111ページと争点語79ページはビルド時に生成される。
+        # 議員1,111ページと争点語82ページはビルド時に生成される。
         # 中身（politicians.json / topics.json / trending.json）が毎日変わるので、
         # サイトも毎日作り直す
         env:
