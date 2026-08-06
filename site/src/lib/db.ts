@@ -53,7 +53,7 @@ let retryCount = 0;
 
 export function getManifest(): Promise<Manifest> {
   manifestPromise ??= fetch(`${DB_BASE}/manifest.json`).then((r) => {
-    if (!r.ok) throw new Error(`目録を読めない: ${r.status}`);
+    if (!r.ok) throw new Error(`目録を読めません: ${r.status}`);
     return r.json() as Promise<Manifest>;
   });
   return manifestPromise;

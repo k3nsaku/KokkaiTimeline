@@ -14,8 +14,8 @@ const years = manifest().years;
 const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
 ---
 
-<Base title="検索" description="国会会議録の発言をキーワードで検索する。" noindex>
-  <h1>発言を検索する</h1>
+<Base title="検索" description="国会会議録の発言をキーワードで検索できます。" noindex>
+  <h1>発言を検索</h1>
 
   <form id="search-form" class="search-form">
     <div class="row">
@@ -48,8 +48,8 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         </label>
       </div>
       <p class="small muted">
-        期間は年単位で絞る。年ごとに別のデータベースを引く仕組みなので、
-        年を減らすとそのぶん速くなる。
+        期間は年単位で絞れます。年ごとに別のデータベースを引く仕組みなので、
+        年を減らすとそのぶん速くなります。
       </p>
     </details>
   </form>
@@ -147,8 +147,8 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       const raw = queryInput.value.trim();
       const query = canonicalQuery(raw);
       queryInput.value = query;
-      convertedNote = query === raw ? "" : `・「${query}」として検索した`;
-      if (!query) { statusEl.textContent = "キーワードを入れて検索する。"; return; }
+      convertedNote = query === raw ? "" : `・「${query}」として検索しました`;
+      if (!query) { statusEl.textContent = "キーワードを入れて検索してください。"; return; }
 
       const gen = ++generation;
       const topic = matchTopic(query);
@@ -184,7 +184,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         show(page, started, gen);
       } catch (err) {
         if (gen !== generation) return;
-        statusEl.innerHTML = `<span class="error">検索に失敗した: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">検索に失敗しました: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
     }
@@ -199,18 +199,18 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
         .filter((t) => unsupported.some((w) => t.term.toUpperCase().includes(w.toUpperCase())))
         .slice(0, 12);
       const chips = related.length
-        ? `<p class="small">この語を含む争点語なら引ける:</p>
+        ? `<p class="small">この語を含む争点語なら引けます:</p>
            <ul class="chips">${related.map((t) =>
              `<li><a class="chip" href="/topic/${t.id}">${escapeHtml(t.term)}</a></li>`).join("")}</ul>`
         : `<p class="small">3文字以上のもう少し具体的な語で試すか、
-            <a href="/topics">争点語の一覧</a>から探す。</p>`;
+            <a href="/topics">争点語の一覧</a>から探してみてください。</p>`;
 
       results.innerHTML = `
         <div class="notfound">
-          <p>${words}は検索できない。</p>
+          <p>${words}は検索できません。</p>
           <p class="small muted">
-            2文字以下の語は、会議録に十分な回数出てくるものだけを索引にしている
-            （全文検索の索引は3文字未満を作れないため）。この語は届いていない。
+            2文字以下の語は、会議録に十分な回数出てくるものだけを索引にしています
+            （全文検索の索引は3文字未満を作れないため）。この語は届いていません。
           </p>
           ${chips}
         </div>`;
@@ -221,7 +221,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       moreWrap.hidden = page.done;
 
       if (!page.rows.length) {
-        results.innerHTML = `<p class="status">一致する発言が無かった。</p>`;
+        results.innerHTML = `<p class="status">一致する発言はありませんでした。</p>`;
         statusEl.textContent = `0件・${elapsed}ms${convertedNote}`;
         return;
       }

@@ -21,12 +21,12 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
     <span class="mail" data-user={mail.user} data-domain={mail.domain}>
       {mail.user}<span aria-hidden="true"> ＠ </span>{mail.domain}
     </span>
-    <span class="muted small">（＠は半角の @ に直して送ってほしい）</span>
+    <span class="muted small">（＠は半角の @ に直して送ってください）</span>
   </p>
 ) : (
   <p class="todo small">
-    ⚠ 連絡先が未記入（<code>src/lib/operator.ts</code> の <code>email</code>）。
-    <strong>ここが埋まるまで公開しない。</strong>
+    ⚠ 連絡先が未記入です（<code>src/lib/operator.ts</code> の <code>email</code>）。
+    <strong>ここが埋まるまで公開しません。</strong>
   </p>
 )}
 
@@ -45,9 +45,9 @@ const mail = OPERATOR.email ? mailParts(OPERATOR.email) : null;
       // 失敗したことを出して、テキストの表示から手で拾ってもらう
       try {
         await navigator.clipboard.writeText(`${user}@${domain}`);
-        button.textContent = "コピーした";
+        button.textContent = "コピーしました";
       } catch {
-        button.textContent = "コピーできなかった";
+        button.textContent = "コピーできませんでした";
       }
       setTimeout(() => { button.textContent = "コピー"; }, 2000);
     });

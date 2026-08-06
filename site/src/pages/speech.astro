@@ -13,7 +13,7 @@
 import Base from "../layouts/Base.astro";
 ---
 
-<Base title="発言" description="国会会議録の発言1件。" noindex>
+<Base title="発言" description="国会会議録の発言1件です。" noindex>
   <p class="small"><a href="/search">← 検索に戻る</a></p>
 
   <article id="speech">
@@ -67,20 +67,20 @@ import Base from "../layouts/Base.astro";
         <div class="body">${body}</div>
         <p class="sources small">${links}</p>
         <p class="small muted">
-          表示しているのは国会会議録の本文そのまま。要約も編集もしていない。
+          表示しているのは国会会議録の本文そのままです。要約も編集もしていません。
         </p>`;
     }
 
     async function main() {
       const id = speechIdFromUrl();
-      if (!id) { statusEl.textContent = "発言IDが指定されていない。"; return; }
+      if (!id) { statusEl.textContent = "発言IDが指定されていません。"; return; }
 
       document.title = "発言 | 国会タイムライン";
       try {
         const s = await speechDetail(id);
         if (!s) {
           statusEl.innerHTML =
-            `<span class="error">この発言は見つからなかった（${escapeHtml(id)}）。</span>`;
+            `<span class="error">この発言は見つかりませんでした（${escapeHtml(id)}）。</span>`;
           return;
         }
         article.innerHTML = renderSpeech(s);
@@ -107,7 +107,7 @@ import Base from "../layouts/Base.astro";
           contextSection.hidden = false;
         }
       } catch (err) {
-        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
     }

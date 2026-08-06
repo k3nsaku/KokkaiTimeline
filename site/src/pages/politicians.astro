@@ -21,11 +21,11 @@ const rows = [...politicians()]
   });
 ---
 
-<Base title="議員一覧" description={`国会会議録で発言している議員 ${formatNumber(rows.length)}人の一覧。`}>
+<Base title="議員一覧" description={`国会会議録で発言している議員 ${formatNumber(rows.length)}人の一覧です。`}>
   <h1>議員一覧</h1>
   <p class="small muted">
-    会議録の発言を名寄せした{formatNumber(rows.length)}人。発言数の多い順。
-    所属は<strong>会派</strong>（会議録に書いてある事実）で、政党とは一致しないことがある。
+    会議録の発言を名寄せした{formatNumber(rows.length)}人です。発言数の多い順に並べています。
+    所属は<strong>会派</strong>（会議録に書いてある事実）で、政党とは一致しないことがあります。
   </p>
 
   <p class="filter">

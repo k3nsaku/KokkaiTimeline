@@ -22,17 +22,17 @@ const categories = [...byCategory.entries()]
 
 <Base
   title="争点語"
-  description={`国会で議論されている争点語 ${data.topics.length}件。それぞれの頻度推移と会派ごとの使われ方を見られる。`}
+  description={`国会で議論されている争点語 ${data.topics.length}件。それぞれの頻度推移と会派ごとの使われ方を見られます。`}
 >
   <h1>争点語</h1>
   <p>
-    運営が管理している{data.topics.length}件の語。それぞれについて
-    <strong>月ごとの頻度推移</strong>と<strong>会派ごとの使われ方</strong>を見られる。
+    運営が管理している{data.topics.length}件の語です。それぞれについて
+    <strong>月ごとの頻度推移</strong>と<strong>会派ごとの使われ方</strong>を見られます。
   </p>
   <p class="small muted">
-    別表記（「夫婦別姓」と「選択的夫婦別姓」など）は同じ争点として合算してある。
+    別表記（「夫婦別姓」と「選択的夫婦別姓」など）は同じ争点として合算してあります。
     <a href="/search">検索</a>との違いは、検索が<strong>発言を探す</strong>ためのものなのに対して、
-    こちらは<strong>いつ・どの会派から議論されたかの流れを見る</strong>ためのもの。
+    こちらは<strong>いつ・どの会派から議論されたかの流れを見る</strong>ためのものだという点です。
   </p>
 
   {categories.map(([category, topics]) => (
@@ -52,8 +52,8 @@ const categories = [...byCategory.entries()]
   ))}
 
   <p class="small muted note">
-    このリストは運営が選んでいる。網羅ではないし、選んだこと自体に判断が入っている。
-    載っていない語も<a href="/search">検索</a>からなら引ける（頻度推移は出ない）。
+    このリストは運営が選んでいます。網羅ではありませんし、選んだこと自体に判断が入っています。
+    載っていない語も<a href="/search">検索</a>からなら引けます（頻度推移は出ません）。
   </p>
 
   <style>

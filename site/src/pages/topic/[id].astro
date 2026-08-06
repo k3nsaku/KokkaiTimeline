@@ -30,7 +30,7 @@ const peak = [...overall].sort((a, b) => b.rate - a.rate)[0];
 
 const description =
   `国会で「${topic.term}」がいつ、どの会派から発言されたか。` +
-  `${formatNumber(topic.n_speeches)}件の発言を月ごとの出現率で見る。`;
+  `${formatNumber(topic.n_speeches)}件の発言を月ごとの出現率で見られます。`;
 ---
 
 <Base title={`${topic.term} の頻度推移`} description={description}>
@@ -40,7 +40,7 @@ const description =
   <p class="small muted">
     {topic.category && <>分類: {topic.category}・</>}
     {formatNumber(topic.n_speeches)}件の発言に{formatNumber(topic.n_occurrences)}回
-    {topic.variants.length > 0 && <>・別表記として {topic.variants.join("、")} も同じ語として数えている</>}
+    {topic.variants.length > 0 && <>・別表記として {topic.variants.join("、")} も同じ語として数えています</>}
   </p>
 
   <section>
@@ -57,9 +57,9 @@ const description =
   <section>
     <h2>会派ごとの使われ方</h2>
     <p class="small muted">
-      その会派の全発言に占める割合。<strong>発言数の多い会派ほど件数は増える</strong>ので、
-      件数のままでは比べられない。合計2,000発言に満たない会派は率が振れるため外してある。
-      政党ではなく<strong>会派</strong>で出しているのは、政党を特定できない発言が3.6%あるため。
+      その会派の全発言に占める割合です。<strong>発言数の多い会派ほど件数は増える</strong>ので、
+      件数のままでは比べられません。合計2,000発言に満たない会派は率が振れるため外してあります。
+      政党ではなく<strong>会派</strong>で出しているのは、政党を特定できない発言が3.6%あるためです。
     </p>
     <div class="scroll-x">
       <table>
@@ -88,8 +88,8 @@ const description =
       </table>
     </div>
     <p class="small muted">
-      よく使う会派が「賛成」「反対」のどちらかは、この数字からは分からない。
-      発言そのものを読んで判断すること。
+      よく使う会派が「賛成」「反対」のどちらかは、この数字からは分かりません。
+      発言そのものを読んで判断してください。
     </p>
   </section>
 
@@ -134,7 +134,7 @@ const description =
         moreWrap.hidden = page.done;
         statusEl.textContent = `新しい順・${Math.round(performance.now() - started)}ms`;
       } catch (err) {
-        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
     }

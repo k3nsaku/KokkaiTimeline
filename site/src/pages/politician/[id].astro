@@ -33,7 +33,7 @@ const affiliations = [...person.affiliations].sort((a, b) => b.start_date.locale
 
 const description =
   `${person.name}（${current?.kaiha ?? "会派不明"}）の国会での発言 ${formatNumber(person.n_speeches)}件を` +
-  `時系列で見る。${person.first_date ?? ""}〜${person.last_date ?? ""}。`;
+  `時系列で見られます。${person.first_date ?? ""}〜${person.last_date ?? ""}。`;
 ---
 
 <Base title={person.name} description={description}>
@@ -78,7 +78,7 @@ const description =
         </table>
       </div>
       <p class="small muted">
-        期間は「その会派で発言した最初と最後の日」で、在籍期間そのものではない。
+        期間は「その会派で発言した最初と最後の日」で、在籍期間そのものではありません。
       </p>
     </section>
 
@@ -150,7 +150,7 @@ const description =
         if (plan?.mode === "none") {
           results.innerHTML = "";
           statusEl.textContent =
-            `「${plan.unsupported.join("・")}」は2文字以下で、索引に無いため引けない。`;
+            `「${plan.unsupported.join("・")}」は2文字以下で、索引に無いため引けません。`;
           return;
         }
         const page = await load(append ? cursor : undefined);
@@ -162,10 +162,10 @@ const description =
         const elapsed = Math.round(performance.now() - started);
         statusEl.textContent = page.rows.length || append
           ? `新しい順・${elapsed}ms`
-          : term ? `「${term}」を含む発言は無かった。` : "発言が見つからない。";
+          : term ? `「${term}」を含む発言はありませんでした。` : "発言が見つかりません。";
       } catch (err) {
         if (gen !== generation) return;
-        statusEl.innerHTML = `<span class="error">読み込みに失敗した: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
     }

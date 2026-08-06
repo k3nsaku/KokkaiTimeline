@@ -55,7 +55,7 @@ export function monthlyChart(points: SeriesPoint[], label: string): string {
       `height="${Math.max(0, PAD_T + innerH - top).toFixed(1)}" ` +
       `class="bar${faint ? " faint" : ""}">` +
       `<title>${escape(p.month)}: ${p.hits}件 / ${p.total}発言（1,000発言あたり ${p.rate.toFixed(1)}件）` +
-      `${faint ? "\n※その月は発言数が少なく、率が振れやすい" : ""}</title></rect>`;
+      `${faint ? "\n※その月は発言数が少なく、率が振れやすくなっています" : ""}</title></rect>`;
   }).join("");
 
   // 年が変わるところにだけ目盛りを打つ。月を全部出すと読めない
