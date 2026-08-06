@@ -161,6 +161,7 @@ R2・状態バケット・Pages まで手で反映済み。
 | 6 | Pages 用トークン `github-actions-pages-deploy` | ✅ |
 | — | 年DB6個の `cache-control` 打ち直し（`immutable` を消す） | ✅ 6年とも確認・Purge 済み |
 | — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ docs/SCOPE.md |
+| — | **Cloudflare Email Routing**（`info@kokkai-timeline.com` → Gmail） | ✅ 2026-08-06 送受信テスト済み。★下記 |
 | — | 争点語のレビュー（79→82件） | ✅ docs/DECISIONS.md |
 | — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
 | — | **GitHub にリポジトリを作って push**（`k3nsaku/KokkaiTimeline` public / 既定 `master`） | ✅ 2026-08-06 |
@@ -171,6 +172,20 @@ R2・状態バケット・Pages まで手で反映済み。
 | — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ✅ 2026-08-06 全ステップ成功・4分37秒 |
 | — | `kokkai-timeline.com` を Pages に当てる | ✅ 2026-08-06 **＝公開** |
 | — | `www.kokkai-timeline.com` | ❌ 当てていない（apex のみ。要否は ROADMAP で保留） |
+
+> ### ★ 連絡先は Cloudflare Email Routing（2026-08-06）
+>
+> `info@kokkai-timeline.com` を Gmail へ転送している。**サーバは増えていない**
+> （Cloudflare 側の設定だけで動く。「常時稼働プロセスを持たない」に触れない）。
+> Gmail 側でエイリアスを作ってあるので、返信もこのアドレスから出る。
+>
+> **サイトの表示は `site/src/lib/operator.ts` の1か所だけ。**
+> `/disclaimer` `/privacy` `/about` はそこを見ている。アドレスを変えるときは
+> **Cloudflare の転送ルールと Gmail のエイリアスも一緒に**直すこと。
+> 訂正依頼の窓口なので、**届かない状態は「窓口が無い」のと同じ**
+> （名誉毀損の抗弁としても弱くなる。[SCOPE.md](SCOPE.md)）。
+>
+> ドメインを移したり作り直したりしたら、**必ず1通送って着信を確かめる。**
 
 > ### ★ 全年の作り直しは 2026-08-03 に手で済ませた
 >
