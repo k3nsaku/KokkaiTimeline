@@ -130,5 +130,8 @@ npm run check    # 型検査 + テスト54件
 （Python スクリプト・サイトの実装・ドキュメント・手書きの `data/*.json` 5ファイル）。
 
 **会議録データには及ばない。** 本文はこのリポジトリに1バイトも入っていない
-（`data/raw/` と `data/*.db` は `.gitignore`）。ビルド時に NDL の API から取る。
-データ側の整理は上の「データの扱い」と [docs/SCOPE.md](docs/SCOPE.md)。
+（`data/raw/` と `data/*.db` は `.gitignore`）ので、こちらが再配布しておらず、
+ライセンスを付ける立場にない。実体は実行時に NDL の API から取る。
+
+範囲の詳細は [NOTICE.md](NOTICE.md)、データ側の法的整理は
+上の「データの扱い」と [docs/SCOPE.md](docs/SCOPE.md)。
