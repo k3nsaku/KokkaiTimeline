@@ -3,9 +3,10 @@
 **進捗の記録ではなく、残っている作業だけを書く。**
 済んだことの経緯は git の履歴にある。決定の理由は [DECISIONS.md](DECISIONS.md)。
 
-- 最終更新: 2026-08-03
+- 最終更新: 2026-08-06
 - 現在地: **サイトは動いていて、公開の関門（性能・法務・争点語のレビュー）は全部通った。**
-  R2 と Pages への反映も手で1回通してある。**残る大物は日次更新の自動化。**
+  R2 と Pages への反映も手で1回通してある。
+  **GitHub リポジトリ（public）も作って push 済み。残るは Secrets 4つと初回実行。**
 
 ---
 
@@ -14,9 +15,11 @@
 `.github/workflows/daily.yml` は書けている。動かすための外側がまだ無い。
 値と手順は [PIPELINE.md](PIPELINE.md)。
 
-- [ ] **GitHub にリポジトリを作って push する**（★まだリモートが1つも無い）
-- [ ] Secrets 4つ / Variables 4つ を登録する
-- [ ] **Actions の Workflow permissions を「Read and write」にする。**
+- [x] **GitHub にリポジトリを作って push する** — `k3nsaku/KokkaiTimeline`（public / 既定 `master`）
+- [x] Variables 4つ を登録する
+- [ ] **Secrets 4つ を登録する**（★ここから。値は本人しか出せない）
+      `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `CLOUDFLARE_API_TOKEN`
+- [x] **Actions の Workflow permissions を「Read and write」にする。**
       `daily.yml` は `data/politician_ids.json` を repo に書き戻す。
       2023年2月以降に作ったリポジトリは既定が read-only で、**そのままだと最後に落ちる**
       （台帳を失うとURLが全部変わるので、わざと失敗させてある）

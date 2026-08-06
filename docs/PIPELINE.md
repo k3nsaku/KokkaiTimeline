@@ -120,7 +120,7 @@ R2・状態バケット・Pages まで手で反映済み。
 
 ---
 
-## 設定の進み具合（2026-08-02 時点）
+## 設定の進み具合（2026-08-06 時点）
 
 | # | 作業 | 状態 |
 |---|---|---|
@@ -139,10 +139,11 @@ R2・状態バケット・Pages まで手で反映済み。
 | — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ docs/SCOPE.md |
 | — | 争点語のレビュー（79→82件） | ✅ docs/DECISIONS.md |
 | — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
-| — | **GitHub にリポジトリを作って push** | ❌ **ここから。まだリモートが無い** |
-| — | **GitHub の Secrets / Variables** | ❌ |
-| — | **Actions の Workflow permissions を Read and write に** | ❌ 台帳の書き戻しで落ちる |
-| — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ❌ |
+| — | **GitHub にリポジトリを作って push**（`k3nsaku/KokkaiTimeline` public / 既定 `master`） | ✅ 2026-08-06 |
+| — | GitHub の **Variables 4つ** | ✅ 2026-08-06 |
+| — | GitHub の **Secrets 4つ** | ❌ **ここから。値は本人しか出せない** |
+| — | **Actions の Workflow permissions を Read and write に** | ✅ 2026-08-06（台帳の書き戻し用） |
+| — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ❌ Secrets の後 |
 | — | `kokkai-timeline.com` を Pages に当てる | 上が通ってから。**当てた時点で実質公開** |
 
 > ### ★ 全年の作り直しは 2026-08-03 に手で済ませた
