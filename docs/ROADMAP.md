@@ -5,14 +5,14 @@
 
 - 最終更新: 2026-08-06
 - 現在地: **サイトは動いていて、公開の関門（性能・法務・争点語のレビュー）は全部通った。**
-  R2 と Pages への反映も手で1回通してある。
-  **GitHub リポジトリ（public）も作って push 済み。残るは Secrets 4つと初回実行。**
+  **日次更新の自動化は通った**（2026-08-06、全ステップ成功・4分37秒）。
+  **残るは `kokkai-timeline.com` を Pages に当てるだけ。当てた時点で公開。**
 
 ---
 
 ## 1. 日次更新を自動化する
 
-`.github/workflows/daily.yml` は書けている。動かすための外側がまだ無い。
+**2026-08-06 に初回実行が全ステップ成功した。**残りは独自ドメインを当てるところだけ。
 値と手順は [PIPELINE.md](PIPELINE.md)。
 
 - [x] **GitHub にリポジトリを作って push する** — `k3nsaku/KokkaiTimeline`（public / 既定 `master`）
@@ -23,13 +23,16 @@
       `daily.yml` は `data/politician_ids.json` を repo に書き戻す。
       2023年2月以降に作ったリポジトリは既定が read-only で、**そのままだと最後に落ちる**
       （台帳を失うとURLが全部変わるので、わざと失敗させてある）
-- [ ] `workflow_dispatch` で1回流す。**`all_years` は `false` でよい**
-      （全年の作り直しは手で済ませてある）。当年だけ回る通常の経路を見たい
-- [ ] `kokkai-timeline.com` を Pages に当てる。**当てた時点で実質公開になる**
+- [x] `workflow_dispatch` で1回流す（`all_years=false`）— run 31086294777 / 全ステップ成功
+- [ ] **`kokkai-timeline.com` を Pages に当てる。当てた時点で実質公開になる**
 
-> **リポジトリは public にする。** Actions の無料枠は public なら実質無制限、
-> private は月2,000分。このジョブは1回30〜90分で月900〜2,700分あり、
-> **private だと超える月が出る。**
+> **★ 台帳の書き戻しはまだ一度も実行されていない。**
+> 初回実行では議員IDに差分が無く（1,111件のまま）、`git push` の手前で
+> `exit 0` している。**Workflow permissions を Read and write にした効果は未検証。**
+> 議員が増えた日に初めて通る経路なので、そのとき最後のステップが落ちていないか見ること。
+
+> **リポジトリは public にした。** Actions の無料枠は public なら実質無制限、
+> private は月2,000分。閉会中は1回5分弱だが、会期中は取得が伸びる。
 
 ## 2. 争点語・頻出語を主機能に寄せる
 
