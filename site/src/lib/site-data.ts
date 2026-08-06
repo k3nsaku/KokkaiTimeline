@@ -73,6 +73,32 @@ export interface Trending {
              terms: TrendingTerm[] }[];
 }
 
+/**
+ * 機械抽出の頻出語（`scripts/build_frequent.py`）。
+ *
+ * **争点語（`TopicSeries`）とは別の層。混ぜないこと**（CLAUDE.md）。
+ * あちらは運営が選んだ82件で、こちらは会議録から機械的に採った500件。
+ * 件数は**部分文字列で数えた発言数**なので、検索結果の件数と一致する。
+ */
+export interface FrequentWord {
+  term: string;
+  n: number;
+  /** ピーク年の出現率 ÷ 中央値の年の出現率。一覧はこの順に並んでいる */
+  burst: number;
+  peak: string;
+  /** 争点語にも載っている語。そちらのページへ寄せる */
+  topic_id: number | null;
+  series: number[];
+}
+
+export interface Frequent {
+  months: string[];
+  /** その月の議員の発言数。**必ずこれで割る** */
+  speech_totals: number[];
+  params: { top: number; min_df: number; min_standalone: number; dup_ratio: number };
+  words: FrequentWord[];
+}
+
 export interface Manifest {
   years: number[];
   databases: { year: number; file: string; size: number }[];
@@ -91,6 +117,7 @@ let cached: {
   trending?: Trending;
   manifest?: Manifest;
   words?: Words;
+  frequent?: Frequent;
 } = {};
 
 export function politicians(): Politician[] {
@@ -106,6 +133,11 @@ export function topicSeries(): TopicSeries {
 export function trending(): Trending {
   cached.trending ??= readJson<Trending>("dist", "trending.json");
   return cached.trending;
+}
+
+export function frequent(): Frequent {
+  cached.frequent ??= readJson<Frequent>("dist", "frequent.json");
+  return cached.frequent;
 }
 
 export function manifest(): Manifest {

@@ -136,6 +136,11 @@ jobs:
       - name: 争点語の集計と週次トレンド
         run: python scripts/build_topics.py
 
+      - name: 頻出語レイヤー
+        # 機械抽出の500語（data/dist/frequent.json）。**年DBの作り直しは要らない**
+        # （検索は既存の word_hit と FTS に流す）。実測で走査は約1分
+        run: python scripts/build_frequent.py
+
       - name: 配信用の年DBを作り直す
         run: |
           set -euo pipefail

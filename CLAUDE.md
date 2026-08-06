@@ -40,6 +40,8 @@
 - **大文字に畳むのは word 経路の2文字以下だけ。** FTS 経路で畳むと `ＳＤＧｓ` が壊れる
 - **検索の引き先は3経路ある。** 絞り込みを足すときは結果取得と件数の**両方を3経路とも**直す
 - **`topics.json` を変えたら全年のDBを作り直す**（`topic_id` がずれて別の争点を引く）
+- **頻出語を頻度順に並べない**（実測の上位は `国務大` `日本` `重要` `関係`）。
+  並べるのは burst。`frequent.json` は全年DBの作り直しが要らない
 - **`build_words.py` を日次で回さない**（過去年の検索が黙って0件になる）
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
 
@@ -67,10 +69,11 @@ python scripts/build_politicians.py --fix 浜田聡   # 所属政党の訂正（
 python scripts/build_topics.py --propose   # 争点語の候補（data/topics.json は手で選ぶ）
 python scripts/build_topics.py             # 頻度推移（dist/topics.json・trending.json）
 python scripts/build_words.py              # 2文字語の語彙（data/words.json）
+python scripts/build_frequent.py           # 頻出語500語（dist/frequent.json）
 ```
 
 **順番は `fetch_range` → `build_db`（単一DB）→ `build_politicians` / `build_topics`
-/ `build_words` → `build_db --split-by-year`。**
+/ `build_words` / `build_frequent` → `build_db --split-by-year`。**
 集計スクリプトは `data/kokkai.db` を材料にするので、単一DBが先に要る。
 
 ### サイト（`site/`）
@@ -94,12 +97,19 @@ sql.js-httpvfs を持ち込むとテストが動かなくなる。**
 ```
 meeting / speech / speech_fts / politician / affiliation
 topic      : 争点語82件。**運営の編集方針**（data/topics.json）
-word       : 2文字語16,264件。**機械抽出**（data/words.json）
+word       : 2文字語16,264件。**索引**（data/words.json）
+frequent   : 頻出語500件。**機械抽出の一覧**（dist/frequent.json・DBには入らない）
 ```
 
-**`topic` と `word` は役割が違う。混ぜないこと。**
-検索できる語を増やしたいときに `topics.json` を膨らませない
-（そのための第3の層が ROADMAP の「頻出語レイヤー」）。
+**この3つは役割が違う。混ぜないこと。**
+
+- `topic` は「何を争点と呼ぶか」という**編集方針**。増やすほど意味が薄まるので膨らませない
+- `word` は「その2文字語を引けるか」を決める**索引**。一覧としては表示しない
+- `frequent` は「いつ・どれだけ議論されたか」を見せる**一覧**。運営は語を選ばない
+
+**頻出語の選定は自立した run、集計は部分文字列**（数え方が違うのは意図的。
+揃えないと一覧の件数と検索結果が食い違う）。**2文字語は `words.json` から採る**
+（独自に選ぶと一覧に出るのに検索できない語ができる）。詳細は PITFALLS.md。
 
 **`speech.rowid` は日付の昇順。** UIの「新しい順」はこれに依存する。
 

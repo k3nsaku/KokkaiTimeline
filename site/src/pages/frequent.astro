@@ -1,0 +1,117 @@
+---
+/**
+ * 頻出語の一覧（`data/dist/frequent.json`）。ROADMAP §1-C。
+ *
+ * ★ **争点語（`/topics`）と混ぜないこと。** あちらは運営が選んだ82件の編集方針で、
+ *   こちらは会議録から機械的に採った500件。ページ上でもそう書く。
+ *   同じ語が両方にあるときは争点語ページへ寄せる（`topic_id` が入っている）。
+ *
+ * 山が立った年で束ねている。頻度順に並べると `日本` `重要` `関係` `指摘` で埋まって
+ * 読めない一覧になる（実測。`scripts/build_frequent.py` の冒頭）。
+ */
+import Base from "../layouts/Base.astro";
+import { frequent } from "../lib/site-data";
+import { formatNumber } from "../lib/format";
+
+const data = frequent();
+
+// ピーク月の年でまとめる。新しい年から並べると「いま何が議論されているか」が上に来る
+const byYear = new Map<string, typeof data.words>();
+for (const word of data.words) {
+  const year = word.peak.slice(0, 4);
+  byYear.set(year, [...(byYear.get(year) ?? []), word]);
+}
+const years = [...byYear.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+
+const from = data.months[0];
+const until = data.months.at(-1)!;
+const description =
+  `国会の会議録から機械的に抽出した頻出語${data.words.length}語。` +
+  `それぞれの語がいつ、どれだけ議論されたかを月ごとの推移で見られます。`;
+---
+
+<Base title="頻出語" description={description}>
+  <h1>頻出語</h1>
+
+  <p>
+    会議録から<strong>機械的に抽出した{data.words.length}語</strong>です。
+    語ごとに<strong>月ごとの推移</strong>が見られます。
+    {from.slice(0, 4)}年{Number(from.slice(5, 7))}月から
+    {until.slice(0, 4)}年{Number(until.slice(5, 7))}月までが対象です。
+  </p>
+
+  <p class="small muted note">
+    <strong>これは<a href="/topics">争点語</a>とは別のものです。</strong>
+    争点語は運営が選んだ82語で、選んだこと自体に判断が入っています。
+    こちらは<strong>運営が語を選んでいません</strong>。会議録に出てくる語を数え、
+    <strong>ある時期に集中して使われた順</strong>に並べているだけです。
+    どちらが重要かという意味は含みません。
+  </p>
+
+  {years.map(([year, words]) => (
+    <section>
+      <h2>{year}年に集中した語</h2>
+      <ul class="word-grid">
+        {words.map((word) => (
+          <li>
+            <a href={word.topic_id ? `/topic/${word.topic_id}` : `/word/${encodeURIComponent(word.term)}`}>
+              <span class="term">{word.term}</span>
+              <span class="count small muted">{formatNumber(word.n)}件</span>
+              {word.topic_id && <span class="badge small">争点語</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))}
+
+  <section class="how">
+    <h2>どうやって選んでいるか</h2>
+    <ul class="small muted">
+      <li>
+        対象は<strong>議員の発言</strong>だけです（政府参考人・参考人は数えていません）。
+      </li>
+      <li>
+        件数は<strong>その語を含む発言の数</strong>です。1つの発言に何回出ても1件と数えます。
+        語の一部として出てきたものも数えるので、<strong>検索したときの件数と一致します</strong>。
+      </li>
+      <li>
+        並び順は<strong>いちばん多かった年 ÷ ふつうの年</strong>です。
+        件数の多い順にすると「日本」「重要」「関係」のような語で埋まって、
+        いつ何が議論されたかが分からなくなります。
+      </li>
+      <li>
+        議員名・役職名・年号は機械的に外しています。
+        それでも語として意味を成さない断片が残ることがあります
+        （<a href="/disclaimer">見つけたらお知らせください</a>）。
+      </li>
+      <li>
+        ここに無い語も<a href="/search">検索</a>からなら引けます（推移は出ません）。
+      </li>
+    </ul>
+  </section>
+
+  <style>
+    .word-grid {
+      list-style: none; padding: 0; margin: 0.5rem 0;
+      display: grid; gap: 0.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    }
+    .word-grid a {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
+      padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--card); text-decoration: none; color: var(--fg);
+    }
+    .word-grid a:hover { border-color: var(--accent); }
+    .term { font-weight: 600; }
+    .badge {
+      border: 1px solid var(--line); border-radius: 999px;
+      padding: 0 0.4rem; color: var(--muted);
+    }
+    .note {
+      border-left: 3px solid var(--accent); padding: 0.4rem 0.8rem;
+      background: var(--card); border-radius: 0 6px 6px 0;
+    }
+    .how { margin-top: 2.5rem; }
+  </style>
+</Base>

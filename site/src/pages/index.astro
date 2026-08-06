@@ -7,7 +7,7 @@
  *   表示の言葉を誇張しないこと（docs/ARCHITECTURE.md）。
  */
 import Base from "../layouts/Base.astro";
-import { trending, topicSeries, politicians } from "../lib/site-data";
+import { trending, topicSeries, politicians, frequent } from "../lib/site-data";
 import { formatDate, formatNumber } from "../lib/format";
 
 const t = trending();
@@ -17,6 +17,24 @@ const terms = latest.terms.slice(0, 14);
 
 // 争点語は発言数の多い順に。ここが2文字語（憲法・年金）への唯一の入口でもある
 const topics = [...topicSeries().topics].sort((a, b) => b.n_speeches - a.n_speeches).slice(0, 12);
+
+// 頻出語（機械抽出）。**争点語とは別の層**なので節を分けて出す（CLAUDE.md）
+const freq = frequent();
+// 山が今年に立った語を、跳ね幅の大きい順に。トップに置く意味があるのは
+// 「いま議論されている語」なので、ピーク月の新しい順ではなく**その年のうち跳ねた順**
+const thisYear = freq.months.at(-1)!.slice(0, 4);
+const recent = freq.words
+  .filter((w) => w.peak.startsWith(thisYear))
+  .sort((a, b) => b.burst - a.burst)
+  .slice(0, 12);
+// 急上昇語のうち、推移ページを持っている語はそちらへ送る（検索より情報が多い）
+const wordPages = new Map(freq.words.filter((w) => w.topic_id == null).map((w) => [w.term, w]));
+
+function termHref(term: string, topicId: number | null): string {
+  if (topicId) return `/topic/${topicId}`;
+  if (wordPages.has(term)) return `/word/${encodeURIComponent(term)}`;
+  return `/search?q=${encodeURIComponent(term)}`;
+}
 
 const people = politicians();
 const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
@@ -50,7 +68,7 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
     <ul class="chips">
       {terms.map((term) => (
         <li>
-          <a class="chip" href={term.topic_id ? `/topic/${term.topic_id}` : `/search?q=${encodeURIComponent(term.term)}`}>
+          <a class="chip" href={termHref(term.term, term.topic_id)}>
             {term.term}<span class="muted small"> {term.n}</span>
           </a>
         </li>
@@ -70,6 +88,25 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
         <li><a class="chip" href={`/topic/${topic.id}`}>{topic.term}</a></li>
       ))}
       <li><a class="chip" href="/topics">すべて見る →</a></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>頻出語から見る</h2>
+    <p class="small muted">
+      こちらは<strong>運営が語を選んでいません</strong>。会議録に出てくる語を機械的に数え、
+      ある時期に集中して使われた順に並べた{freq.words.length}語です。
+      上の争点語とは別のもので、どちらが重要かという意味は含みません。
+    </p>
+    <ul class="chips">
+      {recent.map((word) => (
+        <li>
+          <a class="chip" href={termHref(word.term, word.topic_id)}>
+            {word.term}<span class="muted small"> {word.peak.slice(0, 4)}年</span>
+          </a>
+        </li>
+      ))}
+      <li><a class="chip" href="/frequent">すべて見る →</a></li>
     </ul>
   </section>
 
