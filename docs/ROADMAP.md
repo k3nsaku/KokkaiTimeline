@@ -17,7 +17,7 @@
 
 - [x] **GitHub にリポジトリを作って push する** — `k3nsaku/KokkaiTimeline`（public / 既定 `master`）
 - [x] Variables 4つ を登録する
-- [ ] **Secrets 4つ を登録する**（★ここから。値は本人しか出せない）
+- [x] **Secrets 4つ を登録する**
       `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `CLOUDFLARE_API_TOKEN`
 - [x] **Actions の Workflow permissions を「Read and write」にする。**
       `daily.yml` は `data/politician_ids.json` を repo に書き戻す。

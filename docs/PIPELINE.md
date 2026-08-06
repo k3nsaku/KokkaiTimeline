@@ -141,7 +141,7 @@ R2・状態バケット・Pages まで手で反映済み。
 | — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
 | — | **GitHub にリポジトリを作って push**（`k3nsaku/KokkaiTimeline` public / 既定 `master`） | ✅ 2026-08-06 |
 | — | GitHub の **Variables 4つ** | ✅ 2026-08-06 |
-| — | GitHub の **Secrets 4つ** | ❌ **ここから。値は本人しか出せない** |
+| — | GitHub の **Secrets 4つ** | ✅ 2026-08-06 |
 | — | **Actions の Workflow permissions を Read and write に** | ✅ 2026-08-06（台帳の書き戻し用） |
 | — | `daily.yml` が Actions に登録される | ✅ 2026-08-06。**初回 push では登録されなかった**（下の囲み） |
 | — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ❌ Secrets の後 |
