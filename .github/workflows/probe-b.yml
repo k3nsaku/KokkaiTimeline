@@ -1,0 +1,236 @@
+# 日次更新。前月と当月の会議録を取り直し、その年のDBを作り直して R2 とサイトへ配る。
+#
+# 設計の前提は3つ:
+#   - **常時稼働プロセスを持たない。** ここが唯一の定期実行で、落ちても数日放置できる
+#   - **当年のDBだけ作り直す。** 過去年は変わらないので CDN キャッシュが効き続ける
+#   - **build_words.py を回さない。** 2文字語の語彙を当年だけ更新すると、
+#     過去年の検索が黙って0件になる（docs/PIPELINE.md「語彙を作り直すとき」）
+#
+# 手順と Cloudflare 側の設定は docs/PIPELINE.md。
+
+name: probe-b
+
+on:
+  schedule:
+    # UTC 20:00 = JST 翌05:00。会議録APIへの負荷が低い時間に寄せる
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+    inputs:
+      all_years:
+        description: "全年のDBを作り直す（語彙や争点語を変えたとき）"
+        type: boolean
+        default: false
+
+# 前の実行が走っているうちに次を始めない。R2 と議員ID台帳を二重に書く事故を防ぐ
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    # 取得は NDL への3秒間隔が効くので、会期中は1か月あたり30分近くかかることがある
+    timeout-minutes: 180
+    permissions:
+      # 議員ID台帳（data/politician_ids.json）を書き戻すため。
+      # **これを失うと公開後のURLが全部変わる**ので、書けないなら失敗させる
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: 日付を決める
+        id: when
+        run: |
+          set -euo pipefail
+          today=$(date -u -d '9 hours' +%Y-%m-%d)
+          # **前月1日から取り直す。** 当月だけだと、月末の会議録が翌月に公開された分と、
+          # 前月以前に入った訂正を二度と拾えない（該当月の NDJSON が完成済み扱いになる）
+          from=$(date -u -d "$(date -u -d '9 hours' +%Y-%m-01) -1 month" +%Y-%m-%d)
+          {
+            echo "today=$today"
+            echo "from=$from"
+            echo "year=${today:0:4}"
+            echo "from_year=${from:0:4}"
+          } >> "$GITHUB_OUTPUT"
+
+      # --- 前回の状態を戻す ---------------------------------------------------
+      #
+      # 生データと生成物はリポジトリに入れていない（.gitignore）。R2 が保管庫。
+
+      - name: 生データと生成物を R2 から復元
+        run: |
+          set -euo pipefail
+          mkdir -p data/raw/speeches data/dist
+          aws s3 sync "s3://$STATE_BUCKET/raw/speeches" data/raw/speeches $R2 --no-progress
+          # ★ 名寄せの材料。**無いと build_politicians.py がその場で終了する**
+          #   （data/raw/ は .gitignore なので、リポジトリからは絶対に来ない）
+          aws s3 cp "s3://$STATE_BUCKET/raw/wikidata_members.json" \
+            data/raw/wikidata_members.json $R2 || true
+          aws s3 cp "s3://$STATE_BUCKET/raw/wikidata_terms.json" \
+            data/raw/wikidata_terms.json $R2 || true
+          # 初回はまだ無い。無ければ作り直すので落とさない
+          aws s3 cp "s3://$STATE_BUCKET/politicians.json" data/politicians.json $R2 || true
+          aws s3 cp "s3://$STATE_BUCKET/words.json" data/words.json $R2 || true
+          # 過去年のDBは落とさない（2GBある）。目録だけ戻せば、
+          # write_manifest() が手元に無い年の記載を引き継ぐ
+          aws s3 cp "s3://$PUBLIC_BUCKET/manifest.json" data/dist/manifest.json $R2 || true
+          du -sh data/raw/speeches
+
+      # --- 取得と構築 ---------------------------------------------------------
+
+      - name: Wikidata の議員リスト（無いときと月初だけ取り直す）
+        # SPARQL エンドポイントは共用資源なので毎日は叩かない（5秒間隔・数分かかる）。
+        # ただし**無ければ必ず取る**。無いまま進むと議員マスタの更新で止まる。
+        # 手元にあるなら、取り直しに失敗しても前回ぶんで続ける（Wikidata の一時障害で
+        # 日次更新ごと落とさない）
+        run: |
+          if [ ! -f data/raw/wikidata_members.json ] || [ ! -f data/raw/wikidata_terms.json ]; then
+            echo "議員リストが無いので取得する"
+            python scripts/fetch_wikidata.py
+          elif [ "$(date -u -d '9 hours' +%d)" = "01" ]; then
+            python scripts/fetch_wikidata.py \
+              || echo "★ 月初の取り直しに失敗。前回の議員リストで続ける"
+          else
+            echo "前回の議員リストを使う"
+          fi
+
+      - name: 前月と当月の会議録を取り直す
+        run: |
+          python scripts/fetch_range.py \
+            --from "${{ steps.when.outputs.from }}" \
+            --until "${{ steps.when.outputs.today }}" \
+            --force
+
+      - name: 集計の材料になる単一DBを作り直す
+        # 全文検索の索引はここでは要らない（配信用の年DBにだけ張る）。
+        # --no-fts で構築時間とディスクを大きく節約できる
+        run: python scripts/build_db.py --fresh --no-fts
+
+      - name: 議員マスタを更新する
+        run: python scripts/build_politicians.py
+
+      - name: 争点語の集計と週次トレンド
+        run: python scripts/build_topics.py
+
+      - name: 配信用の年DBを作り直す
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.all_years }}" = "true" ]; then
+            python scripts/build_db.py --split-by-year --page-size 8192
+          else
+            # 1月は前年12月ぶんを取り直しているので、前年のDBも作り直す。
+            # --year は複数指定できる。目録は出力先を走査するので他の年は消えない
+            years="--year ${{ steps.when.outputs.year }}"
+            if [ "${{ steps.when.outputs.from_year }}" != "${{ steps.when.outputs.year }}" ]; then
+              years="$years --year ${{ steps.when.outputs.from_year }}"
+            fi
+            python scripts/build_db.py $years --page-size 8192
+          fi
+
+      - name: 2文字語の語彙が年をまたいで揃っているか確かめる
+        # build_db.py の警告はログに出るだけなので、ここで**落とす**。
+        # 揃っていないと検索が過去年で黙って0件になる
+        run: |
+          python - <<'PY'
+          import json, sys
+          m = json.load(open("data/dist/manifest.json", encoding="utf-8"))
+          seen = {d.get("vocabulary") for d in m["databases"]}
+          if len(seen) > 1:
+              for d in m["databases"]:
+                  print(f"  {d['file']}: {d.get('vocabulary')}")
+              sys.exit("★ 語彙が年によって違う。全年を作り直すこと"
+                       "（workflow_dispatch の all_years=true）")
+          print(f"語彙は全年で一致: {seen.pop()}")
+          PY
+
+      # --- 配る ---------------------------------------------------------------
+
+      - name: 年DBと目録を R2 へ
+        run: |
+          set -euo pipefail
+          # DBのURLには目録に載っている世代（中身の指紋）が `?v=` で付く。
+          # 中身が変われば別のURLになるので、**長く握らせてよいしパージも要らない**。
+          #
+          # ★ ただし `immutable` は付けない。ブラウザキャッシュに壊れたものが
+          #   入ったときに Ctrl+Shift+R でも直せなくなる（実際に踏んだ。
+          #   docs/PIPELINE.md「DBの差し替えとキャッシュ」）。
+          #   エッジは s-maxage で1年握るので CDN の効きは落ちない
+          for db in data/dist/kokkai-*.db; do
+            aws s3 cp "$db" "s3://$PUBLIC_BUCKET/$(basename "$db")" $R2 --no-progress \
+              --cache-control "public, max-age=3600, s-maxage=31536000"
+          done
+          # 目録は**DBを上げ終わってから**。先に上げると、まだ無いDBをサイトが引きにいく。
+          # これだけは短くする（新しい世代に気づく入口がここしかない）
+          aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" $R2 \
+            --cache-control "public, max-age=300"
+
+      - name: 次回のための状態を R2 へ
+        run: |
+          set -euo pipefail
+          aws s3 sync data/raw/speeches "s3://$STATE_BUCKET/raw/speeches" $R2 --no-progress
+          # 名寄せの材料。次回はここから戻す（.gitignore なのでリポジトリには残らない）
+          aws s3 cp data/raw/wikidata_members.json "s3://$STATE_BUCKET/raw/wikidata_members.json" $R2
+          aws s3 cp data/raw/wikidata_terms.json "s3://$STATE_BUCKET/raw/wikidata_terms.json" $R2
+          aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
+          aws s3 cp data/words.json "s3://$STATE_BUCKET/words.json" $R2
+
+      - name: サイトをビルドする
+        # 議員1,111ページと争点語79ページはビルド時に生成される。
+        # 中身（politicians.json / topics.json / trending.json）が毎日変わるので、
+        # サイトも毎日作り直す
+        env:
+          PUBLIC_DB_BASE: ${{ vars.PUBLIC_DB_BASE }}
+        run: |
+          cd site
+          npm ci
+          npm run build
+
+      - name: Cloudflare Pages へデプロイ
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 pages deploy site/dist \
+            --project-name "${{ vars.PAGES_PROJECT }}" --branch main
+
+      # --- 台帳を残す ---------------------------------------------------------
+
+      - name: 議員ID台帳が増えていたらコミットする
+        # ★ data/politician_ids.json は URL に出る議員IDの台帳。
+        #   失うと採番がやり直しになり、**公開後のリンクが全部壊れる**。
+        #   push できないときは黙って続けず、ジョブを失敗させる
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data/politician_ids.json; then
+            echo "台帳に変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/politician_ids.json
+          git commit -m "議員ID台帳を更新（日次）"
+          git push
+
+      - name: 手作業が要るものを要約に出す
+        if: always()
+        run: |
+          {
+            echo "## 日次更新 ${{ steps.when.outputs.today }}"
+            echo
+            if [ -f reports/party_todo.md ]; then
+              echo "- 政党を手入力する必要がある会派: $(grep -c '^| ' reports/party_todo.md || true)行"
+              echo "  （手順は docs/CORRECTIONS.md）"
+            fi
+            if [ -f reports/trending_new_terms.md ]; then
+              echo "- 争点語に未登録のトレンド語: $(grep -c '^| ' reports/trending_new_terms.md || true)件"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
