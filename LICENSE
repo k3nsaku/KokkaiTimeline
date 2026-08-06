@@ -1,0 +1,45 @@
+MIT License
+
+Copyright (c) 2026 k3nsaku
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+このライセンスが及ぶ範囲について / Scope of this license
+
+このリポジトリに含まれるもの（Python スクリプト・サイトの実装・ドキュメント、
+および手で維持している data/*.json の5ファイル）は上記 MIT ライセンスで提供する。
+
+**国会会議録そのものはこのリポジトリに含まれていない。** 会議録の本文・議員名・
+会議情報は国立国会図書館「国会会議録検索システム」から取得したもので、
+このリポジトリには一切コミットされていない（data/raw/ と data/*.db は .gitignore）。
+したがって上記のライセンスは会議録データには及ばない。
+
+会議録データの利用については提供元の条件に従うこと。このプロジェクトが
+どう整理しているかは docs/SCOPE.md「法的な整理」に書いてある。要点は3つ:
+
+  - 発言そのものは公的記録で、著作権法40条1項により政治上の演説等は自由に利用できる
+  - ただしデータベースとしての著作権は国立国会図書館に帰属するので、
+    丸ごとミラーして代替物を作る形は取らない
+  - 全レコードに原典URLを付ける（著作権法48条の出所明示）
+
+The parliamentary record itself is NOT part of this repository and is NOT
+covered by the MIT license above. It is retrieved at build time from the
+National Diet Library's Diet Record Search System API. See docs/SCOPE.md.

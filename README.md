@@ -14,6 +14,7 @@
 | | |
 |---|---|
 | **争点語の頻度推移** | 82件の争点語について、いつ・どの会派がどれだけ使ったかを月ごとに出す。**発言数で割った率**で見せる（国会は通年で開いていないので、割らないと開催日数の多い月が争点に見える） |
+| **頻出語** | 会議録から機械的に抽出した500語。**運営は語を選ばない**（争点語とは別の層）。ある時期に集中して使われた順に並べ、語ごとに月次の推移を出す |
 | **横断検索** | 議員 × キーワード × 期間 × 会議名。該当箇所をハイライトする |
 | **議員ごとのタイムライン** | 約1,100人ぶん。発言を新しい順に並べ、所属会派の変遷も出す |
 | **発言のパーマリンク** | 1発言 = 1URL。前後の発言も表示する |
@@ -71,11 +72,12 @@ python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31
 # 2. 単一DBを作る（このあとの集計スクリプトの材料になる）
 python scripts/build_db.py --fresh
 
-# 3. 議員マスタ・争点語・2文字語の語彙を作る
+# 3. 議員マスタ・争点語・2文字語の語彙・頻出語を作る
 python scripts/fetch_wikidata.py
 python scripts/build_politicians.py
 python scripts/build_topics.py
 python scripts/build_words.py
+python scripts/build_frequent.py
 
 # 4. 配信用の年ごとDBを作る（data/dist/kokkai-YYYY.db）
 python scripts/build_db.py --split-by-year --page-size 8192
@@ -87,7 +89,7 @@ python scripts/build_db.py --split-by-year --page-size 8192
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321（data/dist を /db で配る。コピーはしない）
-npm run build    # dist/ に 1,201ページ
+npm run build    # dist/ に 1,691ページ
 npm run check    # 型検査 + テスト54件
 ```
 
@@ -121,3 +123,12 @@ npm run check    # 型検査 + テスト54件
 （手順は [docs/CORRECTIONS.md](docs/CORRECTIONS.md)）。
 
 このリポジトリの法的整理は専門家のレビューを経ていない。
+
+## ライセンス
+
+**[MIT](LICENSE)。** 対象は**このリポジトリに入っているもの**
+（Python スクリプト・サイトの実装・ドキュメント・手書きの `data/*.json` 5ファイル）。
+
+**会議録データには及ばない。** 本文はこのリポジトリに1バイトも入っていない
+（`data/raw/` と `data/*.db` は `.gitignore`）。ビルド時に NDL の API から取る。
+データ側の整理は上の「データの扱い」と [docs/SCOPE.md](docs/SCOPE.md)。
