@@ -1,9 +1,19 @@
 ---
 /**
- * トップ。検索の入口。
+ * トップ。**語から入るページ**（ROADMAP §1-E）。
  *
- * 「いま国会で議論されていること」は `data/dist/trending.json`（10KB）から出す。
- * ★中身は主に**審議中の法案の専門用語**であって「今週の争点」ではない。
+ * 順序がそのまま「何を主機能とみなしているか」の表明になる:
+ *
+ *   1. いま議論されていること（急増語）  ← 唯一「今」を示す
+ *   2. 争点語（運営が選んだ82語）
+ *   3. 頻出語（機械抽出の500語）
+ *   4. 検索                              ← 入口の1つに降ろした。**消してはいない**
+ *   5. 議員
+ *
+ * ★ **議員を「発言数の多い順」で並べない。** 発言数は委員会の所属と役職で決まるので、
+ *   トップに並べると事実上の議員評価になる（docs/SCOPE.md）。件数と一覧への導線だけ出す。
+ *
+ * ★ 急増語の中身は主に**審議中の法案の専門用語**であって「今週の争点」ではない。
  *   表示の言葉を誇張しないこと（docs/ARCHITECTURE.md）。
  */
 import Base from "../layouts/Base.astro";
@@ -16,7 +26,9 @@ const latest = t.windows[0];
 const terms = latest.terms.slice(0, 14);
 
 // 争点語は発言数の多い順に。ここが2文字語（憲法・年金）への唯一の入口でもある
-const topics = [...topicSeries().topics].sort((a, b) => b.n_speeches - a.n_speeches).slice(0, 12);
+const allTopics = topicSeries().topics;
+const topicCount = allTopics.length;
+const topics = [...allTopics].sort((a, b) => b.n_speeches - a.n_speeches).slice(0, 12);
 
 // 頻出語（機械抽出）。**争点語とは別の層**なので節を分けて出す（CLAUDE.md）
 const freq = frequent();
@@ -46,22 +58,17 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
 >
   <h1>国会で、誰が何を言ったか</h1>
   <p class="lede">
-    国会会議録の発言を検索し、議員ごとの時系列で並べます。
+    国会会議録の発言を、<strong>語から</strong>・<strong>議員から</strong>・
+    <strong>全文検索から</strong>たどれます。
     数字は出しますが、評価も採点もしません。判断の材料を出すだけのサイトです。
   </p>
 
-  <form class="hero-search" action="/search" method="get">
-    <label class="sr-only" for="q">キーワード</label>
-    <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
-           enterkeyhint="search" autocomplete="off" />
-    <button type="submit" class="primary">検索</button>
-  </form>
-
-  <section>
-    <h2>直近の国会で急に増えた語</h2>
+  <section class="lead-section">
+    <h2>いま国会で議論されていること</h2>
     <p class="small muted">
       {formatDate(latest.from)}〜{formatDate(latest.until)}の
-      {latest.sitting_days}開催日・{formatNumber(latest.n_speeches)}発言から。
+      {latest.sitting_days}開催日・{formatNumber(latest.n_speeches)}発言のうち、
+      ふだんより急に増えた語です。
       <strong>出てくるのは主に審議中の法案の専門用語</strong>で、
       「今週の争点」ではありません。何が審議されているかの目印として見てください。
     </p>
@@ -79,9 +86,9 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   <section>
     <h2>争点語から見る</h2>
     <p class="small muted">
-      運営が選んでいる語です。<strong>いつ議論されたかの推移</strong>と
-      <strong>会派ごとの使われ方</strong>を見られます。
-      検索が発言を探すためのものなのに対して、こちらは流れを見るためのものです。
+      <strong>運営が選んだ{topicCount}語</strong>です。
+      <strong>いつ議論されたかの推移</strong>と<strong>会派ごとの使われ方</strong>を
+      見られます。選んだこと自体に判断が入っているので、網羅ではありません。
     </p>
     <ul class="chips">
       {topics.map((topic) => (
@@ -97,6 +104,7 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
       こちらは<strong>運営が語を選んでいません</strong>。会議録に出てくる語を機械的に数え、
       ある時期に集中して使われた順に並べた{freq.words.length}語です。
       上の争点語とは別のもので、どちらが重要かという意味は含みません。
+      <strong>国会の会期で絞る</strong>と、その会期でいつもより多く出た語が並びます。
     </p>
     <ul class="chips">
       {recent.map((word) => (
@@ -108,6 +116,32 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
       ))}
       <li><a class="chip" href="/frequent">すべて見る →</a></li>
     </ul>
+  </section>
+
+  <section>
+    <h2>語を指定して探す</h2>
+    <p class="small muted">
+      上の一覧に無い語も引けます。議員・会議名・年でも絞り込めます。
+      <strong>検索語はどこにも送られません</strong>
+      —— 照合はブラウザの中で完結します（<a href="/privacy">プライバシーポリシー</a>）。
+    </p>
+    <form class="site-search" action="/search" method="get">
+      <label class="sr-only" for="q">キーワード</label>
+      <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
+             enterkeyhint="search" autocomplete="off" />
+      <button type="submit" class="primary">検索</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>議員から見る</h2>
+    <p class="small muted">
+      {formatNumber(people.length)}人ぶんの発言を、新しい順に並べて読めます。
+      所属会派の変遷も出します。
+      <strong>発言数で議員を並べることはしません</strong>
+      —— 発言数は委員会の所属と役職で決まるもので、活動量の指標にはならないためです。
+    </p>
+    <p><a class="chip" href="/politicians">議員の一覧 →</a></p>
   </section>
 
   <section class="figures">
@@ -126,8 +160,12 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   <style>
     .lede { font-size: 1.05rem; max-width: 40rem; }
 
-    .hero-search { display: flex; gap: 0.5rem; margin: 1.5rem 0 2.5rem; max-width: 34rem; }
-    .hero-search input { flex: 1; }
+    /* 最初の節だけ間を詰める。ここが「いま何が議論されているか」の入口で、
+       スクロールせずに見えている必要がある */
+    .lead-section { margin-top: 1.75rem; }
+
+    .site-search { display: flex; gap: 0.5rem; margin: 0.75rem 0; max-width: 34rem; }
+    .site-search input { flex: 1; }
 
     .sr-only {
       position: absolute; width: 1px; height: 1px; overflow: hidden;
