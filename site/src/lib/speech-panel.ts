@@ -26,9 +26,6 @@
 import { speechDetail, speechContext, type SpeechDetail } from "./db";
 import { escapeHtml, formatDate, paragraphs } from "./format";
 
-/** 一覧のどこを触ったら隠すか。抜粋そのものは「差し替え」なので対象外。 */
-const LIST_SELECTOR = "main";
-
 let root: HTMLElement | null = null;
 let bodyEl: HTMLElement | null = null;
 let reopenBtn: HTMLButtonElement | null = null;
@@ -204,14 +201,17 @@ export function initSpeechPanel(): void {
   });
 
   // ★ 「フォーカスが戻ったら」は使えない。一覧の本文をマウスで押しても
-  //   focus は飛ばない（押した先が focusable でないため）ので pointerdown で見る
+  //   focus は飛ばない（押した先が focusable でないため）ので pointerdown で見る。
+  //
+  // ★ 範囲を `main` などに絞らない。**左右の余白（.wrap の外）も対象**で、
+  //   絞ると「一覧の脇をクリックしたのに隠れない」になる（実際にそうなっていた）。
+  //   パネルと再表示ボタン以外はどこでも隠す、が正しい。
   document.addEventListener("pointerdown", (event) => {
     if (!root || root.hidden) return;
     const target = event.target as HTMLElement | null;
     if (!target) return;
     if (root.contains(target) || reopenBtn?.contains(target)) return;
     if (target.closest("a[data-speech-id]")) return;   // 別の発言は「差し替え」
-    if (!target.closest(LIST_SELECTOR)) return;
     // パネル内の文字を選択している最中は触らない（引用のコピーを邪魔しない）
     if (!window.getSelection()?.isCollapsed) return;
     hide();
