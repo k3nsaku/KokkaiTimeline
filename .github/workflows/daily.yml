@@ -240,11 +240,27 @@ jobs:
           git commit -m "議員ID台帳を更新（日次）"
           git push
 
+      # ★ reports/ は .gitignore なので、上げないとランナーの終了と一緒に消える。
+      #   要約に出しているのは**件数だけ**で、「12行あります」と分かっても中身が読めず、
+      #   政党の手入力も争点語の追加も頻出語の除外も着手できない（実際にそうなっていた）。
+      #   数KBなので費用の心配は無い。Actions の実行ページからそのまま開ける
+      - name: 運営が読むレポートを残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: reports/
+          retention-days: 90
+          if-no-files-found: ignore
+
       - name: 手作業が要るものを要約に出す
         if: always()
         run: |
           {
             echo "## 日次更新 ${{ steps.when.outputs.today }}"
+            echo
+            echo "中身は Artifacts の \`reports\` から読める（90日保持）。"
+            echo "手をつけた作業は **OPERATIONS.local.md に日付を記録する**（CLAUDE.md）。"
             echo
             if [ -f reports/party_todo.md ]; then
               echo "- 政党を手入力する必要がある会派: $(grep -c '^| ' reports/party_todo.md || true)行"
@@ -252,5 +268,10 @@ jobs:
             fi
             if [ -f reports/trending_new_terms.md ]; then
               echo "- 争点語に未登録のトレンド語: $(grep -c '^| ' reports/trending_new_terms.md || true)件"
+              echo "  （足すなら **全年DBの作り直しが要る**。topic_id がずれるため）"
+            fi
+            if [ -f reports/frequent_words.md ]; then
+              echo "- 頻出語の一覧: $(grep -c '^| ' reports/frequent_words.md || true)語"
+              echo "  （断片や人名が混ざっていたら data/topic_denylist.json に1行足す）"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

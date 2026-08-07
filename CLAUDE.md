@@ -19,7 +19,7 @@
 
 | 何をするとき | 読む |
 |---|---|
-| **常に** | この4行下の「よくある事故」 |
+| **常に** | この4行下の「よくある事故」と、`OPERATIONS.local.md`（期限切れの作業を知らせる） |
 | 仕様を知りたい | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 「なぜそうなっているか」を疑う | [docs/DECISIONS.md](docs/DECISIONS.md) — **数字はすべて実測値** |
 | **検索・DB構築・配信を触る** | [docs/PITFALLS.md](docs/PITFALLS.md) — **全部いちど実際に踏んだもの** |
@@ -44,6 +44,31 @@
   並べるのは burst。`frequent.json` は全年DBの作り直しが要らない
 - **`build_words.py` を日次で回さない**（過去年の検索が黙って0件になる）
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
+
+## 運営が定期的にやること
+
+**セッションの最初に `OPERATIONS.local.md` を読み、推奨間隔を過ぎている作業があれば
+運営者に知らせること。** 黙って実行しない — どれも判断か手入力が要る。
+
+`OPERATIONS.local.md` は `.gitignore`（この端末だけの実績）。**無ければ下の表から
+全部「未実施」で作ること。** 仕様はこの表、実績はあちら。
+
+| 作業 | 推奨間隔 | きっかけ・材料 |
+|---|---|---|
+| 日次更新の成否を見る | 1か月 | `gh run list --workflow=daily.yml`。落ちても数日は放置できる |
+| **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★まだ一度も通っていない。**落ちたまま放置すると台帳を失い公開後のURLが全部変わる** |
+| 頻出語のノイズを denylist に入れる | 3か月 | `reports/frequent_words.md` → `data/topic_denylist.json` に1行 |
+| 政党の手入力 | 3か月 | `reports/party_todo.md` → `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
+| 争点語のレビュー | 6か月 | `reports/trending_new_terms.md` → `data/topics.json`。**全年DBの作り直しを伴う** |
+| 2文字語の語彙更新 | 6か月 | `build_words.py` → **全年DBの作り直し** → `words.json` を state バケットへ |
+| 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
+| R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
+
+**`reports/` は日次のランナー上でだけ作られる**（`.gitignore`）。中身は Actions の
+Artifacts（`reports` / 90日保持）から読む。要約に出ているのは件数だけ。
+
+**争点語と語彙は全年DBの作り直しを伴うので、まとめてやる。** 手順は
+[docs/PIPELINE.md](docs/PIPELINE.md)「★語彙を作り直すとき」。
 
 ## コマンド
 

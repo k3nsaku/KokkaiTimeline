@@ -34,6 +34,10 @@ site/.env
 # Claude Code のローカル設定（launch.json は共有したいのでコミットする）
 .claude/settings.local.json
 
+# 運営作業の実施記録（この端末だけのもの）。
+# 作業一覧と推奨間隔は CLAUDE.md 側にあるので、これを失っても日付だけの損失で済む
+OPERATIONS.local.md
+
 # OS / エディタ
 .DS_Store
 Thumbs.db
