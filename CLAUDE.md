@@ -109,7 +109,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,691ページ・22MB
-npm run check    # 型検査 + テスト68件
+npm run check    # 型検査 + テスト87件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`

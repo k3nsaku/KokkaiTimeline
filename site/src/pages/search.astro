@@ -7,15 +7,33 @@
  *   それ以外の任意語     → FTS5 trigram（1.5〜6秒）
  */
 import Base from "../layouts/Base.astro";
-import { manifest, topicSeries } from "../lib/site-data";
+import { manifest, topicSeries, politicians, latestAffiliation } from "../lib/site-data";
 
 const years = manifest().years;
 // 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）
 const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
+
+// 議員1,111人。**DBは引かない**（`lib/politician-search.ts` の冒頭）。
+// 会派と院は同じ文字列の繰り返しなので、表に逃がして添字で持つ（そのままだと2倍近くなる）
+const kaihaTable: string[] = [];
+const houseTable: string[] = [];
+const indexOf = (table: string[], value: string) => {
+  const at = table.indexOf(value);
+  return at >= 0 ? at : table.push(value) - 1;
+};
+const people = politicians().map((p) => {
+  const a = latestAffiliation(p);
+  return [
+    p.id, p.name, p.name_kana ?? "",
+    indexOf(kaihaTable, a?.kaiha ?? ""),
+    indexOf(houseTable, p.house ?? ""),
+    p.n_speeches,
+  ] as const;
+});
 ---
 
-<Base title="検索" description="国会会議録の発言をキーワードで検索できます。" noindex>
-  <h1>発言を検索</h1>
+<Base title="検索" description="国会会議録の発言と議員をキーワードで検索できます。" noindex>
+  <h1>検索</h1>
 
   <form id="search-form" class="search-form">
     <div class="row">
@@ -50,17 +68,40 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       <p class="small muted">
         期間は年単位で絞れます。年ごとに別のデータベースを引く仕組みなので、
         年を減らすとそのぶん速くなります。
+        <strong>この絞り込みは発言にだけ効きます</strong>（議員の検索には関係しません）。
       </p>
     </details>
   </form>
 
-  <p id="status" class="status" role="status" aria-live="polite"></p>
-  <div id="results"></div>
-  <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
+  {/* 発言と議員は引き先がまったく違う（年DB / ページに埋めた議員マスタ）ので、
+      同じ結果欄に混ぜずにタブで分ける。既定は発言 */}
+  <div class="tabs" role="tablist" aria-label="検索結果の種類">
+    <button type="button" role="tab" id="tab-speeches" aria-controls="panel-speeches"
+            aria-selected="true">発言<span class="tab-count" id="count-speeches"></span></button>
+    <button type="button" role="tab" id="tab-people" aria-controls="panel-people"
+            aria-selected="false" tabindex="-1">議員<span class="tab-count" id="count-people"></span></button>
+  </div>
+
+  <div id="panel-speeches" role="tabpanel" aria-labelledby="tab-speeches">
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <div id="results"></div>
+    <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
+  </div>
+
+  <div id="panel-people" role="tabpanel" aria-labelledby="tab-people" hidden>
+    <p id="people-status" class="status" role="status" aria-live="polite"></p>
+    <div id="people-results"></div>
+  </div>
 
   {/* 年の一覧と争点語（82件・数KB）をページに埋めておく。
-      争点語かどうかで引き先が変わる（topic_hit か FTS か）ので、検索の前に要る */}
-  <script is:inline type="application/json" id="site-data" set:html={JSON.stringify({ years, topics })} />
+      争点語かどうかで引き先が変わる（topic_hit か FTS か）ので、検索の前に要る。
+      議員1,111人ぶんも埋める（会派・院は表に逃がして添字で持つ） */}
+  <script
+    is:inline
+    type="application/json"
+    id="site-data"
+    set:html={JSON.stringify({ years, topics, people, kaihaTable, houseTable })}
+  />
 
   <script>
     import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
@@ -69,15 +110,25 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
     import { initSpeechPanel } from "../lib/speech-panel";
+    import { matchPoliticians, type PoliticianLite } from "../lib/politician-search";
     import { escapeHtml, formatNumber } from "../lib/format";
 
     initSpeechPanel();
 
     interface TopicLite { id: number; term: string; variants: string[] }
+    type PackedPerson = [number, string, string, number, number, number];
 
-    const { years, topics } = JSON.parse(
+    const { years, topics, people: packed, kaihaTable, houseTable } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
-    ) as { years: number[]; topics: TopicLite[] };
+    ) as {
+      years: number[]; topics: TopicLite[];
+      people: PackedPerson[]; kaihaTable: string[]; houseTable: string[];
+    };
+
+    // 埋め込みは添字で持っているので、ここで戻す（1,111件・一度きり）
+    const people: PoliticianLite[] = packed.map(([id, name, kana, k, h, n]) => ({
+      id, name, kana, kaiha: kaihaTable[k] ?? "", house: houseTable[h] ?? "", n,
+    }));
 
     const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
     const form = el<HTMLFormElement>("search-form");
@@ -89,6 +140,96 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     const results = el<HTMLDivElement>("results");
     const moreWrap = el<HTMLParagraphElement>("more-wrap");
     const moreBtn = el<HTMLButtonElement>("more");
+
+    // --- タブ ---------------------------------------------------------------
+    //
+    // 発言と議員は引き先が違う（年DB / ページに埋めた議員マスタ）。
+    // **議員のほうは同期で決まる**ので、発言の結果を待たずに件数が出る。
+
+    const tabSpeeches = el<HTMLButtonElement>("tab-speeches");
+    const tabPeople = el<HTMLButtonElement>("tab-people");
+    const panelSpeeches = el<HTMLDivElement>("panel-speeches");
+    const panelPeople = el<HTMLDivElement>("panel-people");
+    const peopleStatus = el<HTMLParagraphElement>("people-status");
+    const peopleResults = el<HTMLDivElement>("people-results");
+
+    /** 利用者が自分でタブを選んだか。**選んだあとは自動で切り替えない。**
+     *  検索のたびに戻す（新しい問い合わせなら、また自動判定してよい） */
+    let userPickedTab = false;
+    let peopleCount = 0;
+
+    function selectTab(which: "speeches" | "people") {
+      const speeches = which === "speeches";
+      tabSpeeches.setAttribute("aria-selected", String(speeches));
+      tabPeople.setAttribute("aria-selected", String(!speeches));
+      tabSpeeches.tabIndex = speeches ? 0 : -1;
+      tabPeople.tabIndex = speeches ? -1 : 0;
+      panelSpeeches.hidden = !speeches;
+      panelPeople.hidden = speeches;
+    }
+
+    for (const [tab, which] of [[tabSpeeches, "speeches"], [tabPeople, "people"]] as const) {
+      tab.addEventListener("click", () => { userPickedTab = true; selectTab(which); });
+    }
+    // 矢印キーでタブを移動できるようにする（role="tablist" の作法）
+    for (const tab of [tabSpeeches, tabPeople]) {
+      tab.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+        event.preventDefault();
+        userPickedTab = true;
+        const next = tab === tabSpeeches ? tabPeople : tabSpeeches;
+        selectTab(next === tabSpeeches ? "speeches" : "people");
+        next.focus();
+      });
+    }
+
+    /**
+     * どちらを見せるか決める。**片方にしか結果が無ければそちらを出す。**
+     * 両方あるとき・どちらも無いときは発言（このサイトの主機能）。
+     *
+     * 発言の件数は非同期なので、**確定してから1回だけ**呼ぶ。
+     */
+    function autoSelectTab(speechHits: number) {
+      if (userPickedTab) return;
+      selectTab(speechHits === 0 && peopleCount > 0 ? "people" : "speeches");
+    }
+
+    function showPeople(query: string) {
+      const rows = matchPoliticians(query, people);
+      peopleCount = rows.length;
+      el("count-people").textContent = rows.length ? ` ${rows.length}` : "";
+
+      if (!rows.length) {
+        peopleStatus.textContent = "一致する議員はいませんでした。";
+        peopleResults.innerHTML = "";
+        return;
+      }
+      peopleStatus.textContent =
+        `${formatNumber(rows.length)}人${rows.length >= 60 ? "以上" : ""}`;
+      peopleResults.innerHTML = `
+        <div class="scroll-x">
+          <table>
+            <thead>
+              <tr><th>氏名</th><th>院</th><th>会派</th><th class="num">発言数</th></tr>
+            </thead>
+            <tbody>${rows.map((r) => `
+              <tr>
+                <td>
+                  <a href="/politician/${r.id}">${escapeHtml(r.name)}</a>
+                  ${r.kana ? `<span class="kana"> ${escapeHtml(r.kana)}</span>` : ""}
+                </td>
+                <td>${escapeHtml(r.house)}</td>
+                <td>${escapeHtml(r.kaiha)}</td>
+                <td class="num">${formatNumber(r.n)}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted">
+          氏名・よみ・会派で照合しています。
+          <strong>発言の絞り込み（会議名・期間）はこちらには効きません。</strong>
+        </p>`;
+    }
 
     /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。
      *  **大文字小文字を無視して突き合わせる。** 争点語は `ＬＧＢＴ` `生成ＡＩ` のように
@@ -159,6 +300,10 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       const topic = matchTopic(query);
       const chosen = selectedYears();
 
+      // 議員はDBを引かないので、発言の結果を待たずにここで確定する
+      userPickedTab = false;
+      showPeople(query);
+
       if (pushUrl) {
         const p = new URLSearchParams({ q: query, from: fromSelect.value, until: untilSelect.value });
         if (meetingSelect.value) p.set("meeting", meetingSelect.value);
@@ -194,8 +339,14 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       }
     }
 
-    /** 2文字以下の語が語彙にも争点語にも無い場合。**黙って0件にしない。** */
+    /** 2文字以下の語が語彙にも争点語にも無い場合。**黙って0件にしない。**
+     *
+     *  ここは議員名を打たれたときに通りやすい経路でもある（姓は2文字が多く、
+     *  語彙に入っているとは限らない）。発言0件なので、議員に当たりがあれば
+     *  そちらのタブへ寄せる。 */
     function showUnsupported(unsupported: string[]) {
+      el("count-speeches").textContent = " 0";
+      autoSelectTab(0);
       statusEl.textContent = "0件";
       const words = unsupported.map((w) => `「${escapeHtml(w)}」`).join("");
       // 埋め込んである争点語から、その語を含むものを代わりに出す。
@@ -226,11 +377,14 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       moreWrap.hidden = page.done;
 
       if (!page.rows.length) {
+        el("count-speeches").textContent = " 0";
+        autoSelectTab(0);
         results.innerHTML = `<p class="status">一致する発言はありませんでした。</p>`;
         statusEl.textContent = `0件・${elapsed}ms${convertedNote}`;
         return;
       }
 
+      autoSelectTab(page.rows.length);
       results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
       statusEl.textContent =
         `${state!.opts.years!.length}年分を並列に検索・${elapsed}ms${convertedNote}`;
@@ -239,6 +393,7 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
       const opts = state!.opts;
       countHits(opts).then((n) => {
         if (gen !== generation || !state) return;   // その間に次の検索が始まっていたら捨てる
+        el("count-speeches").textContent = ` ${formatNumber(n)}`;
         const how = state.topic ? "（争点語の集計から）"
           : state.plan?.mode === "word" ? "（2文字語の索引から）" : "";
         statusEl.textContent =
@@ -298,6 +453,25 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
   </script>
 
   <style>
+    .tabs {
+      display: flex; gap: 0.25rem; margin: 1.25rem 0 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .tabs [role="tab"] {
+      background: none; border: 1px solid transparent; border-bottom: none;
+      border-radius: 6px 6px 0 0; padding: 0.45rem 1rem;
+      color: var(--muted); font-size: 0.95rem; cursor: pointer;
+      margin-bottom: -1px;
+    }
+    .tabs [role="tab"]:hover { color: var(--fg); }
+    .tabs [role="tab"][aria-selected="true"] {
+      color: var(--fg); font-weight: 600;
+      border-color: var(--line); background: var(--bg);
+    }
+    .tab-count { font-variant-numeric: tabular-nums; font-weight: 400; color: var(--muted); }
+    [role="tabpanel"] { padding-top: 0.5rem; }
+    .kana { color: var(--muted); font-size: 0.8rem; }
+
     .search-form { margin: 1rem 0 0.5rem; }
     .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
     .grow { flex: 1 1 20rem; }

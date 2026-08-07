@@ -47,7 +47,7 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 **日次更新は `npm run build` しか回さない**（テストを通さずに本番へ配る）。
 その穴を塞ぐのが CI で、`site/**` を触った push と PR で `npm run check`
-（`astro check` + テスト68件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
+（`astro check` + テスト87件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
 
 - **`npm run build` は回さない。** ビルドには `data/politicians.json` と
   `data/dist/topics.json` が要るが、どちらも生成物でリポジトリに入っていない
