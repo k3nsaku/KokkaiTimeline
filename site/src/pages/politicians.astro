@@ -2,10 +2,27 @@
 /**
  * 議員一覧。1,111人ぶんを静的に出す（約100KB）。
  * DBを引かないので絞り込みは即座に効くし、検索エンジンにも中身が渡る。
+ *
+ * ★ 照合は `/search` の議員タブと**同じ `fold()` を通す**（`lib/politician-search.ts`）。
+ *   素の `includes` だと**カタカナで打つと当たらず、「岸田 文雄」と空白を入れても
+ *   当たらない**（よみは全員ひらがな・氏名に空白は無いというデータの形に
+ *   寄りかかっていた）。同じ語で挙動が違うのは説明できない。
+ *
+ *   **並び順は揃えない。** あちらは一致の強い順に並べ替える検索、こちらは
+ *   発言数順の一覧を絞り込むもの。当たる集合は同じで、順序だけが違う。
  */
 import Base from "../layouts/Base.astro";
 import { politicians, latestAffiliation } from "../lib/site-data";
+import { fold } from "../lib/politician-search";
 import { formatNumber } from "../lib/format";
+
+/**
+ * 絞り込み用のキー。**区切りは `|`。**
+ * `fold()` は空白を落とすので、空白で区切ると氏名の末尾とよみの先頭がつながって、
+ * どちらにも無い並びで誤って当たる。
+ */
+const searchKey = (r: { name: string; kana: string; kaiha: string }) =>
+  [r.name, r.kana, r.kaiha].map(fold).join("|");
 
 const rows = [...politicians()]
   .sort((a, b) => b.n_speeches - a.n_speeches)
@@ -44,7 +61,7 @@ const rows = [...politicians()]
       </thead>
       <tbody id="rows">
         {rows.map((r) => (
-          <tr data-key={`${r.name} ${r.kana} ${r.kaiha}`}>
+          <tr data-key={searchKey(r)}>
             <td>
               <a href={`/politician/${r.id}`}>{r.name}</a>
               {r.kana && <span class="kana"> {r.kana}</span>}
@@ -60,12 +77,15 @@ const rows = [...politicians()]
   </div>
 
   <script>
+    // 打たれた側も同じ形に畳む。**両側に掛けないと釣り合わない**
+    import { fold } from "../lib/politician-search";
+
     const input = document.getElementById("filter") as HTMLInputElement;
     const countEl = document.getElementById("count")!;
     const trs = Array.from(document.querySelectorAll<HTMLTableRowElement>("#rows tr"));
 
     function apply() {
-      const q = input.value.trim();
+      const q = fold(input.value.trim());
       let shown = 0;
       for (const tr of trs) {
         const hit = !q || (tr.dataset.key ?? "").includes(q);
