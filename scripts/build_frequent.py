@@ -29,8 +29,12 @@ NDL は「語を入れたら発言が出る」まで。**語を並べて推移�
 
 ## 出力
 
-    data/dist/frequent.json    月×語の発言数 + 分母（上位500語で約90KB）
+    data/dist/frequent.json    月×語・会期×語の発言数 + 分母（上位500語で約155KB）
     reports/frequent_words.md  採用した語の一覧（運営が目で見るため。gitignore）
+
+会期ぶんを別に持っているのは、**会期が月境界で始まらない**ため
+（第204回は 2021-01-18 開会で、同じ月に第203回が同居する）。
+月の合算で代用すると境目の発言が隣の会期に混ざる。
 
 **会派の内訳は持たない。** 実測で上位500語に `topics.json` と同じ密度で付けると
 1.6MB になる（語だけなら88KB）。必要になったら**別ファイルに分けて**上位数十語だけ付ける。
@@ -53,6 +57,7 @@ import sqlite3
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import NamedTuple
 
 from build_topics import STOPWORDS, make_word_filter
 
@@ -144,23 +149,51 @@ def build_pool(con: sqlite3.Connection, words_path: Path,
     return pool, standalone_df
 
 
-def count_months(con: sqlite3.Connection, pool: set[str]) -> tuple[
-        list[str], Counter[str], dict[str, Counter[str]], Counter[str]]:
-    """月 × 語 の発言数を数える。**部分文字列で数える**（検索と揃えるため）。"""
+class Counted(NamedTuple):
+    """走査の結果。月と会期の2つの軸で持つ。"""
+    months: list[str]
+    denom: Counter[str]
+    by_month: dict[str, Counter[str]]
+    df_total: Counter[str]
+    #: 会期番号 → その会期の議員発言数
+    session_denom: Counter[int]
+    #: 会期番号 → 語 → 発言数
+    by_session: dict[int, Counter[str]]
+    #: 会期番号 → (開会日, 最終日)
+    session_span: dict[int, tuple[str, str]]
+
+
+def count(con: sqlite3.Connection, pool: set[str]) -> Counted:
+    """月 × 語 と 会期 × 語 の発言数を数える。**部分文字列で数える**（検索と揃えるため）。
+
+    ★ **会期を月の合算で代用しない。** 会期は月境界で始まらない
+    （第204回は 2021-01-18 開会で、同じ月に第203回が同居する）。
+    月を足し合わせると境目の発言が隣の会期に混ざるので、ここで直接数える。
+    500語×19会期でも数十KBしか増えない。
+    """
     by_len = {length: {t for t in pool if len(t) == length} for length in LENGTHS}
     months: set[str] = set()
     denom: Counter[str] = Counter()
     df_total: Counter[str] = Counter()
     by_month: dict[str, Counter[str]] = defaultdict(Counter)
+    session_denom: Counter[int] = Counter()
+    by_session: dict[int, Counter[str]] = defaultdict(Counter)
+    session_span: dict[int, tuple[str, str]] = {}
 
     n = 0
     started = time.monotonic()
-    for date, body in con.execute(
-            "SELECT date, body FROM speech WHERE speaker_kind = '議員'"):
+    for date, session, body in con.execute(
+            "SELECT s.date, m.session, s.body FROM speech s"
+            " JOIN meeting m ON m.issue_id = s.issue_id"
+            " WHERE s.speaker_kind = '議員'"):
         n += 1
         month = date[:7]
         months.add(month)
         denom[month] += 1
+        session_denom[session] += 1
+        span = session_span.get(session)
+        session_span[session] = ((min(span[0], date), max(span[1], date))
+                                 if span else (date, date))
         found: set[str] = set()
         for run in RUN_PATTERN.findall(body):
             run = fold(run)
@@ -171,14 +204,18 @@ def count_months(con: sqlite3.Connection, pool: set[str]) -> tuple[
                     if term in vocab:
                         found.add(term)
         counts = by_month[month]
+        session_counts = by_session[session]
         for term in found:
             df_total[term] += 1
             counts[term] += 1
+            session_counts[term] += 1
         if n % 100_000 == 0:
             logger.info("  %s件（%.0f秒）", f"{n:,}", time.monotonic() - started)
 
-    logger.info("走査 %s件 / 月 %s（%.0f秒）", f"{n:,}", len(months), time.monotonic() - started)
-    return sorted(months), denom, by_month, df_total
+    logger.info("走査 %s件 / 月 %s / 会期 %s（%.0f秒）",
+                f"{n:,}", len(months), len(session_denom), time.monotonic() - started)
+    return Counted(sorted(months), denom, by_month, df_total,
+                   session_denom, by_session, session_span)
 
 
 def drop_near_duplicates(terms: list[str], df: Counter[str], ratio: float,
@@ -283,6 +320,8 @@ def main() -> None:
                         help="短い語の出現の何割が長い語の中なら落とすか")
     parser.add_argument("--latin-ratio", type=float, default=0.5,
                         help="2文字の全角ラテンが自立して出る割合の下限（略語の断片よけ）")
+    parser.add_argument("--min-session-speeches", type=int, default=3000,
+                        help="この議員発言数に満たない会期は絞り込みに出さない")
     args = parser.parse_args()
 
     if not args.db.exists():
@@ -291,7 +330,9 @@ def main() -> None:
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
 
     pool, standalone_df = build_pool(con, args.words, args.min_standalone)
-    months, denom, by_month, df_total = count_months(con, pool)
+    counted = count(con, pool)
+    months, denom, by_month, df_total = (
+        counted.months, counted.denom, counted.by_month, counted.df_total)
     keep = make_word_filter(con, args.denylist)
     fragments = latin_fragments(standalone_df, df_total, args.latin_ratio)
     logger.info("略語の断片を除外 %d件（%s）", len(fragments),
@@ -311,6 +352,15 @@ def main() -> None:
     def peak_month(term: str) -> str:
         return max(months, key=lambda m: (by_month[m][term] / denom[m]) if denom[m] else 0)
 
+    # 会期。**発言の少ない会期は載せない。** 第220回は議員発言が191件しかなく、
+    # そこで語を並べても中身は特別国会の手続きだけになる（首班指名・議長選出）
+    sessions = sorted(s for s, n in counted.session_denom.items()
+                      if n >= args.min_session_speeches)
+    dropped = sorted(set(counted.session_denom) - set(sessions))
+    logger.info("会期 %d件を載せる（%s件未満は除外: %s）", len(sessions),
+                f"{args.min_session_speeches:,}",
+                "、".join(f"第{s}回" for s in dropped) or "なし")
+
     data = {
         "_comment": [
             "機械抽出の頻出語。**争点語（topics.json）とは別物で、運営の編集方針ではない。**",
@@ -320,8 +370,17 @@ def main() -> None:
         "months": months,
         # ★ 分母。**グラフはこれで割ってから描くこと**（割らないと開催日数の多い月が争点に見える）
         "speech_totals": [denom[m] for m in months],
+        # 会期。**月の合算では代用できない**（会期は月境界で始まらない。count() の注記）。
+        # 順序は words[].sessions の並びと一致させてある
+        "sessions": [{
+            "session": s,
+            "from": counted.session_span[s][0],
+            "until": counted.session_span[s][1],
+            "n_speeches": counted.session_denom[s],
+        } for s in sessions],
         "params": {"top": args.top, "min_df": args.min_df,
-                   "min_standalone": args.min_standalone, "dup_ratio": args.dup_ratio},
+                   "min_standalone": args.min_standalone, "dup_ratio": args.dup_ratio,
+                   "min_session_speeches": args.min_session_speeches},
         "words": [{
             "term": term,
             "n": df_total[term],
@@ -329,6 +388,7 @@ def main() -> None:
             "peak": peak_month(term),
             "topic_id": topic_id.get(term),
             "series": [by_month[m][term] for m in months],
+            "sessions": [counted.by_session[s][term] for s in sessions],
         } for term in terms],
     }
 

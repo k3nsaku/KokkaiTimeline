@@ -12,8 +12,19 @@
 import Base from "../layouts/Base.astro";
 import { frequent } from "../lib/site-data";
 import { formatNumber } from "../lib/format";
+import { formatSpan } from "../lib/frequent";
 
 const data = frequent();
+
+// 会期で絞るための材料。**DBは引かない**（ROADMAP §1-D / lib/frequent.ts）。
+// 月の系列（`series`）はここでは要らないので落とす。500語ぶんで約30KB
+const payload = {
+  sessions: data.sessions,
+  totalSpeeches: data.speech_totals.reduce((sum, n) => sum + n, 0),
+  words: data.words.map((w) => ({
+    term: w.term, n: w.n, topicId: w.topic_id, hits: w.sessions,
+  })),
+};
 
 // ピーク月の年でまとめる。新しい年から並べると「いま何が議論されているか」が上に来る
 const byYear = new Map<string, typeof data.words>();
@@ -48,22 +59,28 @@ const description =
     どちらが重要かという意味は含みません。
   </p>
 
-  {years.map(([year, words]) => (
-    <section>
-      <h2>{year}年に集中した語</h2>
-      <ul class="word-grid">
-        {words.map((word) => (
-          <li>
-            <a href={word.topic_id ? `/topic/${word.topic_id}` : `/word/${encodeURIComponent(word.term)}`}>
-              <span class="term">{word.term}</span>
-              <span class="count small muted">{formatNumber(word.n)}件</span>
-              {word.topic_id && <span class="badge small">争点語</span>}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
-  ))}
+  <div id="period-control"></div>
+
+  <div id="by-year">
+    {years.map(([year, words]) => (
+      <section>
+        <h2>{year}年に集中した語</h2>
+        <ul class="word-grid">
+          {words.map((word) => (
+            <li>
+              <a href={word.topic_id ? `/topic/${word.topic_id}` : `/word/${encodeURIComponent(word.term)}`}>
+                <span class="term">{word.term}</span>
+                <span class="count small muted">{formatNumber(word.n)}件</span>
+                {word.topic_id && <span class="badge small">争点語</span>}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </div>
+
+  <div id="by-session" hidden></div>
 
   <section class="how">
     <h2>どうやって選んでいるか</h2>
@@ -86,10 +103,94 @@ const description =
         （<a href="/disclaimer">見つけたらお知らせください</a>）。
       </li>
       <li>
+        国会の会期で絞ると、<strong>その会期でいつもより多く出た語</strong>を並べます。
+        件数の多い順ではありません（それだと「日本」「国民」のような語が並びます）。
+        発言の少ない会期（首班指名だけの特別国会など）は選べません。
+      </li>
+      <li>
         ここに無い語も<a href="/search">検索</a>からなら引けます（推移は出ません）。
       </li>
     </ul>
   </section>
+
+  <script
+    is:inline
+    type="application/json"
+    id="frequent-data"
+    set:html={JSON.stringify(payload)}
+  />
+
+  <script>
+    // 期間の選択はJSで作る。動かない環境に「選べないセレクタ」を残さないため
+    // （Mail.astro のコピーボタンと同じ考え）。JSが無ければ全期間の一覧が残る。
+    import { rankBySession, formatSpan, type SessionMeta, type SessionWord }
+      from "../lib/frequent";
+
+    const data = JSON.parse(document.getElementById("frequent-data")!.textContent!) as {
+      sessions: SessionMeta[]; totalSpeeches: number; words: SessionWord[];
+    };
+
+    const control = document.getElementById("period-control")!;
+    const byYear = document.getElementById("by-year")!;
+    const bySession = document.getElementById("by-session")!;
+    if (!data.sessions.length) throw new Error("会期のデータが無い");
+
+    const select = document.createElement("select");
+    select.id = "period";
+    select.innerHTML = `<option value="">全期間（山が立った年ごと）</option>`
+      + [...data.sessions].reverse().map((s) => {
+        const i = data.sessions.indexOf(s);
+        return `<option value="${i}">第${s.session}回国会（${formatSpan(s.from, s.until)}）</option>`;
+      }).join("");
+
+    const label = document.createElement("label");
+    label.className = "period-label";
+    label.textContent = "期間で絞る: ";
+    label.append(select);
+    control.append(label);
+
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+
+    const href = (term: string, topicId: number | null) =>
+      topicId ? `/topic/${topicId}` : `/word/${encodeURIComponent(term)}`;
+
+    select.addEventListener("change", () => {
+      const value = select.value;
+      if (value === "") {
+        byYear.hidden = false;
+        bySession.hidden = true;
+        return;
+      }
+      const index = Number(value);
+      const meta = data.sessions[index];
+      const ranked = rankBySession(data.words, data.sessions, index, data.totalSpeeches);
+
+      bySession.innerHTML = `
+        <section>
+          <h2>第${meta.session}回国会でいつもより多く出た語</h2>
+          <p class="small muted">
+            ${escape(formatSpan(meta.from, meta.until))}・議員の発言
+            ${meta.n_speeches.toLocaleString("ja-JP")}件から。
+            <strong>倍率はその会期での出現率 ÷ 全期間の出現率</strong>で、
+            1.0 なら「いつもどおり」です。この会期で30件に満たない語は出していません。
+          </p>
+          ${ranked.length === 0 ? "<p>並べられる語がありませんでした。</p>" : `
+          <ul class="word-grid">
+            ${ranked.map((r) => `
+              <li>
+                <a href="${href(r.term, r.topicId)}">
+                  <span class="term">${escape(r.term)}</span>
+                  <span class="count small muted">${r.lift.toFixed(1)}倍・${r.hits.toLocaleString("ja-JP")}件</span>
+                  ${r.topicId ? '<span class="badge small">争点語</span>' : ""}
+                </a>
+              </li>`).join("")}
+          </ul>`}
+        </section>`;
+      byYear.hidden = true;
+      bySession.hidden = false;
+    });
+  </script>
 
   <style>
     .word-grid {
@@ -113,5 +214,11 @@ const description =
       background: var(--card); border-radius: 0 6px 6px 0;
     }
     .how { margin-top: 2.5rem; }
+  </style>
+
+  <style is:global>
+    /* セレクタは後から差し込むので、スコープ付きスタイルだと当たらない */
+    .period-label { display: block; margin: 1.25rem 0; }
+    .period-label select { margin-left: 0.4rem; max-width: 100%; }
   </style>
 </Base>

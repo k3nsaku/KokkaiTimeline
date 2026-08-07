@@ -88,14 +88,33 @@ export interface FrequentWord {
   peak: string;
   /** 争点語にも載っている語。そちらのページへ寄せる */
   topic_id: number | null;
+  /** 月ごとの発言数。`Frequent.months` と同じ並び */
   series: number[];
+  /**
+   * 会期ごとの発言数。`Frequent.sessions` と同じ並び。
+   * **月の合算では作れない**（会期は月境界で始まらない。`lib/frequent.ts`）
+   */
+  sessions: number[];
+}
+
+/** 国会の会期。発言の少ない会期（首班指名だけの特別国会など）は載っていない。 */
+export interface FrequentSession {
+  session: number;
+  from: string;
+  until: string;
+  /** その会期の議員発言数。**割るのはこれ** */
+  n_speeches: number;
 }
 
 export interface Frequent {
   months: string[];
   /** その月の議員の発言数。**必ずこれで割る** */
   speech_totals: number[];
-  params: { top: number; min_df: number; min_standalone: number; dup_ratio: number };
+  sessions: FrequentSession[];
+  params: {
+    top: number; min_df: number; min_standalone: number;
+    dup_ratio: number; min_session_speeches: number;
+  };
   words: FrequentWord[];
 }
 

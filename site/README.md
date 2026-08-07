@@ -8,7 +8,7 @@ cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
 npm run build      # dist/ に静的HTMLを出す（1,691ページ / 22MB）
-npm run test       # 回帰テスト（54件・0.2秒）
+npm run test       # 回帰テスト（68件・0.2秒）
 npm run check      # 型検査 + テスト
 ```
 
@@ -37,7 +37,7 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 | `/speech/<speech_id>` | 静的1枚 + rewrite | 発言650,785件は事前生成できない（下記） |
 | `/topics` | 静的 | 争点語82件（**運営の編集方針**） |
 | `/topic/<id>` | **静的 ×82** | 頻度推移のSVGと会派比較は**ビルド時に生成**。発言はDBから |
-| `/frequent` | 静的 | 頻出語500件（**機械抽出**）。山が立った年ごとに並べる |
+| `/frequent` | 静的 | 頻出語500件（**機械抽出**）。山が立った年ごとに並べる。**会期で絞れる**（下記） |
 | `/word/<語>` | **静的 ×489** | 頻度推移のSVG。発言は既存の `word_hit` / FTS から |
 | `/about` | 静的 | データの出どころと限界 |
 | `/disclaimer` | 静的 | 免責事項・引用の考え方・**訂正依頼の窓口**・運営者表示 |
@@ -58,6 +58,19 @@ docs/SCOPE.md。空になるまで公開しない）。
 
 `operator.ts` から `db.ts` を import しないこと。`format.ts` と同じ理由で、
 ビルド時（Node側）に読まれるので、ブラウザ専用のコードを引き込むと SSR が落ちる。
+
+### `/frequent` の会期絞り込み
+
+**DBを引かない。** 会期ごとの件数は `data/dist/frequent.json` に入っていて、
+並べ替えは `src/lib/frequent.ts` の `rankBySession()` がページの中でやる。
+セレクタは**JSで差し込む**（Mail.astro のコピーボタンと同じ。動かない環境に
+選べないセレクタを残さないため）。JSが無ければ全期間の一覧がそのまま残る。
+
+- **ブラウザから `word_hit` / FTS で範囲集計しない。** 年330万行の範囲集計は
+  全走査になり、`ORDER BY date DESC` と同じ穴に落ちる（docs/PITFALLS.md）
+- **並びは率**（その会期の出現率 ÷ 全期間の出現率）。件数順にすると
+  どの会期を選んでも `日本` `国民` が並ぶ
+- ページに埋める JSON は500語ぶんで 42KB（gzip 13KB）。月の系列は落としてある
 
 ### `/speech/<id>` の扱い
 
