@@ -113,6 +113,15 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
 
       .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1rem; }
 
+      /* ★ サイトで唯一の「幅の」メディアクエリ（配色用の2つを除く）。
+         発言の本文パネルを出してよい画面かどうかを、**ここだけで**決める。
+         `speech-panel.ts` は数値を持たず、この変数を読んで判断する
+         （JSとCSSに同じ数値を書くと必ずどちらかがずれるため）。
+         60rem は「幅 min(38rem,55vw) のパネルを重ねても一覧が4割残る」下限。 */
+      @media (min-width: 60rem) {
+        :root { --panel-ok: 1; }
+      }
+
       .skip {
         position: absolute;
         left: -9999px;
@@ -205,6 +214,49 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
       td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
       .scroll-x { overflow-x: auto; }
+
+      /* --- 発言の本文パネル（src/lib/speech-panel.ts） -------------------- */
+      /*
+         一覧に**重ねる**。一覧の幅（--max）を変えないための作り。
+         出るのは上の `--panel-ok` が立つ画面だけで、それ未満は
+         `/speech/<id>` へ普通に遷移する（パネルのCSSは読まれても使われない）。
+      */
+      .speech-panel {
+        position: fixed; inset-block: 0; right: 0; z-index: 20;
+        width: min(38rem, 55vw);
+        display: flex; flex-direction: column;
+        background: var(--bg);
+        border-left: 1px solid var(--line);
+        box-shadow: -8px 0 24px rgb(0 0 0 / 0.12);
+      }
+      .speech-panel[hidden] { display: none; }
+
+      .speech-panel-bar {
+        display: flex; justify-content: flex-end; gap: 0.5rem;
+        padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
+      }
+      .speech-panel-body {
+        flex: 1; overflow-y: auto; padding: 0 1.5rem 2rem;
+      }
+      /* キーボードで開いたときに枠が出るのは正しいが、マウスでも毎回出ると煩い */
+      .speech-panel-body:focus { outline: none; }
+      .speech-panel-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+      .speech-panel-context { margin-top: 2rem; border-top: 1px solid var(--line); }
+
+      /* 隠している間だけ出る。**何が戻るのか分かるよう発言者と日付を出す** */
+      .speech-panel-reopen {
+        position: fixed; right: 1rem; bottom: 1rem; z-index: 20;
+        border: 1px solid var(--line); border-radius: 999px;
+        background: var(--card); color: var(--fg);
+        padding: 0.5rem 1rem; font-size: 0.85rem;
+        box-shadow: 0 2px 12px rgb(0 0 0 / 0.15); cursor: pointer;
+      }
+      .speech-panel-reopen:hover { border-color: var(--accent); }
+      .speech-panel-reopen[hidden] { display: none; }
+
+      /* ★ 開いても一覧を**動かさない**。重ねるだけにするのがこの設計の要点で、
+         `.wrap` に余白を足して押しのけると、一覧の幅を広げる案と同じことになる
+         （＝読んでいる行がずれる）。隠せば全部見えるので、それで足りる。 */
     </style>
   </body>
 </html>

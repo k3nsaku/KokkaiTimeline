@@ -1,4 +1,10 @@
-/** 発言リストの描画。検索結果・議員ページ・争点語ページで共通に使う。 */
+/** 発言リストの描画。検索結果・議員ページ・争点語ページ・頻出語ページで共通に使う。
+ *
+ * 抜粋は `<a href="/speech/<id>">` のまま出す。**リンクであることを壊さない。**
+ * 広い画面では `speech-panel.ts` がクリックを横取りして本文パネルを開くが、
+ * 狭い画面・JS無効・Ctrl+クリック・新しいタブでは**そのまま遷移する**
+ * （`data-speech-id` は横取り側が拾うための目印で、無くても遷移は成立する）。
+ */
 
 import type { SpeechRow } from "./db";
 import { escapeHtml, formatDate, highlight, highlightTerm } from "./format";
@@ -32,7 +38,9 @@ function speechCard(row: SpeechRow, opts: RenderOptions): string {
         <span>${escapeHtml(formatDate(row.date))}</span>
         <span>${escapeHtml(row.house)}・${escapeHtml(row.meeting)}</span>
       </div>
-      <p class="speech-body"><a href="/speech/${encodeURIComponent(row.speech_id)}">${body}</a></p>
+      <p class="speech-body"><a
+        href="/speech/${encodeURIComponent(row.speech_id)}"
+        data-speech-id="${escapeHtml(row.speech_id)}">${body}</a></p>
     </li>`;
 }
 

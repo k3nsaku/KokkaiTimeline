@@ -86,7 +86,12 @@ const description =
   <script>
     import { search, resolveQuery, splitTerms, type QueryPlan } from "../../lib/db";
     import { renderSpeeches } from "../../lib/render";
+    // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
+    // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
+    import { initSpeechPanel } from "../../lib/speech-panel";
     import { escapeHtml } from "../../lib/format";
+
+    initSpeechPanel();
 
     const { term, years } = JSON.parse(
       document.getElementById("site-data")!.textContent!,

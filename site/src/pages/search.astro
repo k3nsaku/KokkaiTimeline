@@ -66,7 +66,12 @@ const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, varian
     import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
+    // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
+    // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
+    import { initSpeechPanel } from "../lib/speech-panel";
     import { escapeHtml, formatNumber } from "../lib/format";
+
+    initSpeechPanel();
 
     interface TopicLite { id: number; term: string; variants: string[] }
 
