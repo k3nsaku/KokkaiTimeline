@@ -1,4 +1,4 @@
-# 国会タイムライン
+﻿# 国会タイムライン
 
 国会会議録から政治家の発言を集めて構造化し、**横断検索と、争点語の推移**を出す
 完全静的サイト。有権者が政治家について判断する材料を出すことを目的にしている。
@@ -90,7 +90,7 @@ python scripts/build_db.py --split-by-year --page-size 8192
 cd site && npm install
 npm run dev      # http://localhost:4321（data/dist を /db で配る。コピーはしない）
 npm run build    # dist/ に 1,691ページ
-npm run check    # 型検査 + テスト87件
+npm run check    # 型検査 + テスト100件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。**

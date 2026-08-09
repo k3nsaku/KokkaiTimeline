@@ -24,6 +24,7 @@
  */
 
 import { speechDetail, speechContext, type SpeechDetail } from "./db";
+import { renderContextList, splitContext } from "./speech-view";
 import { escapeHtml, formatDate, paragraphs } from "./format";
 
 let root: HTMLElement | null = null;
@@ -88,36 +89,45 @@ function renderDetail(s: SpeechDetail): string {
     s.meeting_url ? `<a href="${escapeHtml(s.meeting_url)}" rel="noopener">会議録全体</a>` : "",
   ].filter(Boolean).join("");
 
+  // 前の発言は本文の上、後の発言は下（`speech-view.ts`）。
+  // 中身は後から届くので、器だけ先に置く
   return `
-    <h2 class="speech-title">${speaker}<span class="kind">${escapeHtml(s.speaker_kind)}</span></h2>
-    <div class="speech-meta detail">${meta}</div>
-    <div class="body">${paragraphs(s.body).map((p) => `<p>${escapeHtml(p)}</p>`).join("")}</div>
-    <p class="sources small">${links}</p>
-    <p class="small muted">国会会議録の本文そのままです。要約も編集もしていません。</p>
-    <div class="speech-panel-context"></div>`;
+    <div class="speech-panel-before"></div>
+    <article class="speech-panel-main">
+      <h2 class="speech-title">${speaker}<span class="kind">${escapeHtml(s.speaker_kind)}</span></h2>
+      <div class="speech-meta detail">${meta}</div>
+      <div class="body">${paragraphs(s.body).map((p) => `<p>${escapeHtml(p)}</p>`).join("")}</div>
+      <p class="sources small">${links}</p>
+      <p class="small muted">国会会議録の本文そのままです。要約も編集もしていません。</p>
+    </article>
+    <div class="speech-panel-after"></div>`;
 }
 
 async function fillContext(s: SpeechDetail): Promise<void> {
-  const host = bodyEl?.querySelector<HTMLElement>(".speech-panel-context");
-  if (!host) return;
+  const beforeHost = bodyEl?.querySelector<HTMLElement>(".speech-panel-before");
+  const afterHost = bodyEl?.querySelector<HTMLElement>(".speech-panel-after");
+  const main = bodyEl?.querySelector<HTMLElement>(".speech-panel-main");
+  if (!beforeHost || !afterHost || !bodyEl) return;
+
+  // ★ 前の発言を本文より上に差し込むと、そのぶん本文が下へ押し出される。
+  //   読みたいのは本文なので、差し込んだあとに先頭へ合わせ直す。
+  //   届くまでに利用者が動かしていたら、そちらを尊重して触らない
+  const atTop = bodyEl.scrollTop === 0;
   const rows = await speechContext(s.issue_id, s.speech_order, 3);
-  if (rows.length <= 1) return;
-  host.innerHTML = `
-    <h3>この会議の前後</h3>
-    <ul class="speech-list">${rows.map((r) => `
-      <li class="speech${r.speech_id === s.speech_id ? " here" : ""}">
-        <div class="speech-meta">
-          <span class="speech-speaker">${escapeHtml(r.speaker)}</span>
-          <span>${escapeHtml(r.speaker_kind)}</span>
-          ${r.speech_id === s.speech_id ? "<span>← いま見ている発言</span>" : ""}
-        </div>
-        <p class="speech-body">${
-          r.speech_id === s.speech_id
-            ? escapeHtml(r.head)
-            : `<a href="/speech/${encodeURIComponent(r.speech_id)}"
-                  data-speech-id="${escapeHtml(r.speech_id)}">${escapeHtml(r.head)}…</a>`
-        }</p>
-      </li>`).join("")}</ul>`;
+  const { before, after } = splitContext(rows, s.speech_order);
+  beforeHost.innerHTML = renderContextList(before, { label: "この前の発言", compact: true });
+  afterHost.innerHTML = renderContextList(after, { label: "この後の発言" });
+
+  // offsetTop は「位置指定された最も近い先祖」からの距離なので、
+  // 器の position に依存しない矩形の差で動かす。
+  //
+  // 本文が短くて後の発言も少ないと、**下に送れる分が足りず先頭まで届かない**
+  // （実測でスクロール上限に当たり62px残った）。ブラウザの通常の挙動で、
+  // 埋め草を足せば消せるが、そのために画面の半分を空白にする価値は無い
+  if (atTop && before.length && main) {
+    bodyEl.scrollTop +=
+      main.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top;
+  }
 }
 
 async function open(speechId: string, trigger: HTMLElement): Promise<void> {

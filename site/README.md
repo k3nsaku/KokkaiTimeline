@@ -1,4 +1,4 @@
-# site — 公開するサイト
+﻿# site — 公開するサイト
 
 **完全静的サイト**（Astro）。サーバもAPIも持たない。
 発言の中身はブラウザが年ごとのDBを HTTP Range で直接引く。
@@ -8,7 +8,7 @@ cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
 npm run build      # dist/ に静的HTMLを出す（1,691ページ / 22MB）
-npm run test       # 回帰テスト（87件・0.2秒）
+npm run test       # 回帰テスト（100件・0.2秒）
 npm run check      # 型検査 + テスト
 ```
 
@@ -123,6 +123,23 @@ focus は飛ばない（押した先が focusable でないため）ので `poin
 履歴は開いたときだけ `pushState` で `/speech/<id>` にする。アドレスバーが
 共有できるURLのまま残り、リロードすれば本物のページが出る。
 **隠す・再表示では履歴を触らない**（表示の状態であって遷移ではない）。
+
+### 前後の発言は本文の上と下（`src/lib/speech-view.ts`）
+
+会議録は読むものなので、**前の発言は本文の上、後の発言は下**に置く。
+`/speech` と本文パネルの両方が同じ `splitContext()` / `renderContextList()` を使う
+——**同じものを2か所に書くと片方だけ直して表示が食い違う。**
+
+- **対象の発言そのものは抜粋に混ぜない**（本文で出すので二度出す意味がない）。
+  振り分けは `speech_order` で見る（`speech_id` の一致に寄りかからない）
+- **★前の発言を上に差し込むと本文が下へ押し出される。** 差し込んだあとに
+  本文の先頭へ合わせ直す。合わせないと開いた瞬間に見えるのが「前の発言」になる
+- `/speech` 側は**ヘッダが `position: sticky`** なので、`scrollMarginTop` に
+  ヘッダの高さを入れてから `scrollIntoView()` する。入れないと先頭行が隠れる
+- **読み込み中に利用者が動かしていたら合わせ直さない**（`scrollY === 0` /
+  `scrollTop === 0` のときだけ）
+- 本文が短くて後の発言も少ないと、下に送れる分が足りず**先頭まで届かないことがある**
+  （実測で62px残った）。ブラウザの通常の挙動で、埋め草で消す価値は無いと判断した
 
 ### `/speech/<id>` の扱い
 
@@ -286,6 +303,11 @@ POISON=1 node scripts/dev-data-server.js   # retry= の付かないURLにゼロ�
 Node からテストを走らせられなくなる（`db.ts` 側に置くこと）。
 テストは `.ts` のまま Node が直接読むので、**enum や
 constructor の parameter property は使えない**（型を消すだけの変換のため）。
+
+**★テストから辿るモジュールの相対 import は拡張子を付ける**（`./format.ts`）。
+Node の ESM 解決は拡張子を補わないので、省くと `ERR_MODULE_NOT_FOUND` になる
+（2026-08-08 に `speech-view.ts` で踏んだ）。Vite 側は付いていても解決できる。
+`.astro` から読むだけのモジュールは今までどおり省いてよい。
 
 ## 触る前に読むもの
 

@@ -241,7 +241,14 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
       /* キーボードで開いたときに枠が出るのは正しいが、マウスでも毎回出ると煩い */
       .speech-panel-body:focus { outline: none; }
       .speech-panel-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-      .speech-panel-context { margin-top: 2rem; border-top: 1px solid var(--line); }
+      /* 前後の抜粋。**本文と同じ見た目にしない** — どちらが全文か分からなくなる */
+      .speech-context { opacity: 0.85; }
+      .speech-context .context-label {
+        font-size: 0.8rem; font-weight: 600; color: var(--muted);
+        margin: 1.25rem 0 0.5rem; letter-spacing: 0.02em;
+      }
+      .speech-context.compact .context-label { margin-top: 0.5rem; }
+      .speech-panel-after, #context-after { border-top: 1px solid var(--line); margin-top: 1.5rem; }
 
       /* 隠している間だけ出る。**何が戻るのか分かるよう発言者と日付を出す** */
       .speech-panel-reopen {

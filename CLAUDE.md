@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 国会会議録から政治家の発言を収集・構造化し、横断検索と争点語の推移を提供する
 **完全静的サイト**。概要は [README.md](README.md)。
@@ -109,7 +109,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,691ページ・22MB
-npm run check    # 型検査 + テスト87件
+npm run check    # 型検査 + テスト100件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`

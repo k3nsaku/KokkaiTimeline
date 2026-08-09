@@ -16,23 +16,25 @@ import Base from "../layouts/Base.astro";
 <Base title="発言" description="国会会議録の発言1件です。" noindex>
   <p class="small"><a href="/search">← 検索に戻る</a></p>
 
+  {/* 会議録は読むものなので、前の発言は本文の上・後の発言は下に置く。
+      下にまとめると、前の発言を読むのに一度下まで行って戻ることになる */}
+  <div id="context-before"></div>
+
   <article id="speech">
     <p id="status" class="status" role="status" aria-live="polite">読み込み中…</p>
   </article>
 
-  <section id="context-section" hidden>
-    <h2>この会議の前後</h2>
-    <div id="context"></div>
-  </section>
+  <div id="context-after"></div>
 
   <script>
     import { speechDetail, speechContext, type SpeechDetail } from "../lib/db";
+    import { renderContextList, splitContext } from "../lib/speech-view";
     import { escapeHtml, formatDate, paragraphs } from "../lib/format";
 
     const statusEl = document.getElementById("status")!;
     const article = document.getElementById("speech")!;
-    const contextSection = document.getElementById("context-section") as HTMLElement;
-    const contextEl = document.getElementById("context")!;
+    const beforeEl = document.getElementById("context-before")!;
+    const afterEl = document.getElementById("context-after")!;
 
     /** `/speech/<id>` でも `/speech?id=<id>` でも受ける。 */
     function speechIdFromUrl(): string | null {
@@ -86,25 +88,20 @@ import Base from "../layouts/Base.astro";
         article.innerHTML = renderSpeech(s);
         document.title = `${s.speaker}（${formatDate(s.date)} ${s.meeting}） | 国会タイムライン`;
 
+        // ★ 前の発言を**本文より上に**差し込むと、そのぶん本文が下へ押し出される。
+        //   利用者が読みたいのは本文なので、差し込んだあとに位置を合わせ直す。
+        const atTop = window.scrollY === 0;
         const rows = await speechContext(s.issue_id, s.speech_order, 3);
-        if (rows.length > 1) {
-          contextEl.innerHTML = `<ul class="speech-list">${rows.map((r) => `
-            <li class="speech${r.speech_id === s.speech_id ? " here" : ""}">
-              <div class="speech-meta">
-                <span class="speech-speaker">${
-                  r.politician_id
-                    ? `<a href="/politician/${r.politician_id}">${escapeHtml(r.speaker)}</a>`
-                    : escapeHtml(r.speaker)}</span>
-                <span>${escapeHtml(r.speaker_kind)}</span>
-                ${r.speech_id === s.speech_id ? "<span>← いま見ている発言</span>" : ""}
-              </div>
-              <p class="speech-body">${
-                r.speech_id === s.speech_id
-                  ? escapeHtml(r.head)
-                  : `<a href="/speech/${encodeURIComponent(r.speech_id)}">${escapeHtml(r.head)}…</a>`
-              }</p>
-            </li>`).join("")}</ul>`;
-          contextSection.hidden = false;
+        const { before, after } = splitContext(rows, s.speech_order);
+        beforeEl.innerHTML = renderContextList(before, { label: "この前の発言", compact: true });
+        afterEl.innerHTML = renderContextList(after, { label: "この後の発言" });
+
+        // ヘッダは position: sticky なので、そのぶん空けないと先頭行が隠れる。
+        // 読み込み中に利用者が動かしていたら、そちらを尊重して触らない
+        if (atTop && before.length) {
+          const header = document.querySelector<HTMLElement>(".site-header");
+          article.style.scrollMarginTop = `${(header?.offsetHeight ?? 0) + 8}px`;
+          article.scrollIntoView();
         }
       } catch (err) {
         statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
@@ -123,6 +120,5 @@ import Base from "../layouts/Base.astro";
     .speech-meta.detail { font-size: 0.85rem; margin-bottom: 1.25rem; }
     .body p { margin: 0 0 1rem; }
     .sources a + a { margin-left: 1rem; }
-    .speech.here { border-color: var(--accent); }
   </style>
 </Base>

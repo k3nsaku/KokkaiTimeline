@@ -1,4 +1,4 @@
-# 日次更新の運用
+﻿# 日次更新の運用
 
 `.github/workflows/daily.yml`。**これがこのプロジェクト唯一の定期実行**で、
 落ちても数日放置できるように作ってある（会議録は消えないので、次に走れば追いつく）。
@@ -47,7 +47,7 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 **日次更新は `npm run build` しか回さない**（テストを通さずに本番へ配る）。
 その穴を塞ぐのが CI で、`site/**` を触った push と PR で `npm run check`
-（`astro check` + テスト87件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
+（`astro check` + テスト100件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
 
 - **`npm run build` は回さない。** ビルドには `data/politicians.json` と
   `data/dist/topics.json` が要るが、どちらも生成物でリポジトリに入っていない
