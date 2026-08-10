@@ -354,6 +354,10 @@ def main() -> None:
 
     # 会期。**発言の少ない会期は載せない。** 第220回は議員発言が191件しかなく、
     # そこで語を並べても中身は特別国会の手続きだけになる（首班指名・議長選出）
+    # 会期の概要に出す会議数。走査では数えていない（発言の側を見ているため）
+    n_meetings = {row[0]: row[1] for row in con.execute(
+        "SELECT session, COUNT(*) FROM meeting GROUP BY session")}
+
     sessions = sorted(s for s, n in counted.session_denom.items()
                       if n >= args.min_session_speeches)
     dropped = sorted(set(counted.session_denom) - set(sessions))
@@ -377,6 +381,7 @@ def main() -> None:
             "from": counted.session_span[s][0],
             "until": counted.session_span[s][1],
             "n_speeches": counted.session_denom[s],
+            "n_meetings": n_meetings.get(s, 0),
         } for s in sessions],
         "params": {"top": args.top, "min_df": args.min_df,
                    "min_standalone": args.min_standalone, "dup_ratio": args.dup_ratio,

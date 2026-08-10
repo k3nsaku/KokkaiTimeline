@@ -1,0 +1,119 @@
+---
+/**
+ * 会期のページ。「第213回国会で何が議論されたか」を1枚にする。
+ *
+ * ★ **新しいデータを作っていない。** `data/dist/frequent.json` の `sessions` に
+ *   会期ごとの件数が既に入っていて（`/frequent` のセレクタが使っている）、
+ *   並べ替えも `lib/frequent.ts` の `rankBySession()` がそのまま使える。
+ *   ここでやるのは**URLを与えて事前生成する**ことだけ。
+ *
+ * ★ 発言の少ない会期は `build_frequent.py` が落としてある（既定3,000件未満）。
+ *   第220回は議員発言が191件しかなく、並べても首班指名の手続き語しか出ない。
+ */
+import Base from "../../layouts/Base.astro";
+import { frequent } from "../../lib/site-data";
+import { formatSpan, rankBySession, type SessionWord } from "../../lib/frequent";
+import { formatNumber } from "../../lib/format";
+
+export function getStaticPaths() {
+  const data = frequent();
+  return data.sessions.map((session, index) => ({
+    params: { n: String(session.session) },
+    props: { session, index },
+  }));
+}
+
+const { session, index } = Astro.props;
+const data = frequent();
+
+const words: SessionWord[] = data.words.map((w) => ({
+  term: w.term, n: w.n, topicId: w.topic_id, hits: w.sessions,
+}));
+const totalSpeeches = data.speech_totals.reduce((sum, n) => sum + n, 0);
+const ranked = rankBySession(words, data.sessions, index, totalSpeeches, { limit: 60 });
+
+// 前後の会期。会期は番号順＝時系列なので、そのまま隣を指せる
+const prev = data.sessions[index - 1];
+const next = data.sessions[index + 1];
+
+const span = formatSpan(session.from, session.until);
+const description =
+  `第${session.session}回国会（${span}）で、ふだんより多く出た語。` +
+  `会議${formatNumber(session.n_meetings)}件・議員の発言${formatNumber(session.n_speeches)}件から。`;
+---
+
+<Base title={`第${session.session}回国会`} description={description}>
+  <p class="small"><a href="/frequent">← 頻出語の一覧</a></p>
+
+  <h1>第{session.session}回国会</h1>
+
+  <section class="figures">
+    <dl>
+      <div><dt>会期</dt><dd class="span">{span}</dd></div>
+      <div><dt>会議</dt><dd>{formatNumber(session.n_meetings)}件</dd></div>
+      <div><dt>議員の発言</dt><dd>{formatNumber(session.n_speeches)}件</dd></div>
+    </dl>
+  </section>
+
+  <section>
+    <h2>この会期でいつもより多く出た語</h2>
+    <p class="small muted">
+      倍率は<strong>この会期での出現率 ÷ 全期間の出現率</strong>です。
+      1.0 なら「いつもどおり」。<strong>件数の多い順ではありません</strong>
+      —— それだと「日本」「国民」のような、どの会期でも多い語が並びます。
+      この会期で30件に満たない語は出していません。
+    </p>
+
+    {ranked.length === 0 ? (
+      <p>並べられる語がありませんでした。</p>
+    ) : (
+      <ul class="word-grid">
+        {ranked.map((r) => (
+          <li>
+            <a href={r.topicId ? `/topic/${r.topicId}` : `/word/${encodeURIComponent(r.term)}`}>
+              <span class="term">{r.term}</span>
+              <span class="count small muted">{r.lift.toFixed(1)}倍・{formatNumber(r.hits)}件</span>
+              {r.topicId && <span class="badge small">争点語</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    )}
+  </section>
+
+  <nav class="prev-next">
+    {prev && <a href={`/session/${prev.session}`}>← 第{prev.session}回国会</a>}
+    {next && <a class="next" href={`/session/${next.session}`}>第{next.session}回国会 →</a>}
+  </nav>
+
+  <p class="small muted note">
+    語の選び方と数え方は<a href="/frequent">頻出語の一覧</a>にあります。
+    <strong>運営が語を選んではいません。</strong>
+    発言の少ない会期（首班指名だけの特別国会など）はページを作っていません。
+  </p>
+
+  <style>
+    .figures dl { display: flex; flex-wrap: wrap; gap: 1rem 2.5rem; margin: 0.5rem 0 0; }
+    .figures dt { font-size: 0.8rem; color: var(--muted); }
+    .figures dd { margin: 0; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+    .figures dd.span { font-size: 1rem; }
+
+    .word-grid {
+      list-style: none; padding: 0; margin: 0.5rem 0;
+      display: grid; gap: 0.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+    }
+    .word-grid a {
+      display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
+      padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 6px;
+      background: var(--card); text-decoration: none; color: var(--fg);
+    }
+    .word-grid a:hover { border-color: var(--accent); }
+    .term { font-weight: 600; }
+    .badge { border: 1px solid var(--line); border-radius: 999px; padding: 0 0.4rem; color: var(--muted); }
+
+    .prev-next { display: flex; justify-content: space-between; gap: 1rem; margin: 2rem 0 0; }
+    .prev-next .next { margin-left: auto; }
+    .note { margin-top: 2rem; }
+  </style>
+</Base>

@@ -108,7 +108,7 @@ Node 24 / Astro。
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
-npm run build    # dist/ に 1,691ページ・22MB
+npm run build    # dist/ に 1,702ページ・22MB
 npm run check    # 型検査 + テスト100件
 ```
 

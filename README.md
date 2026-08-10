@@ -89,7 +89,7 @@ python scripts/build_db.py --split-by-year --page-size 8192
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321（data/dist を /db で配る。コピーはしない）
-npm run build    # dist/ に 1,691ページ
+npm run build    # dist/ に 1,702ページ
 npm run check    # 型検査 + テスト100件
 ```
 

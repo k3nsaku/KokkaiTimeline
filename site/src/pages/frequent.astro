@@ -82,6 +82,24 @@ const description =
 
   <div id="by-session" hidden></div>
 
+  {/* セレクタはJSで作るので、JSが無い環境ではここが会期への唯一の入口になる。
+      検索エンジンに渡るのもこちら（セレクタの中身はHTMLに出ない） */}
+  <section>
+    <h2>会期ごとに見る</h2>
+    <p class="small muted">
+      その会期で<strong>いつもより多く出た語</strong>を、会期の概要と一緒に出します。
+    </p>
+    <ul class="chips">
+      {[...data.sessions].reverse().map((s) => (
+        <li>
+          <a class="chip" href={`/session/${s.session}`}>
+            第{s.session}回国会<span class="muted small"> {s.from.slice(0, 4)}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </section>
+
   <section class="how">
     <h2>どうやって選んでいるか</h2>
     <ul class="small muted">

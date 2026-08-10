@@ -104,6 +104,7 @@ export interface FrequentSession {
   until: string;
   /** その会期の議員発言数。**割るのはこれ** */
   n_speeches: number;
+  n_meetings: number;
 }
 
 export interface Frequent {
