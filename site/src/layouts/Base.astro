@@ -276,9 +276,8 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
         font-size: 0.8rem; color: var(--muted);
       }
       .chart-legend li { display: flex; align-items: center; gap: 0.35rem; }
-      .chart-legend .swatch {
-        width: 0.7rem; height: 0.7rem; border-radius: 2px; flex: none;
-      }
+      /* ★見本は SVG。`style="background:…"` は CSP に消される（chart.ts の注記） */
+      .chart-legend .swatch { width: 0.7rem; height: 0.7rem; flex: none; display: block; }
 
       /* 前後の抜粋。**本文と同じ見た目にしない** — どちらが全文か分からなくなる */
       .speech-context { opacity: 0.85; }

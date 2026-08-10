@@ -7,7 +7,14 @@
 #   `astro.config.mjs` の `inlineStylesheets: "never"` と
 #   `vite.build.assetsInlineLimit: 0` がそれを防いでいる。**片方だけ戻さないこと。**
 #
-# 検証のしかた: dist を CSP 付きで配って全ページ型を触る
+# ★★ `style-src 'self'` は**インラインの style 属性も止める**。
+#   `style="width: 58.7%"` は無視され、**エラーも出ずに見た目だけ間違う**。
+#   実際、公開時から `/topic/<id>` の会派バーが20本とも満杯で描かれていた
+#   （2026-08-10 に発見・修正）。色や幅は **SVG の fill / width 属性**で出すこと。
+#   詳細は docs/PITFALLS.md「インラインの style 属性は CSP に消される」。
+#
+# 検証のしかた: **dev サーバも astro preview も _headers を適用しない。**
+#   dist を CSP 付きで配って全ページ型を触ること
 #   （検索・議員・争点語・発言・免責事項）。Console に違反が出ないこと。
 
 /*

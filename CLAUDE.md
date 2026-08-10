@@ -44,6 +44,8 @@
   並べるのは burst。`frequent.json` は全年DBの作り直しが要らない
 - **`build_words.py` を日次で回さない**（過去年の検索が黙って0件になる）
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
+- **インラインの `style` 属性を書かない**（CSP に黙って消され、見た目だけ静かに壊れる。
+  公開時から会派バーが全部同じ長さだった）。色や幅は SVG の `fill` / `width` で出す
 
 ## 運営が定期的にやること
 
@@ -114,7 +116,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,702ページ・22MB
-npm run check    # 型検査 + テスト110件
+npm run check    # 型検査 + テスト112件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`

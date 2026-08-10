@@ -97,6 +97,21 @@ describe("stackedMonthlyChart", () => {
     assert.ok(svg.includes("予算委員会") && svg.includes("その他"));
   });
 
+  it("★インラインの style 属性を出さない（CSP に黙って消される）", () => {
+    // `style-src 'self'`（'unsafe-inline' 無し）なので style 属性は無視される。
+    // エラーも出ず色だけ消えるので、**ここで固定する**（site/public/_headers）
+    const svg = stackedMonthlyChart(["2021-01", "2021-02"], [
+      s("A", [1, 2], "var(--cat-1)"),
+      s("B", [3, 0], "var(--cat-2)"),
+    ], "x");
+    assert.equal(/\sstyle\s*=/.test(svg), false, "style 属性が混ざっている");
+  });
+
+  it("凡例の色は fill 属性で塗る", () => {
+    const svg = stackedMonthlyChart(["2021-01"], [s("A", [1], "var(--cat-5)")], "x");
+    assert.match(svg, /class="swatch"[^>]*>\s*<rect[^>]*fill="var\(--cat-5\)"/);
+  });
+
   it("値が足りない月は0として扱う（落ちない）", () => {
     const svg = stackedMonthlyChart(MONTHS, [s("A", [3], "var(--cat-1)")], "x");
     assert.equal(rects(svg).length, 1);

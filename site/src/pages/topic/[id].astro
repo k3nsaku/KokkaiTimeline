@@ -76,11 +76,16 @@ const description =
               <td class="num">{formatNumber(r.hits)}</td>
               <td class="num muted">{formatNumber(r.total)}</td>
               <td class="num">{r.rate.toFixed(1)}</td>
+              {/* ★ 幅は **SVG の width 属性**で出す。`style="width:…%"` は
+                  CSP（`style-src 'self'`）に黙って無視され、**全部同じ長さになる**。
+                  実際に公開時からそうなっていた（site/public/_headers）。
+                  viewBox を 0 0 100 6 にしてあるので width がそのまま％になる */}
               <td class="barcell">
-                <span
-                  class="minibar"
-                  style={`width: ${byKaiha[0].rate ? (100 * r.rate / byKaiha[0].rate).toFixed(1) : 0}%`}
-                ></span>
+                <svg class="minibar" viewBox="0 0 100 6" preserveAspectRatio="none"
+                     role="img" aria-label={`${r.rate.toFixed(1)}（1,000発言あたり）`}>
+                  <rect height="6" rx="2"
+                        width={byKaiha[0].rate ? (100 * r.rate / byKaiha[0].rate).toFixed(1) : 0} />
+                </svg>
               </td>
             </tr>
           ))}
@@ -170,9 +175,7 @@ const description =
       background: var(--card); border-radius: 0 6px 6px 0;
     }
     .barcell { width: 30%; }
-    .minibar {
-      display: block; height: 0.6rem; background: var(--accent);
-      opacity: 0.7; border-radius: 2px; min-width: 1px;
-    }
+    .minibar { display: block; width: 100%; height: 0.6rem; }
+    .minibar rect { fill: var(--accent); opacity: 0.7; }
   </style>
 </Base>

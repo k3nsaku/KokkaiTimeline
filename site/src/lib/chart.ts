@@ -153,9 +153,16 @@ export function stackedMonthlyChart(
       `<text x="${PAD_L - 6}" y="${(yy + 4).toFixed(1)}" class="tick right">${Math.round(v)}</text>`;
   }).join("");
 
-  // ★ 系列が2つ以上あるなら凡例は必ず出す。色だけで区別させない
+  // ★ 系列が2つ以上あるなら凡例は必ず出す。色だけで区別させない。
+  //
+  // ★★ 色は **SVG の fill 属性**で塗る。`style="background:…"` にしてはいけない。
+  //    CSP が `style-src 'self'`（`'unsafe-inline'` 無し）なので、**インラインの
+  //    style 属性は黙って無視される**。エラーも出ず、色だけが消える。
+  //    実際、凡例をこれで作って色無しの見本が並んだ（`site/public/_headers`）。
   const legend = series.map((s) =>
-    `<li><span class="swatch" style="background:${s.color}"></span>${escape(s.label)}</li>`).join("");
+    `<li><svg class="swatch" viewBox="0 0 10 10" aria-hidden="true">` +
+    `<rect width="10" height="10" rx="2" fill="${s.color}" /></svg>` +
+    `${escape(s.label)}</li>`).join("");
 
   return `
 <figure class="chart">
