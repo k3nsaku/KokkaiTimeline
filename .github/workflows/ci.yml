@@ -47,7 +47,7 @@ jobs:
         working-directory: site
 
       - name: 型検査とテスト
-        # astro check + node --test（テスト100件）。
+        # astro check + node --test（テスト110件）。
         # データファイルは読まない（`site-data.ts` の読み込みはページの
         # 事前生成のときだけ走る）ので、生成物が無くても通る
         run: npm run check

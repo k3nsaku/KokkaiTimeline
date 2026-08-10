@@ -119,6 +119,25 @@ export interface Frequent {
   words: FrequentWord[];
 }
 
+/**
+ * 議員ごとの発言数の推移（`scripts/build_activity.py`）。
+ *
+ * ★ 出すのは**数だけ**で、中身には触れない。並べるのも**その議員のページの中**だけで、
+ *   議員をまたいだ順位は作らない（docs/SCOPE.md）。
+ * ★ `months` は**全期間で固定**（その議員の発言がある月だけに詰めない）。
+ *   いつ発言が始まり、いつ止まったかが見えるのはそのため。
+ */
+export interface Activity {
+  months: string[];
+  params: { top_committees: number };
+  politicians: Record<string, {
+    /** 発言数の多い順。最後が「その他」のことがある */
+    committees: string[];
+    /** `committees` と同じ並び。`[月の添字, 件数]` の疎な形 */
+    series: [number, number][][];
+  }>;
+}
+
 export interface Manifest {
   years: number[];
   databases: { year: number; file: string; size: number }[];
@@ -138,6 +157,7 @@ let cached: {
   manifest?: Manifest;
   words?: Words;
   frequent?: Frequent;
+  activity?: Activity;
 } = {};
 
 export function politicians(): Politician[] {
@@ -158,6 +178,18 @@ export function trending(): Trending {
 export function frequent(): Frequent {
   cached.frequent ??= readJson<Frequent>("dist", "frequent.json");
   return cached.frequent;
+}
+
+export function activity(): Activity {
+  cached.activity ??= readJson<Activity>("dist", "politician_activity.json");
+  return cached.activity;
+}
+
+/** 疎な `[月の添字, 件数]` を、`months` と同じ長さの密な配列に戻す。 */
+export function densify(sparse: [number, number][], length: number): number[] {
+  const dense = new Array<number>(length).fill(0);
+  for (const [i, n] of sparse) dense[i] = n;
+  return dense;
 }
 
 export function manifest(): Manifest {

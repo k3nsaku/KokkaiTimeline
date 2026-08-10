@@ -88,6 +88,84 @@ export function monthlyChart(points: SeriesPoint[], label: string): string {
 </figure>`;
 }
 
+export interface StackedSeries {
+  label: string;
+  /** `months` と同じ長さ。足りない分は0として扱う */
+  values: number[];
+  /** CSS の色（`var(--cat-1)` など）。**系列と一緒に渡す** */
+  color: string;
+}
+
+/**
+ * 積み上げ棒グラフ。月ごとの内訳を出す。
+ *
+ * ★ **色は呼ぶ側が決めて渡す。** ここで順番に振ると、絞り込みで系列が減ったときに
+ *   生き残りが塗り替わる（同じ委員会が別の色になる）。
+ *
+ * ★ **これは率ではなく件数のグラフ。** `monthlyChart()` と違って分母で割らない。
+ *   割るのは「その語が話題になった度合い」を見るときで、こちらは
+ *   「いつ何件発言したか」そのものを出す。**呼ぶ側が意味を取り違えないこと。**
+ *
+ * 積み上げの区切りには2pxの隙間を空ける（隣り合う色の境目が溶けないように）。
+ */
+export function stackedMonthlyChart(
+  months: string[], series: StackedSeries[], label: string,
+): string {
+  if (!months.length || !series.length) return "";
+
+  const totals = months.map((_, i) =>
+    series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0));
+  const max = Math.max(...totals, 1);
+
+  const innerW = W - PAD_L - PAD_R, innerH = H - PAD_T - PAD_B;
+  const bandW = innerW / months.length;
+  const barW = Math.max(1.5, bandW * 0.72);
+  const h = (v: number) => (v / max) * innerH;
+
+  const bars = months.map((month, i) => {
+    const x = PAD_L + i * bandW + (bandW - barW) / 2;
+    let bottom = PAD_T + innerH;
+    return series.map((s) => {
+      const v = s.values[i] ?? 0;
+      if (!v) return "";
+      const height = h(v);
+      const top = bottom - height;
+      bottom = top;
+      // 2px の隙間。積み上げの境目が溶けると内訳が読めなくなる
+      const drawn = Math.max(0.5, height - 2);
+      return `<rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" ` +
+        `height="${drawn.toFixed(1)}" fill="${s.color}">` +
+        `<title>${escape(month)} ${escape(s.label)}: ${v}件</title></rect>`;
+    }).join("");
+  }).join("");
+
+  const yearTicks = months.map((m, i) => ({ m, i }))
+    .filter(({ m, i }) => i === 0 || m.slice(0, 4) !== months[i - 1].slice(0, 4))
+    .map(({ m, i }) => {
+      const x = PAD_L + i * bandW;
+      return `<line x1="${x.toFixed(1)}" y1="${PAD_T}" x2="${x.toFixed(1)}" y2="${PAD_T + innerH}" class="grid" />` +
+        `<text x="${(x + 2).toFixed(1)}" y="${H - 8}" class="tick">${m.slice(0, 4)}</text>`;
+    }).join("");
+
+  const yTicks = [0, max / 2, max].map((v) => {
+    const yy = PAD_T + innerH - h(v);
+    return `<line x1="${PAD_L}" y1="${yy.toFixed(1)}" x2="${W - PAD_R}" y2="${yy.toFixed(1)}" class="grid" />` +
+      `<text x="${PAD_L - 6}" y="${(yy + 4).toFixed(1)}" class="tick right">${Math.round(v)}</text>`;
+  }).join("");
+
+  // ★ 系列が2つ以上あるなら凡例は必ず出す。色だけで区別させない
+  const legend = series.map((s) =>
+    `<li><span class="swatch" style="background:${s.color}"></span>${escape(s.label)}</li>`).join("");
+
+  return `
+<figure class="chart">
+  <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escape(label)}" preserveAspectRatio="none">
+    ${yTicks}${yearTicks}${bars}
+  </svg>
+  <ul class="chart-legend">${legend}</ul>
+</figure>`;
+}
+
 export interface KaihaRate {
   kaiha: string;
   hits: number;

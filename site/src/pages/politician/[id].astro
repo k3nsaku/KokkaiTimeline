@@ -11,8 +11,16 @@
  *   27リクエスト → 509リクエストになる（`docs/DECISIONS.md`）。
  */
 import Base from "../../layouts/Base.astro";
-import { politicians, manifest, latestAffiliation } from "../../lib/site-data";
+import { politicians, manifest, latestAffiliation, activity, densify } from "../../lib/site-data";
+import { stackedMonthlyChart, type StackedSeries } from "../../lib/chart";
 import { formatNumber } from "../../lib/format";
+
+/** 委員会に振る色。**並び順が意味を持つ**（Base.astro の注記）。
+ *  「その他」は identity ではないので色相を与えない。 */
+const CAT = ["var(--cat-1)", "var(--cat-2)", "var(--cat-3)", "var(--cat-4)",
+             "var(--cat-5)", "var(--cat-6)", "var(--cat-7)"];
+const catColor = (label: string, i: number) =>
+  label === "その他" ? "var(--cat-other)" : CAT[i % CAT.length];
 
 export function getStaticPaths() {
   return politicians().map((p) => ({ params: { id: String(p.id) }, props: { person: p } }));
@@ -30,6 +38,19 @@ const activeYears = years.filter((y) => {
 });
 
 const affiliations = [...person.affiliations].sort((a, b) => b.start_date.localeCompare(a.start_date));
+
+// 発言数の推移。**横軸はサイトの全期間**（この議員の発言がある月に詰めない）。
+// いつ始まり、いつ止まったかが見えるのはそのため（build_activity.py の注記）
+const act = activity();
+const mine = act.politicians[String(person.id)];
+const series: StackedSeries[] = (mine?.committees ?? []).map((label, i) => ({
+  label,
+  values: densify(mine!.series[i] ?? [], act.months.length),
+  color: catColor(label, i),
+}));
+const chart = stackedMonthlyChart(act.months, series, `${person.name} の月ごとの発言数（委員会別）`);
+// 年の選択肢。**在籍年ではなくサイトの全期間**から作る
+const allYears = [...new Set(act.months.map((m) => m.slice(0, 4)))];
 
 const description =
   `${person.name}（${current?.kaiha ?? "会派不明"}）の国会での発言 ${formatNumber(person.n_speeches)}件を` +
@@ -82,6 +103,46 @@ const description =
       </p>
     </section>
 
+    {series.length > 0 && (
+      <section id="activity">
+        <h2>発言数の推移</h2>
+        <p class="small muted">
+          <strong>発言の中身には触れていません。数だけです。</strong>
+          発言数は<strong>委員会の所属と役職で決まる</strong>もので、
+          活動量や熱心さの指標ではありません。
+          大臣や委員長になると答弁・議事整理で数が動きますし、
+          所属していない委員会の発言は当然ゼロになります。
+          <strong>ほかの議員と比べるためのものではありません。</strong>
+        </p>
+
+        <p class="period-row">
+          <label class="sr-only" for="from-year">開始年</label>
+          <select id="from-year">
+            {allYears.map((y) => <option value={y}>{y}年</option>)}
+          </select>
+          〜
+          <label class="sr-only" for="until-year">終了年</label>
+          <select id="until-year">
+            {allYears.map((y) => <option value={y} selected={y === allYears.at(-1)}>{y}年</option>)}
+          </select>
+          <span id="period-total" class="small muted"></span>
+        </p>
+
+        <div id="chart"><Fragment set:html={chart} /></div>
+
+        {/* ★表は必須。light では一部の色が面とのコントラスト3:1未満で、
+            「色だけに頼らせない」ことを条件に配色が通っている（Base.astro） */}
+        <div class="scroll-x">
+          <table id="activity-table">
+            <thead>
+              <tr><th>委員会</th><th class="num">発言数</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    )}
+
     <section>
       <h2>発言</h2>
       <p class="filter-row">
@@ -103,6 +164,73 @@ const description =
     id="site-data"
     set:html={JSON.stringify({ id: person.id, years: activeYears })}
   />
+
+  {/* 発言数の推移。この議員のぶんだけ（全期間64月 × 最大8系列で数KB）。
+      DBは引かない */}
+  {series.length > 0 && (
+    <script
+      is:inline
+      type="application/json"
+      id="activity-data"
+      set:html={JSON.stringify({
+        months: act.months,
+        series: series.map((s) => ({ label: s.label, values: s.values, color: s.color })),
+        name: person.name,
+      })}
+    />
+  )}
+
+  <script>
+    // 期間の絞り込み。**ビルド時と同じ関数で描き直す**（2つ書くとずれる）
+    import { stackedMonthlyChart, type StackedSeries } from "../../lib/chart";
+    import { escapeHtml, formatNumber } from "../../lib/format";
+
+    const raw = document.getElementById("activity-data");
+    if (raw) {
+      const { months, series, name } = JSON.parse(raw.textContent!) as {
+        months: string[]; series: StackedSeries[]; name: string;
+      };
+      const fromSel = document.getElementById("from-year") as HTMLSelectElement;
+      const untilSel = document.getElementById("until-year") as HTMLSelectElement;
+      const chartEl = document.getElementById("chart")!;
+      const tbody = document.querySelector("#activity-table tbody")!;
+      const totalEl = document.getElementById("period-total")!;
+
+      function apply() {
+        // 開始が終了を追い越したら、押されたほうに合わせる
+        if (fromSel.value > untilSel.value) untilSel.value = fromSel.value;
+        const keep = months
+          .map((m, i) => ({ m, i }))
+          .filter(({ m }) => m.slice(0, 4) >= fromSel.value && m.slice(0, 4) <= untilSel.value);
+
+        const shown = keep.map((k) => k.m);
+        // ★ 色は系列に付いたまま持ち回る。件数0で落ちた委員会があっても
+        //   生き残りの色は変わらない（chart.ts の注記）
+        const sliced = series
+          .map((s) => ({ ...s, values: keep.map(({ i }) => s.values[i] ?? 0) }))
+          .filter((s) => s.values.some((v) => v > 0));
+
+        chartEl.innerHTML = shown.length && sliced.length
+          ? stackedMonthlyChart(shown, sliced, `${name} の月ごとの発言数（委員会別）`)
+          : `<p class="status">この期間の発言はありません。</p>`;
+
+        const rows = sliced
+          .map((s) => ({ label: s.label, n: s.values.reduce((a, b) => a + b, 0) }))
+          .sort((a, b) => b.n - a.n);
+        const total = rows.reduce((sum, r) => sum + r.n, 0);
+        tbody.innerHTML = rows.map((r) => `
+          <tr><td>${escapeHtml(r.label)}</td><td class="num">${formatNumber(r.n)}</td></tr>`).join("")
+          + (rows.length > 1
+            ? `<tr><td><strong>合計</strong></td><td class="num"><strong>${formatNumber(total)}</strong></td></tr>`
+            : "");
+        totalEl.textContent = `${formatNumber(total)}件`;
+      }
+
+      fromSel.addEventListener("change", apply);
+      untilSel.addEventListener("change", apply);
+      apply();
+    }
+  </script>
 
   <script>
     import { politicianSpeeches, search, resolveQuery, splitTerms, canonicalQuery,
@@ -212,6 +340,9 @@ const description =
 
     .filter-row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
     #within { flex: 1 1 18rem; }
+
+    .period-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
+    #activity-table { max-width: 32rem; }
 
     .sr-only {
       position: absolute; width: 1px; height: 1px; overflow: hidden;

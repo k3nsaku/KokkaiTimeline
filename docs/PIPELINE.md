@@ -15,6 +15,7 @@
 | 4 | 集計の材料になる単一DBを作り直す（`--no-fts`） | 3〜5分 |
 | 5 | 議員マスタ・争点語の集計・週次トレンド | 5〜15分 |
 | 5b | 頻出語レイヤー（`build_frequent.py`） | 約1分 |
+| 5c | 議員ごとの発言数の推移（`build_activity.py`） | 数秒 |
 | 6 | **当年**（1月は前年も）の配信用DBを作り直す | 30〜60秒 |
 | 7 | 年DBと目録を R2 へ | 1〜2分 |
 | 8 | サイトをビルドして Pages へ | 1〜2分 |
@@ -47,7 +48,7 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 **日次更新は `npm run build` しか回さない**（テストを通さずに本番へ配る）。
 その穴を塞ぐのが CI で、`site/**` を触った push と PR で `npm run check`
-（`astro check` + テスト100件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
+（`astro check` + テスト110件）を回す。**`src/lib/query.ts` を壊す変更はここで止める。**
 
 - **`npm run build` は回さない。** ビルドには `data/politicians.json` と
   `data/dist/topics.json` が要るが、どちらも生成物でリポジトリに入っていない

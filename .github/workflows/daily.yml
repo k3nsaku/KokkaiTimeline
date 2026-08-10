@@ -141,6 +141,13 @@ jobs:
         # （検索は既存の word_hit と FTS に流す）。実測で走査は約1分
         run: python scripts/build_frequent.py
 
+      - name: 議員ごとの発言数の推移
+        # data/dist/politician_activity.json（0.5MB・実測1秒）。
+        # ★ 手順4で作った単一DBに politician_id が入っていることが前提
+        #   （手順1で politicians.json を戻してから build_db を回しているので入る）。
+        #   入っていなければスクリプトがその場で落ちる（黙って空を作らない）
+        run: python scripts/build_activity.py
+
       - name: 配信用の年DBを作り直す
         run: |
           set -euo pipefail
