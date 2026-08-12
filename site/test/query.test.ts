@@ -17,7 +17,7 @@ import { describe, it } from "node:test";
 import {
   canonicalQuery, countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
   wordPlan, wordProbeKeys, periodOf, periodOfIssueId, periodOfSpeechId,
-  periodsInYearRange, yearsOfPeriods,
+  periodsInYearRange, unsearchableTerms, yearsOfPeriods,
   type QueryPlan, type SearchOptions,
 } from "../src/lib/query.ts";
 
@@ -492,6 +492,52 @@ describe("wordPlan（どの索引で引くかの判断）", () => {
   it("空の検索は当たりようのない起点にする（MATCH '' は構文エラーになる）", () => {
     assert.deepEqual(wordPlan(splitTerms("   "), counts),
                      { mode: "word", driver: "", filters: [] });
+  });
+});
+
+/**
+ * **仕様上0件になる語**の判定。画面で「引けません」と出す根拠になるので、
+ * ここが緩いと**引ける語まで引けないと言ってしまう**。
+ *
+ * 索引は漢字・カタカナ・全角英数の**連続の中**しか2文字に切らない
+ * （`build_db.py` の `WORD_RUN_PATTERN`）。
+ */
+describe("unsearchableTerms（引きようがない語）", () => {
+  const of = (q: string) => unsearchableTerms(splitTerms(q));
+
+  it("同じ文字種の2文字は引ける（語の途中でもよい）", () => {
+    assert.deepEqual(of("治体"), []);      // 自治体の中。語として自立していなくても引ける
+    assert.deepEqual(of("憲法"), []);
+    assert.deepEqual(of("コロ"), []);      // カタカナ同士
+    assert.deepEqual(of("AI"), []);        // 全角化されて `ＡＩ`
+    assert.deepEqual(of("G7"), []);        // 全角英字＋全角数字は同じクラス
+  });
+
+  it("文字種をまたぐ2文字は引けない", () => {
+    assert.deepEqual(of("踏ま"), ["踏ま"]);   // 漢字＋ひらがな
+    assert.deepEqual(of("お金"), ["お金"]);   // ひらがな＋漢字
+    assert.deepEqual(of("ため"), ["ため"]);   // ひらがなはどのクラスにも入らない
+  });
+
+  it("1文字は引けない（索引の項はちょうど2文字）", () => {
+    assert.deepEqual(of("米"), ["米"]);
+    assert.deepEqual(of("Ａ"), ["Ａ"]);
+  });
+
+  it("3文字以上は文字種をまたいでも引ける（FTS が拾う）", () => {
+    assert.deepEqual(of("踏まえ"), []);
+    assert.deepEqual(of("受け止め"), []);
+    assert.deepEqual(of("ＳＤＧｓ"), []);
+  });
+
+  it("複数語なら引けないものだけを返す（打たれたままの形で）", () => {
+    assert.deepEqual(of("安全保障 踏ま"), ["踏ま"]);
+    assert.deepEqual(of("踏ま お金"), ["踏ま", "お金"]);
+    assert.deepEqual(of("安全保障 予算"), []);
+  });
+
+  it("空の入力では何も返さない（「引けません」を出さない）", () => {
+    assert.deepEqual(of("   "), []);
   });
 });
 

@@ -152,11 +152,44 @@ function phraseAnd(words: string[]): string {
 }
 
 /**
- * 語彙（`word` テーブル）に有るか問い合わせるキー。**2文字以下の語だけ**を畳んで返す。
- * 空なら全部3文字以上＝FTS で引けるので、語彙を引く必要そのものが無い。
+ * 索引（`word` テーブル）に有るか問い合わせるキー。**2文字以下の語だけ**を畳んで返す。
+ * 空なら全部3文字以上＝FTS で引けるので、索引を引く必要そのものが無い。
  */
 export function wordProbeKeys(terms: string[]): string[] {
   return terms.filter((t) => t.length < 3).map(toWordKey);
+}
+
+// 2文字語の索引が見ている文字クラス。**`build_db.py` の `WORD_RUN_PATTERN` と同じ区切り。**
+// 索引は「同じクラスの連続」の中を2文字ずつ切るので、**クラスをまたぐ2文字は入らない**。
+const CHAR_CLASSES = [/^[一-鿿々]$/, /^[ァ-ヴー]$/, /^[Ａ-Ｚａ-ｚ０-９]$/];
+
+function classOf(ch: string): number {
+  return CHAR_CLASSES.findIndex((re) => re.test(ch));
+}
+
+/**
+ * **仕様上どうやっても0件になる語**を返す（打たれたままの形で）。
+ *
+ * 索引に「入っていない」ではなく「入りようがない」ものだけを挙げる。DBを引かずに
+ * 判定できるので、**問い合わせる前に画面で説明できる**。3文字以上は FTS が
+ * 文字種を問わず拾うので、ここに来るのは2文字以下だけ:
+ *
+ *   - **1文字**（索引の項はちょうど2文字なので当たらない）
+ *   - **文字種をまたぐ2文字**（`踏ま` `お金`）。索引は漢字・カタカナ・全角英数の
+ *     **連続の中**しか切らないため。`治体`（自治体の中）が引けるのに `踏ま` が
+ *     引けないのはこれで、語の区切りとは関係がない
+ *   - **ひらがなだけの2文字**（`ため`）。ひらがなはどのクラスにも入っていない
+ *
+ * ここを緩めると索引が急に太る（実測: 文字種のまたぎを許すだけで**2.9倍**・
+ * 最大ファイルが 377MB → 約487MB で 512MB の上限に張り付く）。`docs/DECISIONS.md`。
+ */
+export function unsearchableTerms(terms: string[]): string[] {
+  return terms.filter((t) => {
+    if (t.length >= 3) return false;
+    if (t.length === 1) return true;
+    const first = classOf(t[0]);
+    return first < 0 || first !== classOf(t[1]);
+  });
 }
 
 /**

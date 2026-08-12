@@ -51,6 +51,14 @@ const people = politicians().map((p) => {
       <button type="submit" class="primary">検索</button>
     </div>
 
+    {/* 引ける範囲の制限は**打つ前に**見えているのが望ましい。
+        実際に引けない語を打たれたときは、結果欄でもう一度くわしく出す（run()）。 */}
+    <p class="small muted">
+      2文字以下の語は専用の索引で引くため、<strong>漢字だけ・カタカナだけ・英数字だけ</strong>の
+      2文字（憲法・コロナ・ＡＩ）に限られます。「お金」「踏ま」のように文字種をまたぐ2文字と、
+      1文字だけの検索は引けません。<a href="/about">くわしく</a>
+    </p>
+
     <details class="filters">
       <summary>絞り込み</summary>
       <div class="row">
@@ -111,7 +119,7 @@ const people = politicians().map((p) => {
 
   <script>
     import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
-             periodsInYearRange,
+             periodsInYearRange, unsearchableTerms,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
@@ -316,6 +324,10 @@ const people = politicians().map((p) => {
       userPickedTab = false;
       showPeople(query);
 
+      // **仕様上0件になる語は、DBを引く前に説明する。**
+      // 争点語に一致していれば topic_hit を引けるので、そちらが優先（`ＡＩ` など）
+      const cannot = topic ? [] : unsearchableTerms(splitTerms(query));
+
       if (pushUrl) {
         const p = new URLSearchParams({ q: query, from: fromSelect.value, until: untilSelect.value });
         if (meetingSelect.value) p.set("meeting", meetingSelect.value);
@@ -326,6 +338,8 @@ const people = politicians().map((p) => {
       moreWrap.hidden = true;
       statusEl.textContent = "検索中…";
       const started = performance.now();
+
+      if (cannot.length) { showUnsearchable(cannot); return; }
 
       try {
         // 争点語なら topic_hit（別表記も合算される）。それ以外は語の長さで引き先が決まる。
@@ -347,6 +361,31 @@ const people = politicians().map((p) => {
         statusEl.innerHTML = `<span class="error">検索に失敗しました: ${escapeHtml(String(err))}</span>`;
         console.error(err);
       }
+    }
+
+    /** **仕様上引けない語**を打たれたとき。DBは引かずにここで止める。
+     *
+     *  「索引に無い」ではなく「索引に入りようがない」ものだけがここに来る
+     *  （`unsearchableTerms()`）。**黙って0件にしない**のは、利用者からは
+     *  「その語が国会で使われていない」と区別が付かないため。
+     *  1文字足せば FTS が引けるので、そこまで書く。 */
+    function showUnsearchable(cannot: string[]) {
+      el("count-speeches").textContent = " 0";
+      autoSelectTab(0);
+      statusEl.textContent = "検索できない語です";
+      const words = cannot.map((w) => `「${escapeHtml(w)}」`).join("");
+      results.innerHTML = `
+        <div class="notfound">
+          <p>${words}はこの検索では引けません。</p>
+          <p class="small muted">
+            2文字以下の語は全文検索の索引（3文字未満を作れない）とは別の索引で引いていて、
+            そこに入るのは<strong>漢字だけ・カタカナだけ・英数字だけ</strong>の2文字です。
+            文字種をまたぐ2文字（「お金」「踏ま」）と1文字だけの語は入っていません。
+            <strong>1文字足すと引けます</strong>（例:「踏まえ」）。
+            <a href="/about">このサイトについて</a>
+          </p>
+          ${relatedTopicChips(cannot)}
+        </div>`;
     }
 
     /** 0件のときに出す、その語を含む争点語。**行き止まりにしないための導線。**

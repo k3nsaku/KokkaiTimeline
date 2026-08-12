@@ -235,7 +235,7 @@ const description =
 
   <script>
     import { politicianSpeeches, search, resolveQuery, splitTerms, canonicalQuery,
-             type SearchPage, type QueryPlan } from "../../lib/db";
+             unsearchableTerms, type SearchPage, type QueryPlan } from "../../lib/db";
     import { renderSpeeches } from "../../lib/render";
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
@@ -275,6 +275,20 @@ const description =
       statusEl.textContent = "読み込み中…";
       moreWrap.hidden = true;
       const started = performance.now();
+
+      // **仕様上0件になる語は引かずに説明する**（検索ページと同じ判定）。
+      // 「その議員が言っていない」と区別が付かないまま0件を出さない
+      const cannot = unsearchableTerms(splitTerms(term));
+      if (cannot.length) {
+        results.innerHTML = "";
+        moreWrap.hidden = true;
+        statusEl.innerHTML =
+          `「${escapeHtml(cannot.join("・"))}」はこの検索では引けません`
+          + `<span class="small muted">（2文字以下は漢字・カタカナ・英数字だけの2文字に限られます。`
+          + `1文字足すと引けます）</span>`;
+        return;
+      }
+
       try {
         if (term && !append) {
           const resolved = await resolveQuery(term, periods);

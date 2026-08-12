@@ -22,7 +22,8 @@ import {
 
 export {
   canonicalQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
-  periodOf, periodOfSpeechId, periodsInYearRange, yearOfPeriod, yearsOfPeriods, yearOfSpeechId,
+  periodOf, periodOfSpeechId, periodsInYearRange, unsearchableTerms,
+  yearOfPeriod, yearsOfPeriods, yearOfSpeechId,
   type PeriodRule, type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
 
