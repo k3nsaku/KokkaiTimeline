@@ -13,7 +13,7 @@ NDL は「語を入れたら発言が出る」まで。**語を並べて推移�
 ## 数え方（★ ここを間違えると数字が合わない）
 
 **選定は「自立した run」、集計は「部分文字列の発言数」。**
-`build_words.py` が語彙の選定と索引の作成で数え方を変えているのと同じ理由:
+`build_db.py` の2文字語索引が「拾うのは部分文字列」なのと同じ理由:
 
 - 選定を部分文字列にすると**断片**が入る（実測: `国務大`←国務大臣、`御異議`）
 - 集計を run 単位にすると**検索結果と数が合わない**。検索は `word_hit` も FTS も
@@ -63,7 +63,6 @@ from build_topics import STOPWORDS, make_word_filter
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "data" / "kokkai.db"
-WORDS_PATH = ROOT / "data" / "words.json"
 TOPICS_PATH = ROOT / "data" / "topics.json"
 DENYLIST_PATH = ROOT / "data" / "topic_denylist.json"
 DIST_DIR = ROOT / "data" / "dist"
@@ -91,7 +90,7 @@ QUANTITY = re.compile(r"^[一二三四五六七八九十百千万零〇元].*[�
 
 
 def fold(run: str) -> str:
-    """全角ラテンの並びだけ大文字に畳む（`build_words.py` の `fold()` と同じ）。"""
+    """全角ラテンの並びだけ大文字に畳む（`build_db.py` の `fold_word_run()` と同じ）。"""
     return run.translate(LATIN_FOLD) if run[0] > "鿿" else run
 
 
@@ -108,12 +107,12 @@ def latin_fragments(standalone_df: dict[str, int], df_total: Counter[str],
                     ratio: float) -> set[str]:
     """2文字の全角ラテンのうち、**長い略語の一部でしかないもの**。
 
-    `words.json` は `ＡＩ` `ＤＸ` `Ｇ７` のために2文字の全角ラテンを語彙に入れている
+    2文字の全角ラテンは `ＡＩ` `ＤＸ` `Ｇ７` のために拾っている
     （3文字未満は FTS で原理的に引けないため）。その副作用で、`ＯＴＣ` から `ＴＣ`、
     `ＪＢＩＣ` から `ＢＩ` のような**略語の断片**が一覧に出る。
 
-    見分けるのに使えるものが既にある: `words.json` の件数は**自立して出てくる発言数**、
-    ここで数えたのは**部分文字列の発言数**。`ＡＩ` は 5,394 / 5,412 でほぼ一致するが、
+    見分けるのに使えるものが既にある: `build_pool()` が数えたのは**自立して出てくる
+    発言数**、ここで数えたのは**部分文字列の発言数**。`ＡＩ` は 5,394 / 5,412 でほぼ一致するが、
     断片は自立してほとんど出てこないので比が小さくなる。
     """
     return {term for term in df_total
@@ -121,32 +120,36 @@ def latin_fragments(standalone_df: dict[str, int], df_total: Counter[str],
             and standalone_df.get(term, 0) / df_total[term] < ratio}
 
 
-def build_pool(con: sqlite3.Connection, words_path: Path,
-               min_standalone: int) -> tuple[set[str], dict[str, int]]:
+def build_pool(con: sqlite3.Connection, min_standalone: int,
+               min_standalone2: int) -> tuple[set[str], dict[str, int]]:
     """候補プール。**自立して出てくる語だけ**を入れる。
 
-    2文字は `data/words.json` をそのまま使う。**別に作らないこと。**
-    年DBの `word` 索引はこのファイルから作られているので、ここで独自に選ぶと
-    「一覧には出るのに検索できない語」ができる。
+    2〜4文字を1回の走査で数える。**選定は「自立した run」、集計は「部分文字列」**
+    という数え方の違いは冒頭の注記のとおりで、ここは選定側。
 
-    3〜4文字は走査して拾う（`words.json` は2文字しか持っていない）。
+    かつて2文字だけ `data/words.json`（検索の語彙）から採っていたのは、
+    「一覧に出るのに検索できない語」を作らないためだった。**2文字語の索引が
+    全bigramになり、本文に出てくる2文字は全部引けるようになったので、この制約は
+    無くなった**（`scripts/build_db.py` の `build_word_index`）。
+
+    **2文字の下限は3〜4文字と別に持つ**（既定 5 / 50）。以前の `words.json` が
+    `--min-df 5` で作られており、そこを揃えないと一覧に載る2文字語が黙って減る。
+    定型語（委員・大臣・質問…）は `build_topics.STOPWORDS` が落とすので、
+    ここで別の除外リストを持つ必要はない。
+
     プールが大きくても次の走査の費用は変わらない（本文の長さで決まる）。
+    件数（自立して出てくる発言数）も返す。2文字の略語の断片を見分けるのに使う。
     """
-    if not words_path.exists():
-        raise SystemExit(f"{words_path} が無い。先に `python scripts/build_words.py` を実行すること")
-    # 件数（自立して出てくる発言数）も返す。2文字の略語の断片を見分けるのに使う
-    standalone_df: dict[str, int] = json.loads(words_path.read_text(encoding="utf-8"))["words"]
-    pool = set(standalone_df)
-    n2 = len(pool)
-
     standalone: Counter[str] = Counter()
     for (body,) in con.execute("SELECT body FROM speech WHERE speaker_kind = '議員'"):
-        standalone.update({fold(r) for r in RUN_PATTERN.findall(body) if len(r) in (3, 4)})
-    pool |= {t for t, c in standalone.items() if c >= min_standalone}
+        standalone.update({fold(r) for r in RUN_PATTERN.findall(body) if len(r) in (2, 3, 4)})
+    pool = {t for t, c in standalone.items()
+            if c >= (min_standalone2 if len(t) == 2 else min_standalone)}
 
+    n2 = sum(1 for t in pool if len(t) == 2)
     logger.info("候補プール %s（2文字 %s / 3〜4文字 %s）",
                 f"{len(pool):,}", f"{n2:,}", f"{len(pool) - n2:,}")
-    return pool, standalone_df
+    return pool, standalone
 
 
 class Counted(NamedTuple):
@@ -305,7 +308,6 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--words", type=Path, default=WORDS_PATH)
     parser.add_argument("--topics", type=Path, default=TOPICS_PATH)
     parser.add_argument("--denylist", type=Path, default=DENYLIST_PATH,
                         help="一覧から外す語。事故ったらここに1行足す")
@@ -316,6 +318,8 @@ def main() -> None:
                         help="この発言数に満たない語は載せない")
     parser.add_argument("--min-standalone", type=int, default=50,
                         help="3〜4文字が自立して出てくる発言数の下限（候補プール）")
+    parser.add_argument("--min-standalone2", type=int, default=5,
+                        help="2文字が自立して出てくる発言数の下限（候補プール）")
     parser.add_argument("--dup-ratio", type=float, default=0.75,
                         help="短い語の出現の何割が長い語の中なら落とすか")
     parser.add_argument("--latin-ratio", type=float, default=0.5,
@@ -329,7 +333,7 @@ def main() -> None:
 
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
 
-    pool, standalone_df = build_pool(con, args.words, args.min_standalone)
+    pool, standalone_df = build_pool(con, args.min_standalone, args.min_standalone2)
     counted = count(con, pool)
     months, denom, by_month, df_total = (
         counted.months, counted.denom, counted.by_month, counted.df_total)
@@ -384,7 +388,8 @@ def main() -> None:
             "n_meetings": n_meetings.get(s, 0),
         } for s in sessions],
         "params": {"top": args.top, "min_df": args.min_df,
-                   "min_standalone": args.min_standalone, "dup_ratio": args.dup_ratio,
+                   "min_standalone": args.min_standalone,
+                   "min_standalone2": args.min_standalone2, "dup_ratio": args.dup_ratio,
                    "min_session_speeches": args.min_session_speeches},
         "words": [{
             "term": term,

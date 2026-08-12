@@ -12,6 +12,7 @@
  */
 import Base from "../../layouts/Base.astro";
 import { politicians, manifest, latestAffiliation, activity, densify } from "../../lib/site-data";
+import { periodOf } from "../../lib/query";
 import { stackedMonthlyChart, type StackedSeries } from "../../lib/chart";
 import { formatNumber } from "../../lib/format";
 
@@ -27,14 +28,14 @@ export function getStaticPaths() {
 }
 
 const { person } = Astro.props;
-const years = manifest().years;
 const current = latestAffiliation(person);
 
-// 在籍していた年だけ問い合わせる。無関係な年のワーカを立てない
-const activeYears = years.filter((y) => {
-  const from = Number(person.first_date?.slice(0, 4) ?? 0);
-  const to = Number(person.last_date?.slice(0, 4) ?? 9999);
-  return y >= from && y <= to;
+// 発言があった期間だけ問い合わせる。無関係な期間のワーカを立てない。
+// **期間IDは辞書順が時系列順**なので、日付から作った期間IDと文字列比較で絞れる
+const activePeriods = manifest().periods.filter((p) => {
+  const from = person.first_date ? periodOf(person.first_date, manifest().period) : "";
+  const to = person.last_date ? periodOf(person.last_date, manifest().period) : "9999";
+  return p >= from && p <= to;
 });
 
 const affiliations = [...person.affiliations].sort((a, b) => b.start_date.localeCompare(a.start_date));
@@ -162,7 +163,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ id: person.id, years: activeYears })}
+    set:html={JSON.stringify({ id: person.id, periods: activePeriods })}
   />
 
   {/* 発言数の推移。この議員のぶんだけ（全期間64月 × 最大8系列で数KB）。
@@ -243,9 +244,9 @@ const description =
 
     initSpeechPanel();
 
-    const { id, years } = JSON.parse(
+    const { id, periods } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
-    ) as { id: number; years: number[] };
+    ) as { id: number; periods: string[] };
 
     const el = <T extends HTMLElement>(x: string) => document.getElementById(x) as T;
     const statusEl = el("status"), results = el("results");
@@ -253,7 +254,7 @@ const description =
     const within = el<HTMLInputElement>("within");
     const clearBtn = el<HTMLButtonElement>("within-clear");
 
-    let cursor: Record<number, number> = {};
+    let cursor: Record<string, number> = {};
     let term = "";
     // 絞り込みの語をどの索引で引くかは1回だけ解く（2文字語は word_hit を引く）
     let plan: QueryPlan | null = null;
@@ -261,12 +262,12 @@ const description =
      *  返ってきて新しい画面に混ざる。**古い世代の結果は捨てる。** */
     let generation = 0;
 
-    const load = (before?: Record<number, number>): Promise<SearchPage> =>
+    const load = (before?: Record<string, number>): Promise<SearchPage> =>
       term
         // 議員 × キーワード。索引の結果を politician_id で絞る
         ? search({ query: term, plan: plan ?? undefined, politicianId: id,
-                   years, limit: 20, before })
-        : politicianSpeeches(id, years, 20, before ?? {});
+                   periods, limit: 20, before })
+        : politicianSpeeches(id, periods, 20, before ?? {});
 
     async function run(append: boolean) {
       const gen = ++generation;
@@ -276,15 +277,9 @@ const description =
       const started = performance.now();
       try {
         if (term && !append) {
-          const resolved = await resolveQuery(term, years);
+          const resolved = await resolveQuery(term, periods);
           if (gen !== generation) return;
           plan = resolved;
-        }
-        if (plan?.mode === "none") {
-          results.innerHTML = "";
-          statusEl.textContent =
-            `「${plan.unsupported.join("・")}」は2文字以下で、索引に無いため引けません。`;
-          return;
         }
         const page = await load(append ? cursor : undefined);
         if (gen !== generation) return;

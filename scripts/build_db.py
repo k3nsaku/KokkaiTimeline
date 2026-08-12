@@ -22,11 +22,21 @@
     politician   : 名寄せ後の議員マスタ（Phase 1 で投入）
     affiliation  : 所属政党の時系列（Phase 1 で投入）
 
-## 年ごとの分割（Phase 1）
+## 期間ごとの分割（Phase 1）
 
-`--split-by-year` を付けると `data/dist/kokkai-YYYY.db` を年ごとに作る。
-日次更新で変わるのは当年分だけなので、R2 へのアップロードが1ファイルで済み、
-過去年は CDN キャッシュが効き続ける（`docs/DECISIONS.md`）。
+`--split` を付けると `data/dist/kokkai-<期間ID>.db` を期間ごとに作る。
+日次更新で変わるのは**いま開いている期間だけ**なので、R2 へのアップロードが
+1ファイルで済み、閉じた期間は CDN キャッシュが効き続ける（`docs/DECISIONS.md`）。
+
+**既定は半期**（`2023H1` = 1〜6月 / `2023H2` = 7〜12月）。年ではなく半期なのは、
+1ファイルが 512MB を超えると**黙って CDN キャッシュから外れる**ため
+（RTT 8ms → 77ms。待ち時間はリクエスト数×RTT でほぼ決まる）。実測で満年は
+368〜419MB あり、2文字語の索引を全bigramにすると 450MB まで来て余裕が無い。
+半期なら最大 356MB（2024H1）で、上限に対して3割の余裕が残る。
+
+**期間の境界は年に閉じている。** だから利用者に見せる絞り込みは「年」のままにできる
+（1年＝2ファイル、日付の取りこぼしなし）。会期で割るとこれが成立しない
+（年をまたぐ会期が実測で5本ある）。
 
 配信するDBは **WAL にしない**。WAL は本体ファイルの外に -wal を持つため、
 HTTP Range で1ファイルだけ読む sql.js-httpvfs から開けない。
@@ -34,8 +44,10 @@ HTTP Range で1ファイルだけ読む sql.js-httpvfs から開けない。
 
 使い方:
     python scripts/build_db.py --fresh                  # 従来どおり単一DB
-    python scripts/build_db.py --split-by-year          # 年ごとに data/dist/ へ
-    python scripts/build_db.py --split-by-year --year 2025
+    python scripts/build_db.py --split                  # 期間ごとに data/dist/ へ
+    python scripts/build_db.py --split --year 2025      # その年の全期間（2本）
+    python scripts/build_db.py --id 2026H2              # 1本だけ（日次更新はこれ）
+    python scripts/build_db.py --split --period year    # 年で割る（元の挙動）
     python scripts/build_db.py --no-fts
 """
 
@@ -58,7 +70,10 @@ DEFAULT_DB = ROOT / "data" / "kokkai.db"
 DIST_DIR = ROOT / "data" / "dist"
 POLITICIANS_PATH = ROOT / "data" / "politicians.json"
 TOPICS_PATH = ROOT / "data" / "topics.json"
-WORDS_PATH = ROOT / "data" / "words.json"
+
+# 配信DBの分割単位。**サイト側の `periodOf()`（site/src/lib/query.ts）と同じ写像**を
+# 持つこと。片方だけ変えると、存在しないファイルを引きに行って検索が丸ごと止まる。
+DEFAULT_PERIOD = "half"
 
 # sql.js-httpvfs は requestChunkSize 単位で HTTP Range を投げる。
 # page_size をそれに合わせると1ページ＝1リクエストになり、無駄な読みが出ない。
@@ -76,18 +91,27 @@ NON_SPEECH_SPEAKERS = {"会議録情報", "会議録情報等", "目次"}
 INDEXED_KINDS = ("議員",)
 
 # 2文字語の索引を作るときに走査する範囲。漢字・カタカナ・全角ラテン/数字の連続。
-# scripts/build_words.py の RUN_PATTERN と**同じもの**にすること。
-# 語彙の側とずれると、語彙にあるのに索引に入らない語が出る。
+# scripts/build_frequent.py の RUN_PATTERN と**同じもの**にすること
+# （頻出語の一覧に出る語と、検索で引ける語がずれる）。
 # 全角ラテンを入れているのは `ＡＩ` `ＤＸ` `ＧＸ` `Ｇ７` のため（`docs/DECISIONS.md`）
 WORD_RUN_PATTERN = re.compile(r"[一-鿿々]{2,}|[ァ-ヴー]{2,}|[Ａ-Ｚａ-ｚ０-９]{2,}")
 
-# 全角ラテンの小文字 → 大文字。**語彙（words.json）も同じ形で作られている。**
-# 畳む理由と、`ＳＤＧｓ` を壊さない理由は build_words.py の LATIN_FOLD を読むこと
+# 全角ラテンの小文字 → 大文字。**索引はこの形で持つ。**
+#
+# ここは畳む。`word.term` は `w.term = ?` の BINARY 比較で引くので SQLite は畳んで
+# くれず（NOCASE は ASCII 限定）、畳まないと `ai` と打たれた語が `ａｉ` のまま
+# 索引の `ＡＩ` に当たらない。**FTS 経路は逆に畳んではいけない**（`ＳＤＧｓ` が壊れる）。
+# 詳細は `docs/DECISIONS.md`「大文字に寄せるかは経路で逆になる」。
+# 2文字の全角ラテンで小文字を含むのは8語・69発言しかなく、失うものは無い
 WORD_LATIN_FOLD = {c: c - 0x20 for c in range(0xFF41, 0xFF5B)}
 
 
 def fold_word_run(run: str) -> str:
-    """全角ラテンの並びだけ大文字に畳む。build_words.py の fold() と同じもの。"""
+    """全角ラテンの並びだけ大文字に畳む。
+
+    1つの `run` は同じ文字クラスだけでできている（パターンが選択で分かれている）ので、
+    先頭1文字で判別できる。漢字・カタカナは U+9FFF 以下、全角ラテン/数字は U+FF10 以上。
+    """
     return run.translate(WORD_LATIN_FOLD) if run[0] > "鿿" else run
 
 SCHEMA = """
@@ -200,15 +224,18 @@ CREATE TABLE IF NOT EXISTS topic_hit (
     PRIMARY KEY (topic_id, speech_rowid)
 ) WITHOUT ROWID;
 
--- 2文字語の語彙。FTS5(trigram) は3文字未満のトークンを作れないので、
+-- 2文字語の索引。FTS5(trigram) は3文字未満のトークンを作れないので、
 -- 「増税」「憲法」「年金」「原発」はこれが無いと**原理的に引けない**。
 -- 争点語（topic）とは役割が違う: あちらは運営が選ぶ編集方針で、頻度推移にも使う。
--- こちらは機械抽出の語彙で、**一覧としては見せない**（引けるかどうかを決めるだけ）。
--- リストは data/words.json、作るのは scripts/build_words.py。
+-- こちらは**本文から機械的に採った索引で、一覧としては見せない**。
+--
+-- **語彙リストは持たない。** 本文に出てくる2文字窓を全部入れる（build_word_index）。
+-- したがって中身は期間ごとに違ってよい。「この語を引けるか」を事前に判定する
+-- 仕組みは無く、索引に無い語は素直に0件になる。
 CREATE TABLE IF NOT EXISTS word (
     id              INTEGER PRIMARY KEY,
     term            TEXT NOT NULL UNIQUE,
-    -- **この年の件数**。複数語の検索でどれを起点にするか選ぶのに使う
+    -- **この期間の件数**。複数語の検索でどれを起点にするか選ぶのに使う
     n_speeches      INTEGER NOT NULL DEFAULT 0
 );
 
@@ -222,11 +249,12 @@ CREATE TABLE IF NOT EXISTS word_hit (
     PRIMARY KEY (word_id, speech_rowid)
 ) WITHOUT ROWID;
 
--- 年DBの素性。**年をまたいで食い違ってはいけないもの**を記録する。
--- 特に vocabulary（2文字語の語彙の指紋）: 日次更新で当年だけ作り直す設計なので、
--- 語彙を作り直すと当年だけ新しくなる。検索は「語彙は年によらない」前提で
--- 新しい年1つだけを見て引けるか判定するため、**過去年が黙って0件になる**。
--- write_manifest() が食い違いを検出して警告する
+-- 期間DBの素性。
+--   period / period_rule : この配信物がどの単位で割られているか（`2026H1` / `half`）
+--   from / to            : 実データの収録範囲。目録に載せて期間の選択に使う
+--   topics               : 争点語の指紋。**期間をまたいで一致していること**
+--                          （食い違うと `topic_id` がずれ、別の争点を引く）
+-- 2文字語の語彙は**期間ごとに違ってよい**ので、ここには入れない。
 CREATE TABLE IF NOT EXISTS meta (
     key             TEXT PRIMARY KEY,
     value           TEXT NOT NULL
@@ -272,27 +300,54 @@ def classify(record: dict) -> tuple[int, str]:
     return 1, "政府参考人等"
 
 
-def raw_files(raw_dir: Path, year: str | None = None) -> list[Path]:
-    """NDJSON は `YYYY-MM.ndjson`。年の指定があればファイル名で絞る。"""
-    pattern = f"{year}-*.ndjson" if year else "*.ndjson"
+def period_of(date: str, rule: str) -> str:
+    """日付（`YYYY-MM-DD`）→ 期間ID。
+
+    ★ **サイト側の `periodOf()`（site/src/lib/query.ts）と同じ写像にすること。**
+      DBの分割規則そのもので、食い違うと引き先のファイルが存在しなくなる。
+
+    半期の境界を7月1日に置いているのは、常会（1月召集）が上半期にほぼ収まり、
+    残りが小さいファイルになるため。実測では H1 が 309〜356MB、H2 が 6〜110MB。
+    偏りは害にならない（小さいDBは B-tree が浅く、引くのが安い）。
+    """
+    if rule == "year":
+        return date[:4]
+    return f"{date[:4]}H{'1' if date[5:7] <= '06' else '2'}"
+
+
+def period_year(period: str) -> str:
+    """期間ID → 年。**期間は必ず年に閉じている**ので、先頭4文字でよい。"""
+    return period[:4]
+
+
+def raw_files(raw_dir: Path, period: str | None = None) -> list[Path]:
+    """NDJSON は `YYYY-MM.ndjson`。
+
+    期間の指定があっても**その年ぶんを全部読む**。ファイルの月と中身の日付は
+    ずれることがあり（取得月をまたぐ会議録）、月で絞ると半期の境界で落ちる。
+    絞り込みは `load()` がレコードの日付で行う。
+    """
+    pattern = f"{period_year(period)}-*.ndjson" if period else "*.ndjson"
     files = sorted(raw_dir.glob(pattern))
     if not files:
-        target = f"（{year}年）" if year else ""
+        target = f"（{period}）" if period else ""
         raise SystemExit(f"NDJSON が見つからない{target}: {raw_dir}\n"
                          f"先に scripts/fetch_range.py を実行すること")
     return files
 
 
-def available_years(raw_dir: Path) -> list[str]:
-    years = {m.group(1) for path in raw_dir.glob("*.ndjson")
-             if (m := re.fullmatch(r"(\d{4})-\d{2}", path.stem))}
-    if not years:
+def available_periods(raw_dir: Path, rule: str) -> list[str]:
+    """取得済みの NDJSON から期間IDを起こす。ファイル名の年月で決める。"""
+    periods = {period_of(f"{m.group(1)}-{m.group(2)}-01", rule)
+               for path in raw_dir.glob("*.ndjson")
+               if (m := re.fullmatch(r"(\d{4})-(\d{2})", path.stem))}
+    if not periods:
         raise SystemExit(f"NDJSON が見つからない: {raw_dir}")
-    return sorted(years)
+    return sorted(periods)
 
 
-def iter_raw_records(raw_dir: Path, year: str | None = None):
-    for path in raw_files(raw_dir, year):
+def iter_raw_records(raw_dir: Path, period: str | None = None):
+    for path in raw_files(raw_dir, period):
         logger.info("読み込み %s", path.name)
         with path.open(encoding="utf-8") as handle:
             for line in handle:
@@ -376,16 +431,8 @@ def build_topic_index(con: sqlite3.Connection, topics: list[dict]) -> int:
     return len(hits)
 
 
-def load_words(path: Path) -> list[str]:
-    """2文字語の語彙。無ければ空で通す（2文字語を引けないDBになるだけ）。"""
-    if not path.exists():
-        logger.warning("%s が無い。2文字語の索引を作らない", path.name)
-        return []
-    return list(json.loads(path.read_text(encoding="utf-8"))["words"])
-
-
 def fingerprint(items: list[str]) -> str:
-    """語彙の指紋。年をまたいで同じでなければならないものを比べるのに使う。"""
+    """期間をまたいで同じでなければならないもの（争点語）を比べる指紋。"""
     return hashlib.sha256("\n".join(items).encode("utf-8")).hexdigest()[:16]
 
 
@@ -405,27 +452,32 @@ def file_version(path: Path) -> str:
     return digest.hexdigest()[:16]
 
 
-def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
-    """2文字語の索引を作る。
+def build_word_index(con: sqlite3.Connection) -> tuple[int, int]:
+    """2文字語の索引を作る。**語彙リストを持たず、出てきた2文字窓を全部入れる。**
 
-    **語彙の選定と数え方が違う。** `build_words.py` は「ちょうど2文字で自立している」
-    箇所だけを数えて語彙を決めるが、索引は**部分文字列**で拾う。
-    「憲法改正」の中の「憲法」を引けないと検索として意味がないため。
-
-    そのために漢字/カタカナ/全角ラテンの連続を取り出し、その中の2文字窓を全部見る。
+    漢字/カタカナ/全角ラテンの連続を取り出し、その中の2文字窓を全部見る。
     2文字の漢字列は必ず長さ2以上の漢字連続の中にあるので、これで取りこぼさない。
-    全角ラテンは大文字に畳んでから窓を切る（語彙も同じ形で作られている）。
+    全角ラテンは大文字に畳んでから窓を切る（`ａｉ` と打たれても `ＡＩ` に当たるように）。
 
-    行数が多い（1年で約350万行）ので、一定件数ごとに流し込む。
-    全部ためると数百MBのリストになる。
+    かつては `data/words.json`（機械抽出の語彙）に載っている語だけを索引にしていた。
+    やめた理由は実測（2026年DB・議員の発言 45,756件）:
+
+        現行の語彙 16,264語 : word_hit 1,759,180行 / 索引の正味 17.6 MiB
+        全bigram   87,846語 : word_hit 3,017,020行 / 索引の正味 32.8 MiB
+
+    **行数は 1.72倍にしかならず、配布サイズの増加は +7.3%。** 語彙の裾（1発言に
+    しか出ない語）は語数の38%を占めるのに行数では1%しか食わないので、絞る意味が
+    ほとんど無かった。代わりに得たものが3つある:
+
+      - 「治体」「務大」「ロナ」のような**語跨ぎの断片や低頻度語も引ける**
+      - 「その語は索引に無い」という状態が消える（引けない語＝本当に0件）
+      - **語彙が期間ごとに違ってよくなる**。日次更新で当該期間だけ作り直しても
+        過去の期間が黙って0件になる事故（docs/PITFALLS.md）が原理的に起きない
+
+    行数が多いので一定件数ごとに流し込む。全部ためると数百MBのリストになる。
+    戻り値は (語数, 行数)。
     """
-    if not words:
-        return 0
-
-    ids = {term: i for i, term in enumerate(words, 1)}
-    con.executemany("INSERT OR REPLACE INTO word (id, term, n_speeches) VALUES (?,?,0)",
-                    [(i, term) for term, i in ids.items()])
-
+    ids: dict[str, int] = {}
     counts: dict[int, int] = defaultdict(int)
     batch: list[tuple[int, int]] = []
     total = 0
@@ -441,9 +493,11 @@ def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
         for run in WORD_RUN_PATTERN.findall(body):
             run = fold_word_run(run)
             for i in range(len(run) - 1):
-                word_id = ids.get(run[i:i + 2])
-                if word_id is not None:
-                    found.add(word_id)
+                term = run[i:i + 2]
+                word_id = ids.get(term)
+                if word_id is None:
+                    word_id = ids[term] = len(ids) + 1
+                found.add(word_id)
         for word_id in found:
             counts[word_id] += 1
         batch.extend((word_id, rowid) for word_id in found)
@@ -452,23 +506,25 @@ def build_word_index(con: sqlite3.Connection, words: list[str]) -> int:
             flush()
 
     flush()
-    con.executemany("UPDATE word SET n_speeches = ? WHERE id = ?",
-                    [(n, word_id) for word_id, n in counts.items()])
+    # n_speeches は**この期間の件数**。複数語の検索で起点を選ぶのに使う
+    con.executemany("INSERT OR REPLACE INTO word (id, term, n_speeches) VALUES (?,?,?)",
+                    [(i, term, counts[i]) for term, i in ids.items()])
     con.commit()
-    return total
+    return len(ids), total
 
 
-def load(con: sqlite3.Connection, raw_dir: Path, year: str | None = None,
-         unit_map: dict[str, int] | None = None) -> tuple[int, int]:
+def load(con: sqlite3.Connection, raw_dir: Path, period: str | None = None,
+         unit_map: dict[str, int] | None = None,
+         rule: str = DEFAULT_PERIOD) -> tuple[int, int]:
     meetings: dict[str, tuple] = {}
     speeches: list[tuple] = []
     out_of_range = 0
     unit_map = unit_map or {}
     unresolved = 0
 
-    for record in iter_raw_records(raw_dir, year):
-        # ファイル名ではなくレコードの日付で年を決める。取得月とズレていても落とさない
-        if year and not record["date"].startswith(year):
+    for record in iter_raw_records(raw_dir, period):
+        # ファイル名ではなくレコードの日付で期間を決める。取得月とズレていても落とさない
+        if period and period_of(record["date"], rule) != period:
             out_of_range += 1
             continue
         issue_id = record["issueID"]
@@ -510,8 +566,8 @@ def load(con: sqlite3.Connection, raw_dir: Path, year: str | None = None,
     )
     con.commit()
     if out_of_range:
-        logger.warning("  %s年のファイルに他年のレコード %s件。除外した",
-                       year, f"{out_of_range:,}")
+        # 半期で割ると、同じ年のもう一方の期間ぶんがここに来る（毎回出る・異常ではない）
+        logger.info("  %s の対象外レコード %s件。除外した", period, f"{out_of_range:,}")
     if unresolved and unit_map:
         logger.warning("  議員に紐づかなかった発言 %s件。build_politicians.py が古い可能性",
                        f"{unresolved:,}")
@@ -575,44 +631,54 @@ def finalize(con: sqlite3.Connection, db_path: Path) -> None:
         db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
 
 
-def build_year(raw_dir: Path, year: str, *, page_size: int, with_fts: bool,
-               dist_dir: Path, politicians: list[dict], unit_map: dict[str, int],
-               topics: list[dict], words: list[str]) -> dict:
-    """1年分のDBを作って統計を返す。
+def build_period(raw_dir: Path, period: str, *, rule: str, page_size: int, with_fts: bool,
+                 dist_dir: Path, politicians: list[dict], unit_map: dict[str, int],
+                 topics: list[dict]) -> dict:
+    """1期間分のDBを作って統計を返す。
 
-    議員マスタは**全期間分をそのまま入れる**（1,111人で数百KB）。年ごとに絞ると
-    「その年に発言していない議員のページ」が作れなくなるし、`n_speeches` の
-    意味が年によって変わってしまう。
+    議員マスタは**全期間分をそのまま入れる**（1,111人で数百KB）。期間ごとに絞ると
+    「その期間に発言していない議員のページ」が作れなくなるし、`n_speeches` の
+    意味が期間によって変わってしまう。
     """
-    db_path = dist_dir / f"kokkai-{year}.db"
+    db_path = dist_dir / f"kokkai-{period}.db"
     started = time.monotonic()
-    logger.info("=== %s年 → %s ===", year, db_path.name)
+    logger.info("=== %s → %s ===", period, db_path.name)
 
     con = open_fresh(db_path, page_size)
-    con.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [
-        ("vocabulary", fingerprint(words)),
-        ("n_words", str(len(words))),
-        ("topics", fingerprint([t["term"] for t in topics])),
-    ])
     insert_politicians(con, politicians)
-    n_meetings, n_speeches = load(con, raw_dir, year, unit_map)
+    n_meetings, n_speeches = load(con, raw_dir, period, unit_map, rule)
     n_hits = build_topic_index(con, topics)
-    logger.info("  2文字語の索引を構築中（語彙 %s件）…", f"{len(words):,}")
-    n_word_hits = build_word_index(con, words)
+    logger.info("  2文字語の索引を構築中…")
+    n_words, n_word_hits = build_word_index(con)
     if with_fts:
         logger.info("  FTS5(trigram) を構築中…")
         build_fts(con)
     indexed = count_indexed(con)
+
+    # 収録範囲は実データから採る。目録に載せてサイトの期間選択に使う
+    covers = con.execute("SELECT MIN(date), MAX(date) FROM speech").fetchone()
+    con.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [
+        ("period", period),
+        ("period_rule", rule),
+        ("from", covers[0] or ""),
+        ("to", covers[1] or ""),
+        ("n_words", str(n_words)),
+        ("topics", fingerprint([t["term"] for t in topics])),
+    ])
+    con.commit()
     finalize(con, db_path)
     con.close()
 
     size = db_path.stat().st_size
-    logger.info("  会議 %s / 発言 %s（索引 %s / 争点語 %s / 2文字語 %s） / %.1f MB / %.0f秒",
+    logger.info("  会議 %s / 発言 %s（索引 %s / 争点語 %s / 2文字語 %s語 %s行）"
+                " / %.1f MB / %.0f秒",
                 f"{n_meetings:,}", f"{n_speeches:,}", f"{indexed:,}", f"{n_hits:,}",
-                f"{n_word_hits:,}", size / 1024**2, time.monotonic() - started)
-    return {"year": year, "path": db_path, "meetings": n_meetings,
+                f"{n_words:,}", f"{n_word_hits:,}", size / 1e6,
+                time.monotonic() - started)
+    return {"period": period, "path": db_path, "meetings": n_meetings,
             "speeches": n_speeches, "indexed": indexed, "hits": n_hits,
-            "word_hits": n_word_hits, "size": size}
+            "words": n_words, "word_hits": n_word_hits, "size": size,
+            "from": covers[0] or "", "to": covers[1] or ""}
 
 
 def count_indexed(con: sqlite3.Connection) -> int:
@@ -626,27 +692,32 @@ def count_indexed(con: sqlite3.Connection) -> int:
 def write_manifest(dist_dir: Path) -> Path:
     """`data/dist/manifest.json` を出力先の実物から作り直す。
 
-    サイトは「どの年DBがあるか」をこれで知る（年ごとに別ワーカを立てるため、
-    年の一覧が要る）。**引数の年ではなくディレクトリを走査する**ので、
-    `--year 2026` だけを作り直しても他の年が消えない。
+    サイトは「どの期間DBがあるか」をこれで知る（期間ごとに別ワーカを立てるため）。
+    **引数ではなくディレクトリを走査する**ので、`--id 2026H2` だけを作り直しても
+    他の期間が消えない。
 
-    ファイルが手元に無い年は、**前回の目録の記載を引き継ぐ**。日次更新（CI）は
-    当年しか手元に置かないので、走査だけにすると目録が当年1年になってしまい、
-    サイトが過去年を引かなくなる。引き継いだ年はログに出す。
+    ファイルが手元に無い期間は、**前回の目録の記載を引き継ぐ**。日次更新（CI）は
+    当該期間しか手元に置かないので、走査だけにすると目録が1本になってしまい、
+    サイトが過去を引かなくなる。引き継いだ期間はログに出す。
+
+    `from` / `to` を載せるのは、サイトが「この年を検索する」を期間IDに直すため。
+    **規則（`periodOf`）でも引けるが、目録の実データを正とする。**
     """
     out = dist_dir / "manifest.json"
-    previous: dict[int, dict] = {}
+    previous: dict[str, dict] = {}
+    rule = DEFAULT_PERIOD
     if out.exists():
         try:
-            previous = {e["year"]: e
-                        for e in json.loads(out.read_text(encoding="utf-8"))["databases"]}
+            loaded = json.loads(out.read_text(encoding="utf-8"))
+            previous = {e["id"]: e for e in loaded["databases"]}
+            rule = loaded.get("period", rule)
         except (json.JSONDecodeError, KeyError):
-            logger.warning("既存の %s を読めなかった。走査した年だけで作り直す", out.name)
+            logger.warning("既存の %s を読めなかった。走査した分だけで作り直す", out.name)
 
     files = []
     for path in sorted(dist_dir.glob("kokkai-*.db")):
-        year = path.stem.removeprefix("kokkai-")
-        if not year.isdigit():
+        period = path.stem.removeprefix("kokkai-")
+        if not re.fullmatch(r"\d{4}(H[12])?", period):
             continue
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
@@ -655,70 +726,60 @@ def write_manifest(dist_dir: Path) -> Path:
             meta = {}                      # meta を持たない古いDB
         finally:
             con.close()
-        files.append({"year": int(year), "file": path.name, "size": path.stat().st_size,
-                      "version": file_version(path), "vocabulary": meta.get("vocabulary")})
+        rule = meta.get("period_rule", rule)
+        files.append({"id": period, "file": path.name, "size": path.stat().st_size,
+                      "version": file_version(path),
+                      "from": meta.get("from", ""), "to": meta.get("to", "")})
 
-    built = {f["year"] for f in files}
-    for year, entry in sorted(previous.items()):
-        if year not in built:
-            logger.info("目録: %s年は手元に無いので前回の記載を引き継ぐ", year)
+    built = {f["id"] for f in files}
+    for period, entry in sorted(previous.items()):
+        if period not in built:
+            logger.info("目録: %s は手元に無いので前回の記載を引き継ぐ", period)
             files.append(entry)
-    files.sort(key=lambda f: f["year"])
+    # 期間IDは辞書順が時系列順（2021H1 < 2021H2 < 2022H1）
+    files.sort(key=lambda f: f["id"])
 
-    warn_vocabulary_drift(files)
-
-    manifest = {"years": [f["year"] for f in files], "databases": files}
+    manifest = {"period": rule, "periods": [f["id"] for f in files], "databases": files}
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return out
 
 
-def warn_vocabulary_drift(files: list[dict]) -> None:
-    """年をまたいで2文字語の語彙が食い違っていないか見る。
-
-    **食い違うと検索が黙って壊れる。** 検索は「語彙は年によらない」前提で
-    いちばん新しい年だけを見て「その2文字語を引けるか」を判定するので、
-    当年にしかない語を引くと**過去年が0件のまま返る**。エラーも出ない。
-
-    日次更新で `build_words.py` を回してしまうとこうなる。
-    語彙を作り直したら**全年を作り直すこと**（実測で約6分）。
-    """
-    # 指紋を持たないDB（meta 以前に作ったもの）も「別の語彙」として扱う。
-    # 中身が同じである保証がどこにも無いため、素通ししない
-    seen = {f["vocabulary"] for f in files}
-    if len(seen) <= 1:
-        return
-    logger.error("★ 2文字語の語彙が年によって違う。検索が過去年で黙って0件になる")
-    for f in files:
-        logger.error("   %s: vocabulary=%s", f["file"], f["vocabulary"] or "(無し)")
-    logger.error("   → data/words.json を固定したうえで**全年を作り直すこと**:")
-    logger.error("      python scripts/build_db.py --split-by-year --page-size 8192")
-
-
 def run_split(args: argparse.Namespace) -> None:
-    years = args.year or available_years(args.raw)
+    rule = args.period
+    periods = args.id or []
+    for year in args.year or []:
+        periods += [p for p in available_periods(args.raw, rule) if period_year(p) == year]
+    periods = sorted(set(periods)) or available_periods(args.raw, rule)
+
     politicians, unit_map = load_politicians(args.politicians)
     topics = load_topics(args.topics)
-    words = load_words(args.words)
-    logger.info("年ごとに分割して構築: %s（議員 %s人 / 争点語 %s件 / 2文字語 %s件）",
-                " ".join(years), f"{len(politicians):,}", f"{len(topics):,}", f"{len(words):,}")
-    results = [build_year(args.raw, year, page_size=args.page_size,
-                          with_fts=not args.no_fts, dist_dir=args.dist,
-                          politicians=politicians, unit_map=unit_map, topics=topics,
-                          words=words)
-               for year in years]
+    logger.info("期間ごとに分割して構築（%s）: %s（議員 %s人 / 争点語 %s件）",
+                rule, " ".join(periods), f"{len(politicians):,}", f"{len(topics):,}")
+    results = [build_period(args.raw, period, rule=rule, page_size=args.page_size,
+                            with_fts=not args.no_fts, dist_dir=args.dist,
+                            politicians=politicians, unit_map=unit_map, topics=topics)
+               for period in periods]
 
-    print(f"\n--- 年ごとDB（page_size={args.page_size} / {args.dist}）---")
-    print(f"{'年':<6}{'会議':>8}{'発言':>10}{'索引':>10}{'争点語':>10}{'2文字語':>12}{'サイズ':>12}")
+    print(f"\n--- 期間ごとDB（page_size={args.page_size} / {args.dist}）---")
+    print(f"{'期間':<8}{'会議':>8}{'発言':>10}{'索引':>10}{'争点語':>10}"
+          f"{'2文字語':>10}{'word_hit':>12}{'サイズ':>12}")
     for r in results:
-        print(f"{r['year']:<6}{r['meetings']:>8,}{r['speeches']:>10,}"
-              f"{r['indexed']:>10,}{r['hits']:>10,}{r['word_hits']:>12,}"
-              f"{r['size'] / 1024**2:>10.1f} MB")
+        print(f"{r['period']:<8}{r['meetings']:>8,}{r['speeches']:>10,}"
+              f"{r['indexed']:>10,}{r['hits']:>10,}{r['words']:>10,}{r['word_hits']:>12,}"
+              f"{r['size'] / 1e6:>9.1f} MB")
     total = sum(r["size"] for r in results)
-    print(f"{'合計':<6}{'':>8}{sum(r['speeches'] for r in results):>10,}"
+    biggest = max(results, key=lambda r: r["size"])
+    print(f"{'合計':<8}{'':>8}{sum(r['speeches'] for r in results):>10,}"
           f"{sum(r['indexed'] for r in results):>10,}"
-          f"{sum(r['hits'] for r in results):>10,}"
-          f"{sum(r['word_hits'] for r in results):>12,}{total / 1024**3:>10.2f} GB")
-    print(f"\nR2無料枠 10GB に対して {100 * total / (10 * 1024**3):.1f}%")
+          f"{sum(r['hits'] for r in results):>10,}{'':>10}"
+          f"{sum(r['word_hits'] for r in results):>12,}{total / 1e9:>9.2f} GB")
+    print(f"\nR2無料枠 10GB に対して {100 * total / 10e9:.1f}%")
+    # 512MB を超えたファイルは**黙って CDN キャッシュから外れる**（docs/DECISIONS.md）
+    print(f"最大のファイル: {biggest['period']} {biggest['size'] / 1e6:.0f} MB"
+          f"（CDNキャッシュ上限 512MB に対して {100 * biggest['size'] / 512e6:.0f}%）")
+    if biggest["size"] > 480e6:
+        logger.error("★ 512MB に近い。超えると黙ってキャッシュされなくなる"
+                     "（RTT 8ms → 77ms）。分割を細かくすること")
 
     manifest = write_manifest(args.dist)
     print(f"目録: {manifest}")
@@ -731,23 +792,25 @@ def main() -> None:
     parser.add_argument("--raw", type=Path, default=RAW_DIR)
     parser.add_argument("--no-fts", action="store_true", help="全文検索インデックスを作らない")
     parser.add_argument("--fresh", action="store_true", help="既存DBを削除してから作る")
-    parser.add_argument("--split-by-year", action="store_true",
-                        help="年ごとに data/dist/kokkai-YYYY.db を作る（配信用）")
+    parser.add_argument("--split", action="store_true",
+                        help="期間ごとに data/dist/kokkai-<期間ID>.db を作る（配信用）")
+    parser.add_argument("--period", choices=("half", "year"), default=DEFAULT_PERIOD,
+                        help=f"分割の単位（既定 {DEFAULT_PERIOD}）。"
+                             "★変えたら site/src/lib/query.ts の periodOf() も揃えること")
     parser.add_argument("--year", action="append", metavar="YYYY",
-                        help="対象の年。複数指定可。省略時は取得済みの全年（--split-by-year 用）")
-    parser.add_argument("--dist", type=Path, default=DIST_DIR, help="年ごとDBの出力先")
+                        help="対象の年（その年の全期間）。複数指定可")
+    parser.add_argument("--id", action="append", metavar="YYYYH1",
+                        help="対象の期間ID。複数指定可。日次更新はこれを使う")
+    parser.add_argument("--dist", type=Path, default=DIST_DIR, help="期間ごとDBの出力先")
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE,
                         help=f"SQLiteのページサイズ（既定 {DEFAULT_PAGE_SIZE}）")
     parser.add_argument("--politicians", type=Path, default=POLITICIANS_PATH,
                         help="scripts/build_politicians.py の出力。無ければ議員を紐づけない")
     parser.add_argument("--topics", type=Path, default=TOPICS_PATH,
                         help="争点語のリスト。無ければ争点語の索引を作らない")
-    parser.add_argument("--words", type=Path, default=WORDS_PATH,
-                        help="2文字語の語彙（scripts/build_words.py の出力）。"
-                             "無ければ2文字語の索引を作らない")
     args = parser.parse_args()
 
-    if args.split_by_year or args.year:
+    if args.split or args.year or args.id:
         run_split(args)
         return
 

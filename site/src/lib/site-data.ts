@@ -113,7 +113,7 @@ export interface Frequent {
   speech_totals: number[];
   sessions: FrequentSession[];
   params: {
-    top: number; min_df: number; min_standalone: number;
+    top: number; min_df: number; min_standalone: number; min_standalone2: number;
     dup_ratio: number; min_session_speeches: number;
   };
   words: FrequentWord[];
@@ -138,16 +138,16 @@ export interface Activity {
   }>;
 }
 
+/**
+ * 配信DBの目録（`scripts/build_db.py` の `write_manifest`）。
+ *
+ * 分割の単位は**期間**（既定は半期・`2026H1`）。利用者に見せる絞り込みは年のままで、
+ * 年 → 期間の変換は `periodsInYearRange()` が行う（`lib/query.ts`）。
+ */
 export interface Manifest {
-  years: number[];
-  databases: { year: number; file: string; size: number }[];
-}
-
-/** 2文字語の語彙（`scripts/build_words.py`）。中身は使わず件数だけ要る。 */
-export interface Words {
-  min_df: number;
-  source_speeches: number;
-  words: Record<string, number>;
+  period: "half" | "year";
+  periods: string[];
+  databases: { id: string; file: string; size: number; from?: string; to?: string }[];
 }
 
 let cached: {
@@ -155,7 +155,6 @@ let cached: {
   topics?: TopicSeries;
   trending?: Trending;
   manifest?: Manifest;
-  words?: Words;
   frequent?: Frequent;
   activity?: Activity;
 } = {};
@@ -195,12 +194,6 @@ export function densify(sparse: [number, number][], length: number): number[] {
 export function manifest(): Manifest {
   cached.manifest ??= readJson<Manifest>("dist", "manifest.json");
   return cached.manifest;
-}
-
-/** 2文字語の語彙の件数。「何語まで引けるか」を正直に出すために使う。 */
-export function wordCount(): number {
-  cached.words ??= readJson<Words>("words.json");
-  return Object.keys(cached.words.words).length;
 }
 
 /** 表示に使う「現在の所属」。会派の時系列のうち最後のもの。 */

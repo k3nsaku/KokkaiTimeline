@@ -1,10 +1,12 @@
-# 日次更新。前月と当月の会議録を取り直し、その年のDBを作り直して R2 とサイトへ配る。
+# 日次更新。前月と当月の会議録を取り直し、その期間のDBを作り直して R2 とサイトへ配る。
 #
-# 設計の前提は3つ:
+# 設計の前提は2つ:
 #   - **常時稼働プロセスを持たない。** ここが唯一の定期実行で、落ちても数日放置できる
-#   - **当年のDBだけ作り直す。** 過去年は変わらないので CDN キャッシュが効き続ける
-#   - **build_words.py を回さない。** 2文字語の語彙を当年だけ更新すると、
-#     過去年の検索が黙って0件になる（docs/PIPELINE.md「語彙を作り直すとき」）
+#   - **触った期間のDBだけ作り直す。** 閉じた期間は変わらないので CDN キャッシュが効き続ける
+#
+# 配信DBは半期で割ってある（`2026H1` = 1〜6月）。2文字語の索引は本文から
+# その場で作るので、**期間ごとに中身が違ってよい**（以前あった「語彙が年をまたいで
+# 食い違うと過去年が黙って0件になる」事故は、この設計では起きない）。
 #
 # 手順と Cloudflare 側の設定は docs/PIPELINE.md。
 
@@ -17,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       all_years:
-        description: "全年のDBを作り直す（語彙や争点語を変えたとき）"
+        description: "全期間のDBを作り直す（争点語や分割の単位を変えたとき）"
         type: boolean
         default: false
 
@@ -70,11 +72,14 @@ jobs:
           # **前月1日から取り直す。** 当月だけだと、月末の会議録が翌月に公開された分と、
           # 前月以前に入った訂正を二度と拾えない（該当月の NDJSON が完成済み扱いになる）
           from=$(date -u -d "$(date -u -d '9 hours' +%Y-%m-01) -1 month" +%Y-%m-%d)
+          # 配信DBは**半期**で割ってある（scripts/build_db.py の period_of()）。
+          # 作り直すのは触った日付が入る期間だけ。7月と1月は前の期間もまたぐ
+          half() { [ "${1:5:2}" -le 06 ] && echo "${1:0:4}H1" || echo "${1:0:4}H2"; }
           {
             echo "today=$today"
             echo "from=$from"
-            echo "year=${today:0:4}"
-            echo "from_year=${from:0:4}"
+            echo "period=$(half "$today")"
+            echo "from_period=$(half "$from")"
           } >> "$GITHUB_OUTPUT"
 
       # --- 前回の状態を戻す ---------------------------------------------------
@@ -94,9 +99,8 @@ jobs:
             data/raw/wikidata_terms.json $R2 || true
           # 初回はまだ無い。無ければ作り直すので落とさない
           aws s3 cp "s3://$STATE_BUCKET/politicians.json" data/politicians.json $R2 || true
-          aws s3 cp "s3://$STATE_BUCKET/words.json" data/words.json $R2 || true
-          # 過去年のDBは落とさない（2GBある）。目録だけ戻せば、
-          # write_manifest() が手元に無い年の記載を引き継ぐ
+          # 閉じた期間のDBは落とさない（2GBある）。目録だけ戻せば、
+          # write_manifest() が手元に無い期間の記載を引き継ぐ
           aws s3 cp "s3://$PUBLIC_BUCKET/manifest.json" data/dist/manifest.json $R2 || true
           du -sh data/raw/speeches
 
@@ -126,7 +130,7 @@ jobs:
             --force
 
       - name: 集計の材料になる単一DBを作り直す
-        # 全文検索の索引はここでは要らない（配信用の年DBにだけ張る）。
+        # 全文検索の索引はここでは要らない（配信用の期間DBにだけ張る）。
         # --no-fts で構築時間とディスクを大きく節約できる
         run: python scripts/build_db.py --fresh --no-fts
 
@@ -137,7 +141,7 @@ jobs:
         run: python scripts/build_topics.py
 
       - name: 頻出語レイヤー
-        # 機械抽出の500語（data/dist/frequent.json）。**年DBの作り直しは要らない**
+        # 機械抽出の500語（data/dist/frequent.json）。**期間DBの作り直しは要らない**
         # （検索は既存の word_hit と FTS に流す）。実測で走査は約1分
         run: python scripts/build_frequent.py
 
@@ -148,40 +152,39 @@ jobs:
         #   入っていなければスクリプトがその場で落ちる（黙って空を作らない）
         run: python scripts/build_activity.py
 
-      - name: 配信用の年DBを作り直す
+      - name: 配信用の期間DBを作り直す
         run: |
           set -euo pipefail
           if [ "${{ inputs.all_years }}" = "true" ]; then
-            python scripts/build_db.py --split-by-year --page-size 8192
+            python scripts/build_db.py --split --page-size 8192
           else
-            # 1月は前年12月ぶんを取り直しているので、前年のDBも作り直す。
-            # --year は複数指定できる。目録は出力先を走査するので他の年は消えない
-            years="--year ${{ steps.when.outputs.year }}"
-            if [ "${{ steps.when.outputs.from_year }}" != "${{ steps.when.outputs.year }}" ]; then
-              years="$years --year ${{ steps.when.outputs.from_year }}"
+            # 7月と1月は前の期間ぶんを取り直しているので、そちらも作り直す。
+            # --id は複数指定できる。目録は出力先を走査するので他の期間は消えない
+            ids="--id ${{ steps.when.outputs.period }}"
+            if [ "${{ steps.when.outputs.from_period }}" != "${{ steps.when.outputs.period }}" ]; then
+              ids="$ids --id ${{ steps.when.outputs.from_period }}"
             fi
-            python scripts/build_db.py $years --page-size 8192
+            python scripts/build_db.py $ids --page-size 8192
           fi
 
-      - name: 2文字語の語彙が年をまたいで揃っているか確かめる
-        # build_db.py の警告はログに出るだけなので、ここで**落とす**。
-        # 揃っていないと検索が過去年で黙って0件になる
+      - name: 配信DBが CDN のキャッシュ上限に収まっているか確かめる
+        # **512MB を超えたファイルは黙ってキャッシュされなくなる**（docs/DECISIONS.md）。
+        # エラーにならず、ただ RTT が 8ms → 77ms になって検索が10倍遅くなるだけなので、
+        # ここで落として気づけるようにする
         run: |
           python - <<'PY'
           import json, sys
           m = json.load(open("data/dist/manifest.json", encoding="utf-8"))
-          seen = {d.get("vocabulary") for d in m["databases"]}
-          if len(seen) > 1:
-              for d in m["databases"]:
-                  print(f"  {d['file']}: {d.get('vocabulary')}")
-              sys.exit("★ 語彙が年によって違う。全年を作り直すこと"
-                       "（workflow_dispatch の all_years=true）")
-          print(f"語彙は全年で一致: {seen.pop()}")
+          worst = max(m["databases"], key=lambda d: d["size"])
+          print(f"最大: {worst['file']} {worst['size'] / 1e6:.0f} MB / 上限 512 MB")
+          if worst["size"] > 480e6:
+              sys.exit("★ 512MB に近い。分割を細かくすること"
+                       "（scripts/build_db.py の --period）")
           PY
 
       # --- 配る ---------------------------------------------------------------
 
-      - name: 年DBと目録を R2 へ
+      - name: 期間DBと目録を R2 へ
         run: |
           set -euo pipefail
           # DBのURLには目録に載っている世代（中身の指紋）が `?v=` で付く。
@@ -208,7 +211,6 @@ jobs:
           aws s3 cp data/raw/wikidata_members.json "s3://$STATE_BUCKET/raw/wikidata_members.json" $R2
           aws s3 cp data/raw/wikidata_terms.json "s3://$STATE_BUCKET/raw/wikidata_terms.json" $R2
           aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
-          aws s3 cp data/words.json "s3://$STATE_BUCKET/words.json" $R2
 
       - name: サイトをビルドする
         # 議員1,111ページと争点語82ページはビルド時に生成される。
@@ -275,7 +277,7 @@ jobs:
             fi
             if [ -f reports/trending_new_terms.md ]; then
               echo "- 争点語に未登録のトレンド語: $(grep -c '^| ' reports/trending_new_terms.md || true)件"
-              echo "  （足すなら **全年DBの作り直しが要る**。topic_id がずれるため）"
+              echo "  （足すなら **全期間のDBの作り直しが要る**。topic_id がずれるため）"
             fi
             if [ -f reports/frequent_words.md ]; then
               echo "- 頻出語の一覧: $(grep -c '^| ' reports/frequent_words.md || true)語"

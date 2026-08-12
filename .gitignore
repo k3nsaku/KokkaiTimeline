@@ -10,7 +10,6 @@ venv/
 data/raw/
 data/dist/
 data/politicians.json
-data/words.json
 data/*.db
 data/*.db-wal
 data/*.db-shm

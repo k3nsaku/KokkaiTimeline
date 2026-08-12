@@ -7,16 +7,17 @@
  *   **未記入のまま公開しないこと。**
  */
 import Base from "../layouts/Base.astro";
-import { politicians, topicSeries, manifest, trending, wordCount } from "../lib/site-data";
+import { politicians, topicSeries, manifest, trending } from "../lib/site-data";
 import { formatNumber } from "../lib/format";
 import { OPERATOR, missing, operatorReady } from "../lib/operator";
 
 const people = politicians();
-const years = manifest().years;
+const dbs = manifest().databases;
 const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
 const through = trending().through;
 const nTopics = topicSeries().topics.length;
-const nWords = wordCount();
+// 「1ファイル約◯MB × ◯本」を実測から出す。手で書くと必ず古くなる
+const biggestMb = Math.round(Math.max(...dbs.map((d) => d.size)) / 1e6);
 ---
 
 <Base title="このサイトについて" description="データの出どころ、できること、できないこと。">
@@ -39,19 +40,18 @@ const nWords = wordCount();
     <li>発言: {formatNumber(totalSpeeches)}件（名寄せできた議員のぶん）</li>
     <li>議員: {formatNumber(people.length)}人</li>
     <li>争点語: {nTopics}件（頻度推移を出す語です。運営が選んでいます）</li>
-    <li>2文字語の索引: {formatNumber(nWords)}語（検索のためのもので、機械抽出です）</li>
   </ul>
 
   <h2>できないこと・気をつけて読むところ</h2>
   <dl class="caveats">
-    <dt>2文字の語は「よく出てくるもの」しか引けません</dt>
+    <dt>ひらがなだけの2文字語は引けません</dt>
     <dd>
       全文検索の索引（trigram）は3文字未満のトークンを作れません。
       日本語の政治キーワードは2文字が多いので、
       「増税」「憲法」「年金」「原発」がまるごと引けなくなってしまいます。
-      そこで2文字の語だけ別の索引を持っています。会議録の全期間で
-      {formatNumber(nWords)}語ぶんあり、これに入っていない2文字語は引けません
-      （検索するとその旨が出ます）。ひらがなだけの2文字語も入っていません。
+      そこで2文字の語だけ別の索引を持っています。こちらは漢字・カタカナ・
+      アルファベットの2文字を<strong>会議録に出てくるかぎり全部</strong>入れてあるので、
+      珍しい語でも引けます。入っていないのはひらがなだけの2文字語です。
     </dd>
 
     <dt>頻度は必ず分母で割ってあります</dt>
@@ -112,7 +112,8 @@ const nWords = wordCount();
 
   <h2>仕組み</h2>
   <p>
-    サーバを持たない完全静的サイトです。年ごとに分けた SQLite（1ファイル約370MB × {years.length}年）を
+    サーバを持たない完全静的サイトです。半年ごとに分けた SQLite（{dbs.length}ファイル・
+    最大{formatNumber(biggestMb)}MB）を
     オブジェクトストレージに置き、ブラウザが HTTP Range で必要なページだけを読んでいます。
     検索も集計もすべて手元の端末で動いていて、何を検索したかはどこにも送られません。
   </p>

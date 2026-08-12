@@ -25,7 +25,7 @@ export function getStaticPaths() {
 
 const { word } = Astro.props;
 const data = frequent();
-const years = manifest().years;
+const periods = manifest().periods;
 
 const series = toSeries(data.months, word.series, data.speech_totals);
 const chart = monthlyChart(series, `${word.term} の月ごとの出現率`);
@@ -80,7 +80,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ term: word.term, years })}
+    set:html={JSON.stringify({ term: word.term, periods })}
   />
 
   <script>
@@ -93,29 +93,25 @@ const description =
 
     initSpeechPanel();
 
-    const { term, years } = JSON.parse(
+    const { term, periods } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
-    ) as { term: string; years: number[] };
+    ) as { term: string; periods: string[] };
 
     const statusEl = document.getElementById("status")!;
     const results = document.getElementById("results")!;
     const moreWrap = document.getElementById("more-wrap") as HTMLParagraphElement;
     const moreBtn = document.getElementById("more") as HTMLButtonElement;
 
-    let cursor: Record<number, number> | undefined;
+    let cursor: Record<string, number> | undefined;
     // ★ 引き先の判定は1回だけ。ページ送りでは使い回す（毎回引くと word を無駄に読む）
     let plan: QueryPlan | undefined;
 
     async function run(append: boolean) {
       const started = performance.now();
       try {
-        plan ??= await resolveQuery(term, years);
-        if (plan.mode === "none") {
-          statusEl.textContent = "この語は引けませんでした。";
-          return;
-        }
+        plan ??= await resolveQuery(term, periods);
         const page = await search({
-          query: term, plan, years, limit: 20, before: append ? cursor : undefined,
+          query: term, plan, periods, limit: 20, before: append ? cursor : undefined,
         });
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",

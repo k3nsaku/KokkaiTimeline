@@ -91,8 +91,8 @@ python scripts/build_politicians.py --fix 浜田聡
 ### 3. 反映する
 
 ```bash
-python scripts/build_politicians.py          # 議員マスタを作り直す
-python scripts/build_db.py --split-by-year   # 年DBに入れる
+python scripts/build_politicians.py     # 議員マスタを作り直す
+python scripts/build_db.py --split      # 期間DBに入れる（半期12本）
 ```
 
 `build_politicians.py` は**冪等**（同じ入力なら何度回しても同じ結果）。

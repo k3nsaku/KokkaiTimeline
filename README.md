@@ -35,7 +35,7 @@ LLM に「立場が変わったか」を判定させて事実として出すこ�
 ```
 [GitHub Actions（日次）]
     ↓ NDL 国会会議録API（差分のみ）
-    ↓ SQLite を生成（FTS5 + trigram / 年ごとに1ファイル）
+    ↓ SQLite を生成（FTS5 + trigram / 半期ごとに1ファイル）
     ↓ Cloudflare R2 にアップロード
 [Cloudflare Pages] ← 完全静的サイト（Astro）
     ↓
@@ -43,7 +43,7 @@ LLM に「立場が変わったか」を判定させて事実として出すこ�
 ```
 
 **検索はブラウザの中で完結する。** 検索語はどこにも送られない。
-ブラウザが 350〜420MB の SQLite を「必要な 8KB ページだけ」HTTP Range で
+ブラウザが最大 377MB の SQLite を「必要な 8KB ページだけ」HTTP Range で
 読みながら引く。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## リポジトリの構成
@@ -72,19 +72,18 @@ python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31
 # 2. 単一DBを作る（このあとの集計スクリプトの材料になる）
 python scripts/build_db.py --fresh
 
-# 3. 議員マスタ・争点語・2文字語の語彙・頻出語を作る
+# 3. 議員マスタ・争点語・頻出語を作る
 python scripts/fetch_wikidata.py
 python scripts/build_politicians.py
 python scripts/build_topics.py
-python scripts/build_words.py
 python scripts/build_frequent.py
 
-# 4. 配信用の年ごとDBを作る（data/dist/kokkai-YYYY.db）
-python scripts/build_db.py --split-by-year --page-size 8192
+# 4. 配信用の期間ごとDBを作る（data/dist/kokkai-YYYYH1.db）
+python scripts/build_db.py --split --page-size 8192
 ```
 
 **順番は入れ替えられない。** 3 は単一DBを読むので 2 が要り、
-4 は 3 の生成物（議員マスタ・争点語・語彙）を年DBに埋め込む。
+4 は 3 の生成物（議員マスタ・争点語）を期間DBに埋め込む。
 
 ```bash
 cd site && npm install

@@ -1,15 +1,21 @@
 ---
 /**
- * 検索。中身はすべてブラウザが年DBから引くので、ここは骨組みだけ。
+ * 検索。中身はすべてブラウザが期間DBから引くので、ここは骨組みだけ。
  *
- * 二段構え（`docs/DECISIONS.md`）:
- *   争点語リストにある語 → topic_hit を引く（0.7秒。2文字語もここでだけ引ける）
+ * 三段構え（`docs/DECISIONS.md`）:
+ *   争点語リストにある語 → topic_hit を引く（0.7秒）
+ *   2文字以下を含む語    → word_hit を引く（本文の2文字窓は全部索引にある）
  *   それ以外の任意語     → FTS5 trigram（1.5〜6秒）
+ *
+ * **絞り込みは年で見せる。** 配信DBは半期で割ってあるが、期間は年に閉じているので
+ * 年 → 期間の変換で日付の取りこぼしが出ない（`lib/query.ts` の `periodsInYearRange`）。
  */
 import Base from "../layouts/Base.astro";
 import { manifest, topicSeries, politicians, latestAffiliation } from "../lib/site-data";
+import { yearsOfPeriods } from "../lib/query";
 
-const years = manifest().years;
+const periods = manifest().periods;
+const years = yearsOfPeriods(periods);
 // 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）
 const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
 
@@ -66,7 +72,7 @@ const people = politicians().map((p) => {
         </label>
       </div>
       <p class="small muted">
-        期間は年単位で絞れます。年ごとに別のデータベースを引く仕組みなので、
+        期間は年単位で絞れます。期間ごとに別のデータベースを引く仕組みなので、
         年を減らすとそのぶん速くなります。
         <strong>この絞り込みは発言にだけ効きます</strong>（議員の検索には関係しません）。
       </p>
@@ -100,11 +106,12 @@ const people = politicians().map((p) => {
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ years, topics, people, kaihaTable, houseTable })}
+    set:html={JSON.stringify({ years, periods, topics, people, kaihaTable, houseTable })}
   />
 
   <script>
     import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
+             periodsInYearRange,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     import { renderSpeeches } from "../lib/render";
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
@@ -118,10 +125,10 @@ const people = politicians().map((p) => {
     interface TopicLite { id: number; term: string; variants: string[] }
     type PackedPerson = [number, string, string, number, number, number];
 
-    const { years, topics, people: packed, kaihaTable, houseTable } = JSON.parse(
+    const { periods, topics, people: packed, kaihaTable, houseTable } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
     ) as {
-      years: number[]; topics: TopicLite[];
+      years: number[]; periods: string[]; topics: TopicLite[];
       people: PackedPerson[]; kaihaTable: string[]; houseTable: string[];
     };
 
@@ -241,10 +248,15 @@ const people = politicians().map((p) => {
         || (t.variants ?? []).some((v) => v.toUpperCase() === q)) ?? null;
     }
 
-    function selectedYears(): number[] {
-      const from = Number(fromSelect.value), until = Number(untilSelect.value);
-      const [lo, hi] = from <= until ? [from, until] : [until, from];
-      return years.filter((y) => y >= lo && y <= hi);
+    /** 選ばれた年の範囲 → 引く期間ID。**配信DBは半期で割ってある**が、
+     *  期間は年に閉じているので、この変換で日付の取りこぼしは出ない。 */
+    function selectedPeriods(): string[] {
+      return periodsInYearRange(periods, Number(fromSelect.value), Number(untilSelect.value));
+    }
+
+    /** 状態表示に出す「◯年分」。ファイル数ではなく年数で言う（利用者の単位）。 */
+    function selectedYearCount(): number {
+      return new Set(selectedPeriods().map((p) => p.slice(0, 4))).size;
     }
 
     /** まだ一覧に無い会議名を選べるようにする。
@@ -271,7 +283,7 @@ const people = politicians().map((p) => {
     }
 
     let state: { opts: SearchOptions; terms: string[]; topic: TopicLite | null;
-                 plan: QueryPlan | null; before: Record<number, number> } | null = null;
+                 plan: QueryPlan | null; before: Record<string, number> } | null = null;
     /** 検索の世代。**古い検索が後から返ってきても捨てる**ための番号。
      *  重い検索の裏で条件を変えると、前の結果が新しい画面に混ざる。 */
     let generation = 0;
@@ -298,7 +310,7 @@ const people = politicians().map((p) => {
 
       const gen = ++generation;
       const topic = matchTopic(query);
-      const chosen = selectedYears();
+      const chosen = selectedPeriods();
 
       // 議員はDBを引かないので、発言の結果を待たずにここで確定する
       userPickedTab = false;
@@ -321,12 +333,10 @@ const people = politicians().map((p) => {
         const plan = topic ? null : await resolveQuery(query, chosen);
         if (gen !== generation) return;   // その間に次の検索が始まっていたら捨てる
         const opts: SearchOptions = {
-          query, topicId: topic?.id, plan: plan ?? undefined, years: chosen,
+          query, topicId: topic?.id, plan: plan ?? undefined, periods: chosen,
           meetingName: meetingSelect.value || undefined, limit: 20,
         };
         state = { opts, terms: splitTerms(query), topic, plan, before: {} };
-
-        if (plan?.mode === "none") { showUnsupported(plan.unsupported); return; }
 
         const page = await search(opts);
         if (gen !== generation) return;
@@ -339,37 +349,23 @@ const people = politicians().map((p) => {
       }
     }
 
-    /** 2文字以下の語が語彙にも争点語にも無い場合。**黙って0件にしない。**
+    /** 0件のときに出す、その語を含む争点語。**行き止まりにしないための導線。**
      *
-     *  ここは議員名を打たれたときに通りやすい経路でもある（姓は2文字が多く、
-     *  語彙に入っているとは限らない）。発言0件なので、議員に当たりがあれば
-     *  そちらのタブへ寄せる。 */
-    function showUnsupported(unsupported: string[]) {
-      el("count-speeches").textContent = " 0";
-      autoSelectTab(0);
-      statusEl.textContent = "0件";
-      const words = unsupported.map((w) => `「${escapeHtml(w)}」`).join("");
-      // 埋め込んである争点語から、その語を含むものを代わりに出す。
+     *  以前は「2文字語が語彙に無い」ときの案内としてこれを出していた。索引が
+     *  本文の2文字窓を全部持つようになって「引けない語」が無くなったので、
+     *  **条件を「本当に0件だったとき」に付け替えてある**。
+     *
+     *  0件は議員名を打たれたときにも起きる（姓は発言本文にあまり出ない）。
+     *  そのときは議員のタブに当たりがあるので、`autoSelectTab` がそちらへ寄せる。 */
+    function relatedTopicChips(terms: string[]): string {
       // **大文字小文字は無視する**（matchTopic と同じ理由。`ai` で `生成ＡＩ` を出す）
       const related = topics
-        .filter((t) => unsupported.some((w) => t.term.toUpperCase().includes(w.toUpperCase())))
+        .filter((t) => terms.some((w) => t.term.toUpperCase().includes(w.toUpperCase())))
         .slice(0, 12);
-      const chips = related.length
-        ? `<p class="small">この語を含む争点語なら引けます:</p>
-           <ul class="chips">${related.map((t) =>
-             `<li><a class="chip" href="/topic/${t.id}">${escapeHtml(t.term)}</a></li>`).join("")}</ul>`
-        : `<p class="small">3文字以上のもう少し具体的な語で試すか、
-            <a href="/topics">争点語の一覧</a>から探してみてください。</p>`;
-
-      results.innerHTML = `
-        <div class="notfound">
-          <p>${words}は検索できません。</p>
-          <p class="small muted">
-            2文字以下の語は、会議録に十分な回数出てくるものだけを索引にしています
-            （全文検索の索引は3文字未満を作れないため）。この語は届いていません。
-          </p>
-          ${chips}
-        </div>`;
+      if (!related.length) return "";
+      return `<p class="small">この語を含む争点語なら、まとまった集計があります:</p>
+        <ul class="chips">${related.map((t) =>
+          `<li><a class="chip" href="/topic/${t.id}">${escapeHtml(t.term)}</a></li>`).join("")}</ul>`;
     }
 
     function show(page: SearchPage, started: number, gen: number) {
@@ -379,7 +375,10 @@ const people = politicians().map((p) => {
       if (!page.rows.length) {
         el("count-speeches").textContent = " 0";
         autoSelectTab(0);
-        results.innerHTML = `<p class="status">一致する発言はありませんでした。</p>`;
+        results.innerHTML = `<div class="notfound">
+          <p>一致する発言はありませんでした。</p>
+          ${relatedTopicChips(state?.terms ?? [])}
+        </div>`;
         statusEl.textContent = `0件・${elapsed}ms${convertedNote}`;
         return;
       }
@@ -387,7 +386,7 @@ const people = politicians().map((p) => {
       autoSelectTab(page.rows.length);
       results.insertAdjacentHTML("beforeend", renderSpeeches(page.rows, renderOpts()));
       statusEl.textContent =
-        `${state!.opts.years!.length}年分を並列に検索・${elapsed}ms${convertedNote}`;
+        `${selectedYearCount()}年分を並列に検索・${elapsed}ms${convertedNote}`;
 
       // 総件数は別に数える。FTS の COUNT は結果取得と同じくらい重いので待たせない
       const opts = state!.opts;
@@ -397,7 +396,8 @@ const people = politicians().map((p) => {
         const how = state.topic ? "（争点語の集計から）"
           : state.plan?.mode === "word" ? "（2文字語の索引から）" : "";
         statusEl.textContent =
-          `${formatNumber(n)}件${how}・${opts.years!.length}年分を並列に検索・${elapsed}ms${convertedNote}`;
+          `${formatNumber(n)}件${how}・${selectedYearCount()}年分を並列に検索`
+          + `・${elapsed}ms${convertedNote}`;
       }).catch((e) => console.warn("件数を数えられなかった", e));
     }
 
@@ -431,7 +431,7 @@ const people = politicians().map((p) => {
       const gen = ++meetingGen;
       const keep = meetingSelect.value;   // 選択中の会議は期間外でも外さない
       try {
-        const names = await meetingNames(selectedYears());
+        const names = await meetingNames(selectedPeriods());
         if (gen !== meetingGen) return;
         meetingSelect.innerHTML = `<option value="">すべて</option>`;
         meetingSelect.insertAdjacentHTML("beforeend",

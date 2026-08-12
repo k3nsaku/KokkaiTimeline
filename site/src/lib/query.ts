@@ -1,5 +1,5 @@
 /**
- * 検索の SQL 組み立てと、年をまたぐページ送りの計算。
+ * 検索の SQL 組み立てと、期間をまたぐページ送りの計算。
  *
  * **ここには sql.js-httpvfs を持ち込まない。** DBとの通信は `db.ts` の仕事で、
  * この層は「どんな SQL とパラメータを投げるか」「返ってきた行をどう均すか」
@@ -39,10 +39,11 @@ export interface SearchOptions {
   topicId?: number;
   politicianId?: number;
   meetingName?: string;
-  years?: number[];
+  /** 対象の期間ID（`2026H1`）。省略すると目録にある全期間 */
+  periods?: string[];
   limit?: number;
-  /** 年 → その年で「ここより前」を続きとして読む rowid。keyset ページング用 */
-  before?: Record<number, number>;
+  /** 期間ID → その期間で「ここより前」を続きとして読む rowid。keyset ページング用 */
+  before?: Record<string, number>;
   /**
    * `resolveQuery()` の結果。**1回だけ解いて、ページ送りでは使い回す。**
    * 省略すると FTS 扱いになる（＝2文字語は引けない）ので、
@@ -54,7 +55,7 @@ export interface SearchOptions {
 export interface SearchPage {
   rows: SpeechRow[];
   /** 次ページ用のカーソル。空なら打ち止め */
-  before: Record<number, number>;
+  before: Record<string, number>;
   done: boolean;
 }
 
@@ -63,15 +64,16 @@ export interface SearchPage {
  *
  *   fts  : 全部3文字以上。FTS5 trigram（1.5〜6秒）
  *   word : 2文字以下の語がある。`word_hit` を引く
- *   none : 2文字以下の語が語彙に無い。**引けない**ので、代わりの案を出す
+ *
+ * **「引けない語」という状態は無い。** 2文字語の索引は本文の2文字窓を全部持つので
+ * （`scripts/build_db.py` の `build_word_index`）、索引に無い語は素直に0件になる。
+ * 以前は語彙リストに載っている語しか引けず、`mode: "none"` で代わりの案を出していた。
  */
 export type QueryPlan =
   | { mode: "fts"; match: string }
   /** driver / filters とも、2文字以下の語は `toWordKey()` で畳んだ形が入る
-   *  （語彙も本文もそれで引ける）。3文字以上の語は打たれたまま。 */
-  | { mode: "word"; driver: string; filters: string[] }
-  /** 引けなかった語。**打たれたまま**を入れる（画面にそのまま出すため） */
-  | { mode: "none"; unsupported: string[] };
+   *  （索引も本文もそれで引ける）。3文字以上の語は打たれたまま。 */
+  | { mode: "word"; driver: string; filters: string[] };
 
 // --- 検索語 ---------------------------------------------------------------
 
@@ -108,7 +110,7 @@ export function toFullWidth(input: string): string {
  *     `ａｉ` になり、語彙の `ＡＩ` に当たらず「引けない」と出る
  *
  * **3文字以上の語には掛けないこと**（`ＳＤＧｓ` が `ＳＤＧＳ` になって本文に当たらない）。
- * 語彙側は `scripts/build_words.py` の `fold()` が同じ写像を掛けてある。
+ * 索引側は `scripts/build_db.py` の `fold_word_run()` が同じ写像を掛けてある。
  */
 export function toWordKey(term: string): string {
   return term.replace(/[ａ-ｚ]/g, (c) =>
@@ -158,30 +160,94 @@ export function wordProbeKeys(terms: string[]): string[] {
 }
 
 /**
- * 語彙の引き当て結果から `QueryPlan` を組む。**DBに触らない**ので `site/test/` から検証できる。
+ * 索引の引き当て結果から `QueryPlan` を組む。**DBに触らない**ので `site/test/` から検証できる。
  *
  * @param terms  `splitTerms()` の結果（打たれたまま・全角化済み）
- * @param counts `wordProbeKeys()` で引けた語 → その年の件数。引けなかった語は入っていない
+ * @param counts `wordProbeKeys()` で引けた語 → 対象期間の合計件数。
+ *               **どの期間にも無い語は入っていない**（＝0件）
  */
 export function wordPlan(terms: string[], counts: Map<string, number>): QueryPlan {
   // 2文字以下だけ畳む。**3文字以上に掛けてはいけない**（`ＳＤＧｓ` → `ＳＤＧＳ` で本文に当たらない）
   const keys = terms.map((t) => (t.length < 3 ? toWordKey(t) : t));
   const shortAt = terms.map((_, i) => i).filter((i) => terms[i].length < 3);
+  // 語が無い（空の検索）ときは、当たりようのない driver を返して0件にする。
+  // `MATCH ''` は FTS5 の構文エラーになるので、FTS 経路に流してはいけない
+  if (!terms.length) return { mode: "word", driver: "", filters: [] };
   if (!shortAt.length) return { mode: "fts", match: phraseAnd(terms) };
 
-  // 出すのは**打たれたまま**の語。畳んだ形（`ＡＩ`）を見せても利用者には通じない
-  const unsupported = shortAt.filter((i) => !counts.has(keys[i])).map((i) => terms[i]);
-  if (unsupported.length) return { mode: "none", unsupported };
-
   // いちばん珍しい2文字語を起点にする。走査する行数がこれで決まる。
+  // **どこにも無い語（count 0）はそのまま起点になる** ＝ 全期間で0件。
+  // これでよい: 索引は本文の2文字窓を全部持っているので、無い＝本当に出てこない。
+  //
   // **残りは添字で外す。** 畳むと元の語と別物になりうるので、値で比較してはいけない
   // （`ai 増税` の driver は `ＡＩ`。`ａｉ` が filters に残ると instr が 0 を返して全滅する）
-  const driverAt = shortAt.reduce((best, i) =>
-    counts.get(keys[i])! < counts.get(keys[best])! ? i : best);
+  const at = (i: number) => counts.get(keys[i]) ?? 0;
+  const driverAt = shortAt.reduce((best, i) => (at(i) < at(best) ? i : best));
   return { mode: "word", driver: keys[driverAt], filters: keys.filter((_, i) => i !== driverAt) };
 }
 
-/** speech_id は `<issue_id>_<連番>` で、issue_id の末尾8桁が日付。年DBの選択に使う。 */
+// --- 期間（配信DBの分割単位）----------------------------------------------
+
+/** 目録が持つ分割規則。`scripts/build_db.py` の `--period` と同じ語。 */
+export type PeriodRule = "half" | "year";
+
+/**
+ * 日付（`YYYY-MM-DD`）→ 期間ID。**`scripts/build_db.py` の `period_of()` と同じ写像。**
+ * 片方だけ変えると、存在しないファイルを引きに行って検索が丸ごと止まる。
+ *
+ * 半期にしているのは、1ファイルが 512MB を超えると**黙って CDN キャッシュから
+ * 外れる**ため（RTT 8ms → 77ms）。満年は実測 368〜419MB で余裕が無い。
+ *
+ * **期間は必ず年に閉じている。** だから利用者に見せる絞り込みは「年」のままにできる
+ * （1年＝2ファイル、日付の取りこぼしなし）。
+ */
+export function periodOf(date: string, rule: PeriodRule = "half"): string {
+  const year = date.slice(0, 4);
+  if (rule === "year") return year;
+  return `${year}H${date.slice(5, 7) <= "06" ? "1" : "2"}`;
+}
+
+/** 期間ID → 年。期間は年に閉じているので先頭4文字でよい。 */
+export function yearOfPeriod(period: string): number {
+  return Number(period.slice(0, 4));
+}
+
+/** 目録の期間IDから、絞り込みに出す年の一覧を作る（古い順）。 */
+export function yearsOfPeriods(periods: string[]): number[] {
+  return [...new Set(periods.map(yearOfPeriod))].sort((a, b) => a - b);
+}
+
+/**
+ * 年の範囲（両端を含む）に重なる期間ID。
+ *
+ * **利用者に見せる絞り込みは年のまま**で、ここでファイルに直す。
+ * 期間が年に閉じている（`periodOf` の注記）ので、この写像で日付の取りこぼしが出ない。
+ * 会期で割るとここが成立しない——年をまたぐ会期があるため、
+ * 「2023年だけ」を選べなくなる。
+ */
+export function periodsInYearRange(periods: string[], from: number, until: number): string[] {
+  const [lo, hi] = from <= until ? [from, until] : [until, from];
+  return periods.filter((p) => yearOfPeriod(p) >= lo && yearOfPeriod(p) <= hi);
+}
+
+/** `YYYYMMDD` を `YYYY-MM-DD` に。issue_id / speech_id から日付を取り出すため。 */
+function dashed(compact: string): string {
+  return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+}
+
+/** issue_id は末尾8桁が日付。期間DBの選択に使う。 */
+export function periodOfIssueId(issueId: string, rule: PeriodRule = "half"): string | null {
+  const date = dashed(issueId.slice(-8));
+  return Number(date.slice(0, 4)) > 1900 ? periodOf(date, rule) : null;
+}
+
+/** speech_id は `<issue_id>_<連番>`。期間DBの選択に使う。 */
+export function periodOfSpeechId(speechId: string, rule: PeriodRule = "half"): string | null {
+  const m = /^(.+?)_(\d+)$/.exec(speechId);
+  return m ? periodOfIssueId(m[1], rule) : null;
+}
+
+/** speech_id の年。**表示の見出し用**（引き先の決定には期間IDを使う）。 */
 export function yearOfSpeechId(speechId: string): number | null {
   const m = /^(.+?)_(\d+)$/.exec(speechId);
   const year = Number(m?.[1].slice(-8, -4));
@@ -240,7 +306,7 @@ function topicSql(o: Shape) {
 /**
  * 2文字語の検索。FTS5 の trigram は3文字未満のトークンを作れないので、
  * 「増税」「憲法」「年金」「原発」は**原理的に FTS では引けない**。
- * `word` / `word_hit`（機械抽出の語彙、`scripts/build_words.py`）を引く。
+ * `word` / `word_hit`（本文の2文字窓を全部入れた索引、`scripts/build_db.py`）を引く。
  *
  * 複数語のときは**いちばん珍しい2文字語を起点**にして、残りは `instr()` で絞る。
  * 走査する行数が起点の語の件数で頭打ちになるので、起点の選び方が効く。
@@ -369,48 +435,50 @@ export function countQuery(
         WHERE speech_fts MATCH ? ${filterSql}`, [match, ...filterParams]];
 }
 
-// --- 年をまたぐページ送り -------------------------------------------------
+// --- 期間をまたぐページ送り -----------------------------------------------
 
 /**
- * 年ごとの結果を全体の「新しい順」に均し、次ページのカーソルを決める。
+ * 期間ごとの結果を全体の「新しい順」に均し、次ページのカーソルを決める。
  *
- * 年DBは日付で綺麗に分かれている（build_db.py が年で分ける）ので、新しい年から
+ * 期間DBは日付で綺麗に分かれている（build_db.py が期間で分ける）ので、新しい期間から
  * 順に並べるだけで全体が日付の降順になる。マージソートは要らない。
+ * **この前提は分割単位を変えても崩してはいけない**（会期で割ると日付が重なりうる）。
  *
- * **ただし年ごとに LIMIT を掛けているので、そのまま連結してはいけない。**
- * 6年ぶんなら 20件のつもりが 120件返るうえ、「2026年の21件目」を飛ばして
- * 2025年へ進んでしまう。次ページで飛ばした分を後ろに足すと、画面上の
- * 「新しい順」がそこで崩れる。全体で limit 件に切り、**出さなかった年は
+ * **ただし期間ごとに LIMIT を掛けているので、そのまま連結してはいけない。**
+ * 12期間ぶんなら 20件のつもりが 240件返るうえ、「2026H1の21件目」を飛ばして
+ * 2025H2へ進んでしまう。次ページで飛ばした分を後ろに足すと、画面上の
+ * 「新しい順」がそこで崩れる。全体で limit 件に切り、**出さなかった期間は
  * カーソルを進めない**（次ページで同じところから引き直す。読んだページは
  * ワーカのキャッシュに残っているので安い）。
  *
- * カーソルは年ごとに「ここより前の rowid」。LIMIT に満たなかった年は読み切りなので
+ * カーソルは期間ごとに「ここより前の rowid」。LIMIT に満たなかった期間は読み切りなので
  * 0 を入れ、次から問い合わせ自体をしない。OFFSET を使わないのは、5ページ目が
  * 134リクエスト・4.1秒になるため（`docs/DECISIONS.md`）。
  *
- * @param years   新しい順に並んだ対象年
- * @param perYear years と同じ並びの、年ごとの取得結果（それぞれ最大 limit 件）
+ * @param periods   新しい順に並んだ対象期間
+ * @param perPeriod periods と同じ並びの、期間ごとの取得結果（それぞれ最大 limit 件）
  */
 export function mergePages(
-  years: number[], perYear: SpeechRow[][], limit: number, before: Record<number, number>,
+  periods: string[], perPeriod: SpeechRow[][], limit: number, before: Record<string, number>,
 ): SearchPage {
   const rows: SpeechRow[] = [];
-  const next: Record<number, number> = {};
+  const next: Record<string, number> = {};
 
-  years.forEach((year, i) => {
-    const got = perYear[i];
-    if (before[year] === 0 || !got.length) { next[year] = 0; return; }  // その年は読み切り
+  periods.forEach((period, i) => {
+    const got = perPeriod[i];
+    if (before[period] === 0 || !got.length) { next[period] = 0; return; }  // 読み切り
 
     const take = got.slice(0, limit - rows.length);
     if (!take.length) {
-      // 枠が尽きて1件も出せなかった年。**カーソルを進めない**（次ページで同じ続きから）
-      if (year in before) next[year] = before[year];
+      // 枠が尽きて1件も出せなかった期間。**カーソルを進めない**（次ページで同じ続きから）
+      if (period in before) next[period] = before[period];
       return;
     }
     rows.push(...take);
-    // 出し切っていて、かつ LIMIT にも届いていなければ、その年はもう無い
-    next[year] = take.length === got.length && got.length < limit ? 0 : take[take.length - 1].rowid;
+    // 出し切っていて、かつ LIMIT にも届いていなければ、その期間はもう無い
+    next[period] = take.length === got.length && got.length < limit
+      ? 0 : take[take.length - 1].rowid;
   });
 
-  return { rows, before: next, done: years.every((y) => next[y] === 0) };
+  return { rows, before: next, done: periods.every((p) => next[p] === 0) };
 }

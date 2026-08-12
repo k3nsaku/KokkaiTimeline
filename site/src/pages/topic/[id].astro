@@ -18,7 +18,7 @@ export function getStaticPaths() {
 
 const { topic } = Astro.props;
 const data = topicSeries();
-const years = manifest().years;
+const periods = manifest().periods;
 
 const series = data.series[String(topic.id)] ?? {};
 const overall = toSeries(data.months, series["*"] ?? [], data.speech_totals["*"] ?? []);
@@ -109,7 +109,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ topicId: topic.id, term: topic.term, years })}
+    set:html={JSON.stringify({ topicId: topic.id, term: topic.term, periods })}
   />
 
   <script>
@@ -122,22 +122,23 @@ const description =
 
     initSpeechPanel();
 
-    const { topicId, term, years } = JSON.parse(
+    const { topicId, term, periods } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
-    ) as { topicId: number; term: string; years: number[] };
+    ) as { topicId: number; term: string; periods: string[] };
 
     const statusEl = document.getElementById("status")!;
     const results = document.getElementById("results")!;
     const moreWrap = document.getElementById("more-wrap") as HTMLParagraphElement;
     const moreBtn = document.getElementById("more") as HTMLButtonElement;
 
-    let cursor: Record<number, number> | undefined;
+    let cursor: Record<string, number> | undefined;
 
     async function run(append: boolean) {
       const started = performance.now();
       try {
         // 争点語は FTS を通さず topic_hit を引く。3.3倍速く、2文字語もここでだけ引ける
-        const page = await search({ topicId, years, limit: 20, before: append ? cursor : undefined });
+        const page = await search({ topicId, periods, limit: 20,
+                                    before: append ? cursor : undefined });
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",
           renderSpeeches(page.rows, { terms: [term], groupByYear: true }));

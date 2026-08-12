@@ -1,12 +1,12 @@
 /**
  * `data/dist` を Range 対応で配る。R2 の代わり。
  *
- * 本番の年DBは R2 に置く（1ファイル約370MB × 6年 = 2.05GB）。`site/public/` に
+ * 本番の期間DBは R2 に置く（半期ごと12ファイル・最大377MB・合計2.42GB）。`site/public/` に
  * 入れると `astro build` が dist へ丸ごとコピーしてしまうので、開発サーバの
  * ミドルウェアとして直接配る。プロセスを増やさずに済む。
  *
- *   /db/kokkai-2025.db  → ../data/dist/kokkai-2025.db（Range 対応）
- *   /db/manifest.json   → 年DBの目録（build_db.py が出力）
+ *   /db/kokkai-2025H1.db → ../data/dist/kokkai-2025H1.db（Range 対応）
+ *   /db/manifest.json    → 期間DBの目録（build_db.py が出力）
  *
  * あわせて `/speech/<speech_id>` を `/speech` に書き換える。発言は 650,785 件あって
  * 事前生成できないため、本番では `public/_redirects` の 200 rewrite が同じ役割をする。
@@ -82,6 +82,7 @@ async function serve(req, res, filePath) {
   }
 
   const [start, end] = range;
+  record(path.basename(filePath), end - start + 1);
   res.writeHead(206, {
     ...headers,
     "content-range": `bytes ${start}-${end}/${stat.size}`,
@@ -99,10 +100,36 @@ async function serve(req, res, filePath) {
   createReadStream(filePath, { start, end }).pipe(res);
 }
 
+/**
+ * Range リクエストの計測。**この設計の費用はリクエスト数で決まる**ので
+ * （待ち時間 ≒ リクエスト数 × RTT・`docs/DECISIONS.md`）、分割の単位や索引を変えたら
+ * ここで数える。**ワーカ内の fetch はブラウザの計測APIにも DevTools にも出てこない**ので、
+ * 配る側で数えるしかない。
+ *
+ *   検索したあと GET /db/__trace → {total, files: {ファイル: {n, bytes}}}
+ *   **読むと0に戻る**ので、測りたい操作の直前に1回叩いてから測る。
+ */
+const trace = new Map();
+
+function record(name, bytes) {
+  const seen = trace.get(name) ?? { n: 0, bytes: 0 };
+  trace.set(name, { n: seen.n + 1, bytes: seen.bytes + bytes });
+}
+
 /** `/db/<name>` を data/dist から返す。範囲外のパスは弾く。true なら処理済み。 */
 function handleDb(req, res) {
   const url = new URL(req.url, "http://localhost");
   if (!url.pathname.startsWith("/db/")) return false;
+
+  if (url.pathname === "/db/__trace") {
+    const rows = Object.fromEntries([...trace].sort());
+    const total = [...trace.values()].reduce(
+      (a, v) => ({ n: a.n + v.n, bytes: a.bytes + v.bytes }), { n: 0, bytes: 0 });
+    trace.clear();
+    res.writeHead(200, { "content-type": MIME[".json"] });
+    res.end(JSON.stringify({ total, files: rows }, null, 1));
+    return true;
+  }
 
   const resolved = path.join(DATA_DIR, path.normalize(url.pathname.slice("/db/".length)));
   if (!resolved.startsWith(DATA_DIR)) {

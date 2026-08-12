@@ -9,19 +9,20 @@
 
 | 手順 | やること | 目安 |
 |---|---|---|
-| 1 | R2 から生データ・議員マスタ・語彙・目録を戻す | 1〜2分 |
+| 1 | R2 から生データ・議員マスタ・目録を戻す | 1〜2分 |
 | 2 | Wikidata の議員リスト（**無いときと月初だけ**） | 通常0分 / 取るときは数分 |
 | 3 | **前月と当月**の会議録を `--force` で取り直す | 会期中は20〜60分（NDLへ3秒間隔） |
 | 4 | 集計の材料になる単一DBを作り直す（`--no-fts`） | 3〜5分 |
 | 5 | 議員マスタ・争点語の集計・週次トレンド | 5〜15分 |
 | 5b | 頻出語レイヤー（`build_frequent.py`） | 約1分 |
 | 5c | 議員ごとの発言数の推移（`build_activity.py`） | 数秒 |
-| 6 | **当年**（1月は前年も）の配信用DBを作り直す | 30〜60秒 |
-| 7 | 年DBと目録を R2 へ | 1〜2分 |
+| 6 | **触った期間**（7月と1月は前の期間も）の配信用DBを作り直す | 10〜60秒 |
+| 6b | 配信DBが 512MB のキャッシュ上限に収まっているか確かめる | 数秒 |
+| 7 | 期間DBと目録を R2 へ | 1〜2分 |
 | 8 | サイトをビルドして Pages へ | 1〜2分 |
 
-過去年のDBは触らない。**変わるのは当年の1ファイルだけ**なので、
-CDN キャッシュは過去年ぶんが効き続ける。
+閉じた期間のDBは触らない。**変わるのは1〜2ファイルだけ**なので、
+CDN キャッシュは残りが効き続ける。配信DBは半期で割ってある（`2026H1` = 1〜6月）。
 
 **実測（2026-08-06 の初回実行 / run 31086294777）: 全体で4分37秒。**
 上の目安は会期中の見積もりで、**閉会中はこの1/10で終わる。**
@@ -31,13 +32,12 @@ CDN キャッシュは過去年ぶんが効き続ける。
 **取り直す範囲を当月だけにしない。** 会議録は会議の当日には出ない。月末の会議が
 翌月になって公開された分と、前月以前に入った訂正を、当月だけだと二度と拾えない
 （`fetch_range.py` はその月を完成済みとして扱うので、`--force` の範囲から外れた
-時点で永久に更新されなくなる）。前月1日から取り直すぶん、**1月は前年12月に触る**
-ので、当年に加えて前年のDBも作り直す（`--year` は複数指定できる）。
+時点で永久に更新されなくなる）。前月1日から取り直すぶん、**7月は6月に、1月は前年12月に
+触る**ので、当該期間に加えて前の期間も作り直す（`--id` は複数指定できる）。
 
 ### 走らせないもの
 
-- **`scripts/build_words.py`（2文字語の語彙）** — 下の「語彙を作り直すとき」を読むこと
-- **全年の再構築** — 手動（`workflow_dispatch` の `all_years`）
+- **全期間の再構築** — 手動（`workflow_dispatch` の `all_years`）
 - **`scripts/fetch_wikidata.py` を毎日** — SPARQL エンドポイントは共用資源。
   ただし**手元に `data/raw/wikidata_members.json` が無ければ必ず取る**
   （無いまま進むと `build_politicians.py` がその場で終了して、以降の手順に届かない）
@@ -101,45 +101,39 @@ CDN キャッシュは過去年ぶんが効き続ける。
 
 `site/src/lib/db.ts` の `&retry=` は残す。1時間待たずにその場で復旧させるため。
 
-## ★ 語彙を作り直すとき
+## ★ 争点語を変えるとき
 
-**`build_words.py` を日次で回してはいけない。**
+**`data/topics.json` を1語でも触ったら、全期間のDBを作り直すこと。**
 
-2文字語の語彙は各年DBに焼き込まれている。当年だけ作り直すと当年の語彙だけが
-新しくなり、検索は「語彙は年によらない」前提でいちばん新しい年だけを見て
-「その語を引けるか」を判定するので、**新語を引くと過去年が黙って0件になる**。
-エラーも警告も出ない。
-
-作り直すときは必ずこの順で:
+`topic_hit` の `topic_id` は `topics.json` の並びで決まる。一部の期間だけ作り直すと
+**`/topic/<id>` が別の争点の発言を出す**（引けなくなるのではなく、黙って中身が入れ替わる）。
 
 ```bash
-python scripts/build_words.py                                  # data/words.json
-python scripts/build_db.py --split-by-year --page-size 8192    # 全年（約6分）
+python scripts/build_topics.py                          # dist/topics.json・trending.json
+python scripts/build_db.py --split --page-size 8192     # 全期間（実測 約6分・12本）
 ```
 
 CI からやるなら `workflow_dispatch` を `all_years=true` で実行する。
+安全網として、各期間DBの `meta` に争点語の指紋が入っている。
 
-**★作り直したら `words.json` を状態バケットにも上げること。**
-日次は実行のたびに `s3://<state>/words.json` から語彙を**戻してから**DBを作る。
-ここが古いと、手元とR2の年DBをいくら新しくしても**次の日次で古い語彙に巻き戻る**
-（最後に同じものが書き戻されるので自然には直らない）。
+> **2文字語の語彙を作り直す作業はもう無い**（2026-08-12）。
+> 索引は本文の2文字窓を全部拾うようになり、`build_words.py` と `data/words.json`、
+> 状態バケットへの受け渡し、語彙の指紋の検査はすべて消えた。
+> **語彙が期間をまたいで食い違うと過去が黙って0件になる**という事故クラスごと無くなっている。
 
-```bash
-aws s3 cp data/words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
-```
+## ★ 分割の単位を変えるとき
 
-直近でこれをやったのは **2026-08-03（`docs/DECISIONS.md`・2文字の全角ラテン）**。
-語彙 16,058 → **16,264件**。`build_words.py` の `RUN_PATTERN` と `build_db.py` の
-`WORD_RUN_PATTERN` を**両方**直し（片方だけは禁止）、全年を作り直して
-R2・状態バケット・Pages まで手で反映済み。
+配信DBは半期で割ってある。単位は2か所に書いてあり、**必ず両方を同時に変える**:
 
-安全網として、各年DBの `meta` テーブルに語彙の指紋を入れてあり、
-`manifest.json` にも載る。食い違うと `build_db.py` が警告を出し、
-ワークフローは**その場で失敗する**（「語彙が年をまたいで揃っているか」の手順）。
+- `scripts/build_db.py` の `period_of()`（`--period half|year`）
+- `site/src/lib/query.ts` の `periodOf()`
 
-**同じことが `data/topics.json`（争点語）にも当てはまる。** ただし壊れ方は違う。
-語彙は「引けなくなる」だけだが、争点語は**`topic_hit` の `topic_id` がずれる**ので、
-`/topic/<id>` が**別の争点の発言を出す**。語を1つ足すだけでも全年を作り直すこと。
+片方だけ変えると、サイトが**存在しないファイル名を組み立てて検索が丸ごと止まる**。
+変えたら全期間を作り直し、R2 の古いファイルを消すこと（目録から消えても R2 には残る）。
+
+判断の材料は `docs/DECISIONS.md`「DBは半期ごとに分割する」。
+**1ファイル 512MB を超えると黙って CDN キャッシュから外れる**のが唯一の制約で、
+日次はその手前（480MB）で失敗するようにしてある。
 
 ---
 
@@ -210,8 +204,8 @@ R2・状態バケット・Pages まで手で反映済み。
 
 | バケット | 用途 | Location | Storage class | 公開 |
 |---|---|---|---|---|
-| `kokkai-timeline` | 年DB（約2.1GB）と `manifest.json` | APAC（Automatic で可） | Standard | **公開**（カスタムドメイン） |
-| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ・語彙 | Automatic で可 | Standard | 非公開 |
+| `kokkai-timeline` | 期間DB（約2.4GB）と `manifest.json` | APAC（Automatic で可） | Standard | **公開**（カスタムドメイン） |
+| `kokkai-timeline-state` | 生データ（約1.2GB）・議員マスタ | Automatic で可 | Standard | 非公開 |
 
 **Jurisdiction（`Specify` の EU など）は選ばない。** データ所在地の法規制向けの設定で、
 作成後は変更できない。地域ヒントとは別物。
@@ -539,7 +533,6 @@ aws s3 sync data\raw\speeches s3://kokkai-timeline-state/raw/speeches --endpoint
 aws s3 cp data\raw\wikidata_members.json s3://kokkai-timeline-state/raw/wikidata_members.json --endpoint-url $R2
 aws s3 cp data\raw\wikidata_terms.json s3://kokkai-timeline-state/raw/wikidata_terms.json --endpoint-url $R2
 aws s3 cp data\politicians.json s3://kokkai-timeline-state/politicians.json --endpoint-url $R2
-aws s3 cp data\words.json s3://kokkai-timeline-state/words.json --endpoint-url $R2
 
 # cache-control は日次ジョブと同じにする。**immutable は付けない**
 # （エッジは s-maxage で1年。上の「immutable は付けない」）
@@ -624,12 +617,12 @@ npx --yes wrangler@4 pages deploy site\dist --project-name kokkai-timeline --bra
 
 ### 初回実行で特に見るところ
 
-- **`2文字語の語彙が年をまたいで揃っているか` の手順で落ちないか。**
-  落ちたら語彙がずれている（「語彙を作り直すとき」を読む）
+- **`配信DBが CDN のキャッシュ上限に収まっているか` の手順で落ちないか。**
+  落ちたら分割を細かくする（「分割の単位を変えるとき」を読む）
 - **`議員ID台帳が増えていたらコミットする` が push できるか。**
   ここが失敗したら放置しない。台帳を失うと公開後のURLが全部変わる
-- **目録の `years` が6年そろっているか。** CI は当年しかDBを置かないので、
-  前回の目録を引き継げていないと当年1年に痩せる
+- **目録の `periods` が12期間そろっているか。** CI は触った期間しかDBを置かないので、
+  前回の目録を引き継げていないと1〜2期間に痩せる
 
 ---
 
@@ -643,7 +636,8 @@ GitHub は**定期実行が失敗すると、そのワークフローファイ�
 | 症状 | 見るところ |
 |---|---|
 | `aws s3 ls` が AccessDenied | **正常。** バケット一覧は管理操作で、Object Read & Write には含まれない。`aws s3 ls s3://<バケット>/` で確かめる |
-| 検索が過去年だけ0件 | 語彙の食い違い。上の「語彙を作り直すとき」 |
+| 検索が特定の期間だけ0件 | 目録の `periods` が痩せていないか。R2 の目録を復元できているか |
+| 検索が急に10倍遅い | どれかのDBが 512MB を超えてキャッシュから外れた（`cf-cache-status`） |
 | 検索がまったく動かない | R2 の CORS（手順3）。ブラウザのコンソールに CORS エラーが出る |
 | サイトは出るが発言が出ない | `PUBLIC_DB_BASE` の値、カスタムドメインの疎通 |
 | 議員IDの台帳が push できない | **放置しない。** 台帳を失うと公開後のURLが全部変わる |

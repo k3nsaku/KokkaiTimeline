@@ -697,7 +697,7 @@ def fix_politician(query: str, out_path: Path, overrides_path: Path,
     print("     さらに割るときは区間を足すだけでよい。発言数は数え直される")
     print('  2. 訂正の経緯を残すなら "_note" に書く（自由記述。上書きされない）')
     print("  3. python scripts/build_politicians.py")
-    print("  4. python scripts/build_db.py --split-by-year   ← 年DBに反映")
+    print("  4. python scripts/build_db.py --split   ← 期間DBに反映")
     return 0
 
 

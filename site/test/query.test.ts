@@ -16,11 +16,12 @@ import { describe, it } from "node:test";
 
 import {
   canonicalQuery, countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
-  wordPlan, wordProbeKeys,
+  wordPlan, wordProbeKeys, periodOf, periodOfIssueId, periodOfSpeechId,
+  periodsInYearRange, yearsOfPeriods,
   type QueryPlan, type SearchOptions,
 } from "../src/lib/query.ts";
 
-// --- 年DBを模したデータ ---------------------------------------------------
+// --- 期間DBを模したデータ -------------------------------------------------
 
 const MEETINGS = [
   { issue_id: "A", name: "内閣委員会", house: "衆議院" },
@@ -476,10 +477,62 @@ describe("wordPlan（どの索引で引くかの判断）", () => {
                      { mode: "word", driver: LATIN_WORD, filters: ["ＳＤＧｓ"] });
   });
 
-  it("語彙に無ければ mode:none。出すのは打たれたままの語", () => {
+  it("索引に無い語はそのまま起点にする（＝0件。引けない語という状態は無い）", () => {
+    // 索引は本文の2文字窓を全部持っているので、無い＝本当に出てこない。
+    // `w.term = 'ＱＺ'` が1行も当たらず、全期間で0件になる
     assert.deepEqual(wordPlan(splitTerms("ｑｚ"), counts),
-                     { mode: "none", unsupported: ["ｑｚ"] });
+                     { mode: "word", driver: "ＱＺ", filters: [] });
+  });
+
+  it("片方が索引に無いなら、そちらを起点にする（0件が確定するので最速）", () => {
     assert.deepEqual(wordPlan(splitTerms("ai qz"), counts),
-                     { mode: "none", unsupported: ["ｑｚ"] });
+                     { mode: "word", driver: "ＱＺ", filters: [LATIN_WORD] });
+  });
+
+  it("空の検索は当たりようのない起点にする（MATCH '' は構文エラーになる）", () => {
+    assert.deepEqual(wordPlan(splitTerms("   "), counts),
+                     { mode: "word", driver: "", filters: [] });
+  });
+});
+
+/**
+ * 配信DBの分割単位（期間）。**`scripts/build_db.py` の `period_of()` と同じ写像**で
+ * なければならない。食い違うと存在しないファイルを引きに行って検索が丸ごと止まる。
+ */
+describe("periodOf（DBの分割単位）", () => {
+  it("半期は7月1日で切る", () => {
+    assert.equal(periodOf("2026-01-23"), "2026H1");
+    assert.equal(periodOf("2026-06-30"), "2026H1");
+    assert.equal(periodOf("2026-07-01"), "2026H2");
+    assert.equal(periodOf("2026-12-31"), "2026H2");
+  });
+
+  it("year 規則なら年をそのまま返す", () => {
+    assert.equal(periodOf("2026-07-01", "year"), "2026");
+  });
+
+  it("期間IDは辞書順が時系列順（mergePages の並べ替えがこれに乗る）", () => {
+    const shuffled = ["2022H1", "2021H2", "2026H1", "2021H1", "2025H2"];
+    assert.deepEqual([...shuffled].sort(),
+                     ["2021H1", "2021H2", "2022H1", "2025H2", "2026H1"]);
+  });
+
+  it("speech_id / issue_id から期間を割り出す（末尾8桁が日付）", () => {
+    assert.equal(periodOfSpeechId("120214261X00120260123_0"), "2026H1");
+    assert.equal(periodOfSpeechId("120214261X00120260701_12"), "2026H2");
+    assert.equal(periodOfIssueId("120214261X00120260123"), "2026H1");
+    assert.equal(periodOfSpeechId("こわれている"), null);
+  });
+
+  it("年の絞り込みを期間に直す（**取りこぼしが出ないこと**）", () => {
+    const all = ["2024H1", "2024H2", "2025H1", "2025H2", "2026H1", "2026H2"];
+    // 「2025年だけ」が厳密に選べる。会期で割るとこれが成立しない
+    assert.deepEqual(periodsInYearRange(all, 2025, 2025), ["2025H1", "2025H2"]);
+    assert.deepEqual(periodsInYearRange(all, 2024, 2025),
+                     ["2024H1", "2024H2", "2025H1", "2025H2"]);
+    // 逆順に選ばれても同じ（UIの from > until）
+    assert.deepEqual(periodsInYearRange(all, 2025, 2024),
+                     ["2024H1", "2024H2", "2025H1", "2025H2"]);
+    assert.deepEqual(yearsOfPeriods(all), [2024, 2025, 2026]);
   });
 });
