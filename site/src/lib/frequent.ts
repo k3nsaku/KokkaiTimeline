@@ -1,5 +1,5 @@
 /**
- * 会期での絞り込み（ROADMAP §1-D）。
+ * 会期での絞り込み。設計は site/README.md「/frequent の会期絞り込み」。
  *
  * **DBを引かない。** `data/dist/frequent.json` に会期ごとの件数が入っているので、
  * 並べ替えはページの中で完結する。

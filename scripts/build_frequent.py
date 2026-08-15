@@ -1,4 +1,4 @@
-"""頻出語レイヤーを作る（`data/dist/frequent.json`）。ROADMAP §1-C。
+"""頻出語レイヤーを作る（`data/dist/frequent.json`）。設計は docs/PITFALLS.md「頻出語」。
 
 ## `topic` とも `word` とも役割が違う（CLAUDE.md）
 

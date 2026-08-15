@@ -2,7 +2,7 @@
   "name": "kokkai-timeline-site",
   "private": true,
   "version": "0.0.0",
-  "description": "ROADMAP §3.3: 国会会議録の検索・議員タイムライン・頻度推移（完全静的サイト）",
+  "description": "国会会議録の検索・議員タイムライン・頻度推移（完全静的サイト）",
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor.js",

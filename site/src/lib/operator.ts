@@ -31,7 +31,7 @@ export interface Operator {
   formUrl: string | null;
   /**
    * アクセス解析を入れているか。**入れたら必ず true にする**
-   * （プライバシーポリシーの記述が変わる）。docs/ROADMAP.md「決めていないこと」。
+   * （プライバシーポリシーの記述が変わる）。site/README.md「運営者名と連絡先」。
    */
   analytics: false | { name: string; url: string; cookies: boolean };
 }

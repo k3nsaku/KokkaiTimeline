@@ -1,6 +1,6 @@
 ---
 /**
- * 頻出語の一覧（`data/dist/frequent.json`）。ROADMAP §1-C。
+ * 頻出語の一覧（`data/dist/frequent.json`）。設計は site/README.md「/frequent の会期絞り込み」。
  *
  * ★ **争点語（`/topics`）と混ぜないこと。** あちらは運営が選んだ82件の編集方針で、
  *   こちらは会議録から機械的に採った500件。ページ上でもそう書く。
@@ -16,7 +16,7 @@ import { formatSpan } from "../lib/frequent";
 
 const data = frequent();
 
-// 会期で絞るための材料。**DBは引かない**（ROADMAP §1-D / lib/frequent.ts）。
+// 会期で絞るための材料。**DBは引かない**（site/README.md / lib/frequent.ts）。
 // 月の系列（`series`）はここでは要らないので落とす。500語ぶんで約30KB
 const payload = {
   sessions: data.sessions,
