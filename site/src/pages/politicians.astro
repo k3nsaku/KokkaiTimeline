@@ -99,12 +99,8 @@ const rows = [...politicians()]
   </script>
 
   <style>
-    .filter { display: flex; gap: 0.75rem; align-items: center; margin: 1rem 0; }
+    /* `.kana` / `.sr-only` は Base.astro の共通定義 */
+    .filter { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 1rem 0; }
     #filter { min-width: min(22rem, 100%); }
-    .kana { color: var(--muted); font-size: 0.8rem; }
-    .sr-only {
-      position: absolute; width: 1px; height: 1px; overflow: hidden;
-      clip: rect(0 0 0 0); white-space: nowrap;
-    }
   </style>
 </Base>

@@ -144,9 +144,9 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
     <p><a class="chip" href="/politicians">議員の一覧 →</a></p>
   </section>
 
-  <section class="figures">
+  <section>
     <h2>収録しているもの</h2>
-    <dl>
+    <dl class="figures">
       <div><dt>発言</dt><dd>{formatNumber(totalSpeeches)}件</dd></div>
       <div><dt>議員</dt><dd>{formatNumber(people.length)}人</dd></div>
       <div><dt>期間</dt><dd>2021年1月〜{t.through.slice(0, 4)}年{Number(t.through.slice(5, 7))}月</dd></div>
@@ -158,24 +158,27 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   </section>
 
   <style>
-    .lede { font-size: 1.05rem; max-width: 40rem; }
+    /* `.sr-only` / `.figures` / `.chips` は Base.astro の共通定義 */
+    .lede { font-size: 1.12rem; max-width: 40rem; line-height: 1.85; }
+
+    section { margin-block: 2.75rem; }
 
     /* 最初の節だけ間を詰める。ここが「いま何が議論されているか」の入口で、
-       スクロールせずに見えている必要がある */
-    .lead-section { margin-top: 1.75rem; }
-
-    .site-search { display: flex; gap: 0.5rem; margin: 0.75rem 0; max-width: 34rem; }
-    .site-search input { flex: 1; }
-
-    .sr-only {
-      position: absolute; width: 1px; height: 1px; overflow: hidden;
-      clip: rect(0 0 0 0); white-space: nowrap;
+       スクロールせずに見えている必要がある。
+       淡い面を敷いてあるのは**装飾**で、重要度の表明ではない
+       （何を主機能とみなしているかは節の順序で表している。site/README.md） */
+    .lead-section {
+      margin-top: 1.75rem;
+      background: var(--tint-warm);
+      border-radius: var(--radius);
+      padding: 0.1rem 1.25rem 1.1rem;
     }
+    /* 面を敷いたぶん、見出しの上マージンが箱の中で効いてしまう（親に padding が
+       あるとマージンが相殺されない）。中の1つめだけ詰める */
+    .lead-section h2 { margin-top: 1.1rem; }
 
-    section { margin-block: 2.5rem; }
-
-    .figures dl { display: flex; flex-wrap: wrap; gap: 1.5rem 3rem; margin: 0.5rem 0; }
-    .figures dt { font-size: 0.8rem; color: var(--muted); }
-    .figures dd { margin: 0; font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+    .site-search { display: flex; gap: 0.5rem; margin: 0.85rem 0; max-width: 34rem; }
+    .site-search input { flex: 1; font-size: 1.05rem; padding-block: 0.6rem; }
+    .site-search button { padding-inline: 1.25rem; }
   </style>
 </Base>

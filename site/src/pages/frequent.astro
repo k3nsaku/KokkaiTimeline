@@ -65,7 +65,7 @@ const description =
     {years.map(([year, words]) => (
       <section>
         <h2>{year}年に集中した語</h2>
-        <ul class="word-grid">
+        <ul class="card-grid">
           {words.map((word) => (
             <li>
               <a href={word.topic_id ? `/topic/${word.topic_id}` : `/word/${encodeURIComponent(word.term)}`}>
@@ -194,7 +194,7 @@ const description =
             1.0 なら「いつもどおり」です。この会期で30件に満たない語は出していません。
           </p>
           ${ranked.length === 0 ? "<p>並べられる語がありませんでした。</p>" : `
-          <ul class="word-grid">
+          <ul class="card-grid">
             ${ranked.map((r) => `
               <li>
                 <a href="${href(r.term, r.topicId)}">
@@ -211,26 +211,10 @@ const description =
   </script>
 
   <style>
-    .word-grid {
-      list-style: none; padding: 0; margin: 0.5rem 0;
-      display: grid; gap: 0.5rem;
-      grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-    }
-    .word-grid a {
-      display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
-      padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--card); text-decoration: none; color: var(--fg);
-    }
-    .word-grid a:hover { border-color: var(--accent); }
-    .term { font-weight: 600; }
-    .badge {
-      border: 1px solid var(--line); border-radius: 999px;
-      padding: 0 0.4rem; color: var(--muted);
-    }
-    .note {
-      border-left: 3px solid var(--accent); padding: 0.4rem 0.8rem;
-      background: var(--card); border-radius: 0 6px 6px 0;
-    }
+    /* ★`.card-grid` / `.term` / `.badge` / `.note` は Base.astro の共通定義。
+       **ここを scoped に戻さないこと** — 会期で絞ったときの一覧は下の script が
+       `innerHTML` で差し込むので、スコープ属性が付かず当たらない
+       （実際、`.word-grid` だった頃はそちらだけ素のリストで出ていた）。 */
     .how { margin-top: 2.5rem; }
   </style>
 

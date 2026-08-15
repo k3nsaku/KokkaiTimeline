@@ -353,6 +353,59 @@ Node の ESM 解決は拡張子を補わないので、省くと `ERR_MODULE_NOT
 （2026-08-08 に `speech-view.ts` で踏んだ）。Vite 側は付いていても解決できる。
 `.astro` から読むだけのモジュールは今までどおり省いてよい。
 
+## 見た目（CSS）
+
+**CSSファイルは1本も無い。** 実体は `src/layouts/Base.astro` の `<style is:global>` で、
+ページ側の `<style>` はそのページにしか無いものだけを持つ。
+
+### 色・角丸・影・フォントは全部トークン
+
+`Base.astro` の `:root` に置いてあり、`@media (prefers-color-scheme: dark)` に
+**同じ名前で**暗い側の値がある。**生の色値をページに書かない**（暗い側で必ず浮く）。
+
+- **★`--bg` と `--card` の値を変えてはいけない。** `--cat-1`〜`--cat-7` は
+  **この2つの面に対して**コントラストと色覚多様性を検証してある（下記）。
+  暖かみが欲しいときは面を振らず、`--tint` / `--tint-warm` を部分的に敷く
+- `--accent` は**グラフの棒の色でもある**（`.chart .bar` と `.minibar rect`）。
+  変えたら面に対して 3:1 以上あるか見ること。`public/favicon.svg` にも同じ値が
+  直に書いてある（SVGファイルには CSS 変数が届かない）ので一緒に直す
+- **アクセントは1色だけにしてある。** 見出しの印も棒グラフも会派バーも `--accent`。
+  差し色をもう1色足すと `--cat-*`（グラフの系列色）と competing になり、
+  「色が違う節＝重要」と読まれる。**ここに順位の意味は無い**（docs/SCOPE.md）
+- **字送り（`letter-spacing`）は触らない。** 和文は字面が詰まって見えるだけで効かない
+- 和文は `--font-ui`。**`system-ui` を先頭に置かないこと** — Windows では
+  和文まで Yu Gothic UI で拾ってしまい、以降の指定が一切効かなくなる。
+  いまの並びは欧文が Segoe UI、和文が BIZ UDPGothic に落ちる（実機で確認済み）。
+  **Webフォントは読み込まない**（`font-src 'self'`／表示を待たせない）
+
+### 複数ページで使うものは `Base.astro` に置く
+
+`.card-grid`（語のカード一覧）`.note` `.badge` `.kana` `.sr-only` `.figures`
+（数値の並び）`.notfound` `.chart …` 一式は共通定義。**ページに戻さないこと。**
+
+**★理由は見た目の統一だけではない。** `set:html` / `innerHTML` / `createElement` で
+作った DOM には Astro のスコープ属性が付かないので、**scoped に置くと当たらない**。
+実際、以前は次の3つが素の見た目で出ていた:
+
+- `/search` の0件の箱（`.notfound`）と議員のよみ（`.kana`）— どちらも `innerHTML` 側
+- `/frequent` の会期で絞ったときの語の一覧 — 同上
+- `/politician/<id>` の積み上げ棒グラフ（`.chart` が `/topic` と `/word` にしか
+  無く、`figure` の既定余白で40pxぶん字下げされ、目盛線も色が付いていなかった）
+
+### 幅のメディアクエリは増やさない
+
+`@media (min-width: 60rem)` の `--panel-ok` が**サイトで唯一の幅のメディアクエリ**
+（配色用を除く）。レスポンシブは `clamp()` と
+`grid-template-columns: repeat(auto-fill, minmax(…, 1fr))` と `flex-wrap` で組む。
+
+### インラインの `style` 属性は書かない
+
+CSP（`style-src 'self'`）に**エラーも出さずに消される**。色や幅は CSS クラスか
+**SVG の `fill` / `width` 属性**で出す。詳細は `public/_headers` と
+[docs/PITFALLS.md](../docs/PITFALLS.md)。
+**`npm run dev` も `astro preview` も `_headers` を適用しない**ので、
+見た目を触ったら `dist/` を CSP 付きで配って全ページ型を触ること。
+
 ## 触る前に読むもの
 
 **[docs/PITFALLS.md](../docs/PITFALLS.md) の「ブラウザからDBを引く」。** `src/lib/query.ts` の SQL は

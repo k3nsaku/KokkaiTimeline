@@ -65,7 +65,7 @@ const description =
         {person.name}
         {person.name_kana && <span class="kana">{person.name_kana}</span>}
       </h1>
-      <dl class="facts">
+      <dl class="figures">
         <div><dt>院</dt><dd>{person.house ?? "—"}</dd></div>
         <div><dt>会派</dt><dd>{current?.kaiha ?? "—"}</dd></div>
         <div><dt>発言数</dt><dd>{formatNumber(person.n_speeches)}</dd></div>
@@ -338,12 +338,8 @@ const description =
   </script>
 
   <style>
+    /* `.kana` / `.figures`（旧 `.facts`）/ `.sr-only` は Base.astro の共通定義 */
     .person h1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; }
-    .person .kana { font-size: 0.9rem; font-weight: 400; color: var(--muted); }
-
-    .facts { display: flex; flex-wrap: wrap; gap: 0.75rem 2.5rem; margin: 0.5rem 0 0.75rem; }
-    .facts dt { font-size: 0.75rem; color: var(--muted); }
-    .facts dd { margin: 0; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
 
     .links a + a { margin-left: 1rem; }
 
@@ -352,10 +348,5 @@ const description =
 
     .period-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
     #activity-table { max-width: 32rem; }
-
-    .sr-only {
-      position: absolute; width: 1px; height: 1px; overflow: hidden;
-      clip: rect(0 0 0 0); white-space: nowrap;
-    }
   </style>
 </Base>

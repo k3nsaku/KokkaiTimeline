@@ -401,7 +401,16 @@ const people = politicians().map((p) => {
       const related = topics
         .filter((t) => terms.some((w) => t.term.toUpperCase().includes(w.toUpperCase())))
         .slice(0, 12);
-      if (!related.length) return "";
+      // ★合う争点語が1つも無いときも**行き止まりにしない**。
+      //   「0件でした」だけを出して終わると、次に何を試せばいいのか分からない
+      if (!related.length) {
+        return `<p class="small">ほかの入口から探せます:</p>
+          <ul class="chips">
+            <li><a class="chip" href="/topics">争点語の一覧</a></li>
+            <li><a class="chip" href="/frequent">頻出語の一覧</a></li>
+            <li><a class="chip" href="/politicians">議員の一覧</a></li>
+          </ul>`;
+      }
       return `<p class="small">この語を含む争点語なら、まとまった集計があります:</p>
         <ul class="chips">${related.map((t) =>
           `<li><a class="chip" href="/topic/${t.id}">${escapeHtml(t.term)}</a></li>`).join("")}</ul>`;
@@ -492,24 +501,27 @@ const people = politicians().map((p) => {
   </script>
 
   <style>
+    /* `.kana` と `.notfound` は Base.astro の共通定義。
+       ★どちらも `innerHTML` で差し込む側にも出るので、scoped に戻すと
+       そちらだけ素の見た目になる（実際にそうなっていた） */
     .tabs {
       display: flex; gap: 0.25rem; margin: 1.25rem 0 0;
       border-bottom: 1px solid var(--line);
     }
     .tabs [role="tab"] {
       background: none; border: 1px solid transparent; border-bottom: none;
-      border-radius: 6px 6px 0 0; padding: 0.45rem 1rem;
+      border-radius: var(--radius-sm) var(--radius-sm) 0 0; padding: 0.5rem 1.1rem;
       color: var(--muted); font-size: 0.95rem; cursor: pointer;
       margin-bottom: -1px;
     }
-    .tabs [role="tab"]:hover { color: var(--fg); }
+    .tabs [role="tab"]:hover { color: var(--fg); background: var(--tint); }
+    /* 選択中は**色だけで示さない**（枠・地・太さの3つで出す） */
     .tabs [role="tab"][aria-selected="true"] {
-      color: var(--fg); font-weight: 600;
-      border-color: var(--line); background: var(--bg);
+      color: var(--fg); font-weight: 700;
+      border-color: var(--line-strong); background: var(--bg);
     }
     .tab-count { font-variant-numeric: tabular-nums; font-weight: 400; color: var(--muted); }
     [role="tabpanel"] { padding-top: 0.5rem; }
-    .kana { color: var(--muted); font-size: 0.8rem; }
 
     .search-form { margin: 1rem 0 0.5rem; }
     .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
@@ -521,11 +533,5 @@ const people = politicians().map((p) => {
     .filters summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
     .filters .row { margin-top: 0.6rem; }
     .range { display: inline-flex; align-items: center; gap: 0.4rem; }
-
-    .notfound {
-      border: 1px solid var(--line); border-radius: 8px;
-      background: var(--card); padding: 1rem 1.1rem; margin-top: 1rem;
-    }
-    .notfound p:first-child { margin-top: 0; font-weight: 600; }
   </style>
 </Base>

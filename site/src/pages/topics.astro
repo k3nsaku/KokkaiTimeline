@@ -38,7 +38,7 @@ const categories = [...byCategory.entries()]
   {categories.map(([category, topics]) => (
     <section>
       <h2>{category}</h2>
-      <ul class="topic-grid">
+      <ul class="card-grid">
         {topics.map((topic) => (
           <li>
             <a href={`/topic/${topic.id}`}>
@@ -57,18 +57,7 @@ const categories = [...byCategory.entries()]
   </p>
 
   <style>
-    .topic-grid {
-      list-style: none; padding: 0; margin: 0.5rem 0;
-      display: grid; gap: 0.5rem;
-      grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-    }
-    .topic-grid a {
-      display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;
-      padding: 0.5rem 0.75rem; border: 1px solid var(--line); border-radius: 6px;
-      background: var(--card); text-decoration: none; color: var(--fg);
-    }
-    .topic-grid a:hover { border-color: var(--accent); }
-    .term { font-weight: 600; }
+    /* `.card-grid` / `.term` / `.note` は Base.astro の共通定義（3ページで使う） */
     .note { margin-top: 2.5rem; }
   </style>
 </Base>

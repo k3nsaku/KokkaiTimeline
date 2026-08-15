@@ -18,7 +18,25 @@ const fullTitle = title === "国会タイムライン" ? title : `${title} | 国
 // 正規URL。`build.format: "file"` で `/politician/9.html` が出るが、配信されるURLは
 // 拡張子なしなので、正規URLからは `.html` を落とす。クエリ文字列も持たせない
 // （検索条件は共有できるが、索引としては同じページ）
-const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site);
+const path = Astro.url.pathname.replace(/\.html$/, "");
+const canonical = new URL(path, Astro.site);
+
+/**
+ * ナビの現在地。**新しい情報は足していない** — いまどこにいるかを出すだけ。
+ * 項目の順序と文言は変えないこと（トップの節の順序と同じく、何を主機能と
+ * みなしているかの表明になっている）。
+ *
+ * `match` は詳細ページも親の項目に寄せるため。`/politician/9` は「議員」、
+ * `/word/年金` と `/session/213` は「頻出語」（どちらもそこからの導線しかない）。
+ */
+const NAV = [
+  { href: "/search", label: "検索", match: ["/search", "/speech"] },
+  { href: "/politicians", label: "議員", match: ["/politicians", "/politician/"] },
+  { href: "/topics", label: "争点語", match: ["/topics", "/topic/"] },
+  { href: "/frequent", label: "頻出語", match: ["/frequent", "/word/", "/session/"] },
+  { href: "/about", label: "このサイトについて", match: ["/about"] },
+];
+const current = (m: string[]) => m.some((p) => (p.endsWith("/") ? path.startsWith(p) : path === p));
 ---
 
 <html lang="ja">
@@ -42,13 +60,27 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
     <a class="skip" href="#main">本文へ</a>
     <header class="site-header">
       <div class="wrap header-inner">
-        <a class="brand" href="/">国会タイムライン</a>
+        <a class="brand" href="/">
+          {/* ★色は CSS で当てる（`.brand-mark .bg` / `.brand-mark .bars rect`）。
+              `fill="#…"` を直に書くとダークモードで浮くし、`style` 属性は
+              CSP に消される。favicon.svg は CSS が届かないので別に持っている */}
+          <svg class="brand-mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+            <rect class="bg" width="32" height="32" rx="9" />
+            <g class="bars">
+              <rect x="6" y="20" width="4" height="6" rx="1.5" />
+              <rect x="12" y="14" width="4" height="12" rx="1.5" />
+              <rect x="18" y="8" width="4" height="18" rx="1.5" />
+              <rect x="24" y="17" width="3" height="9" rx="1.5" />
+            </g>
+          </svg>
+          <span>国会タイムライン</span>
+        </a>
         <nav aria-label="サイト内">
-          <a href="/search">検索</a>
-          <a href="/politicians">議員</a>
-          <a href="/topics">争点語</a>
-          <a href="/frequent">頻出語</a>
-          <a href="/about">このサイトについて</a>
+          {NAV.map((item) => (
+            <a href={item.href} aria-current={current(item.match) ? "page" : undefined}>
+              {item.label}
+            </a>
+          ))}
         </nav>
       </div>
     </header>
@@ -76,13 +108,56 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
 
     <style is:global>
       :root {
+        /* ★★ `--bg` と `--card` の値を変えないこと。**下のカテゴリ配色は
+           この2つの面に対してコントラストを検証してある。**（site/README.md）
+           暖かみが欲しいときは面を振らずに `--tint` を部分的に敷く。 */
         --bg: #fbfaf8;
-        --fg: #1b1b1d;
-        --muted: #5f6169;
-        --line: #dcdad4;
         --card: #ffffff;
-        --accent: #1c5d99;
+
+        --fg: #1b1b1d;
+        --muted: #605d58;
+        --line: #e7e3db;
+        /* 罫線として実際に見えてほしいところ（表の下罫・グラフの目盛線）。
+           `--line` を柔らかくしたぶん、これが無いとグラフの目盛が消える */
+        --line-strong: #cfcabf;
+
+        /* 淡い面。カード（`--card`）ほど持ち上げず、地（`--bg`）から一段沈める。
+           `--tint-warm` はトップの「いま議論されていること」だけに使う */
+        --tint: #f3efe7;
+        --tint-warm: #faf1e6;
+
+        --accent: #1d6091;
+        --accent-fg: #ffffff;
+        /* 背景に敷ける薄さ（チップ・現在地のピル）。文字色は `--fg` のまま載る */
+        --accent-soft: #e7eff7;
+
+        --warn: #c9962e;
+        --danger: #b4232a;
         --mark: #ffe9a8;
+
+        --radius: 14px;
+        --radius-sm: 8px;
+        /* 影は黒ではなく地の色を濃くしたもの。純黒だと生成りの地の上で灰色に濁る */
+        --shadow: 0 1px 2px rgb(60 50 35 / 0.05), 0 6px 18px rgb(60 50 35 / 0.06);
+        --shadow-float: 0 2px 12px rgb(60 50 35 / 0.16);
+        --shadow-panel: -8px 0 24px rgb(60 50 35 / 0.14);
+
+        /* 欧文と和文で別の面を当てる。**和文を持たない欧文フォントを先に置く**ので、
+           かなと漢字だけが後ろへ落ちる（Segoe UI に CJK は無い）。
+           ★`system-ui` を先頭に置いてはいけない — Windows では和文まで
+           Yu Gothic UI で拾ってしまい、以降の指定が一切効かなくなる。
+           Webフォントは読み込まない（`font-src 'self'`／表示を待たせない） */
+        --font-ui:
+          -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Hiragino Sans", "Hiragino Kaku Gothic ProN", "BIZ UDPGothic",
+          "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+
+        /* 重なりの段は**この3つだけ**。個別の値を書かない
+           （増やすと「とりあえず大きい数」を足す競争になる） */
+        --z-header: 5;
+        --z-skip: 10;
+        --z-panel: 20;
+
         --max: 56rem;
 
         /* 積み上げ棒グラフのカテゴリ配色（議員ページの委員会別）。
@@ -105,13 +180,31 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
 
       @media (prefers-color-scheme: dark) {
         :root {
+          /* ★ light と同じく、この2つは検証済みの面なので値を変えない */
           --bg: #16171a;
-          --fg: #e8e6e1;
-          --muted: #9d9fa8;
-          --line: #33353b;
           --card: #1e2024;
+
+          --fg: #e8e6e1;
+          --muted: #a09d96;
+          --line: #33353b;
+          --line-strong: #4a4d55;
+
+          --tint: #1c1e22;
+          --tint-warm: #23201a;
+
           --accent: #7db3e0;
+          /* 明るいアクセントの上に載るので、主ボタンの文字は白ではなく暗い色 */
+          --accent-fg: #0f1114;
+          --accent-soft: #22303c;
+
+          --warn: #d8a94a;
+          --danger: #ff9d9d;
           --mark: #5c4a12;
+
+          /* 暗い面では黒い影が効かない。落とす影を強くして輪郭を残す */
+          --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 18px rgb(0 0 0 / 0.35);
+          --shadow-float: 0 2px 14px rgb(0 0 0 / 0.5);
+          --shadow-panel: -8px 0 28px rgb(0 0 0 / 0.5);
 
           /* 明->暗の自動変換ではなく、暗い面のために選び直した同じ8色相。
              dark 面（#16171a）で全色 3:1 以上・隣接CVD ΔE 8.4 を確認済み */
@@ -132,11 +225,17 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
         margin: 0;
         background: var(--bg);
         color: var(--fg);
-        font-family: system-ui, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
-        line-height: 1.75;
-        font-size: 16px;
+        font-family: var(--font-ui);
+        line-height: 1.8;
+        /* 和文は 16px だと詰まって見える。`rem` は :root 基準なので、
+           ここを上げても `--max: 56rem` や余白は動かない（文字だけ大きくなる） */
+        font-size: 17px;
         /* 日本語は行間が詰まると読めない。約物のぶら下げも効かせる */
         text-spacing-trim: trim-start;
+        /* 和文の禁則を厳しく取る（`、` や `」` が行頭に来ない）。
+           URLなど切れない長い列だけは折る */
+        line-break: strict;
+        overflow-wrap: break-word;
       }
 
       .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1rem; }
@@ -155,93 +254,251 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
         left: -9999px;
       }
       .skip:focus {
-        left: 1rem; top: 0.5rem; z-index: 10;
-        background: var(--card); padding: 0.5rem 1rem; border-radius: 6px;
+        left: 1rem; top: 0.5rem; z-index: var(--z-skip);
+        background: var(--card); padding: 0.5rem 1rem; border-radius: var(--radius-sm);
+        box-shadow: var(--shadow-float);
       }
 
       a { color: var(--accent); }
+      /* キーボードで辿っている位置は必ず見えるようにする。
+         マウスでは出さない（`:focus` ではなく `:focus-visible`） */
+      a:focus-visible, button:focus-visible, input:focus-visible,
+      select:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        /* ★ここで `border-radius` を指定しないこと。**要素そのものの角が変わる**ので、
+           チップ（999px）やボタン（8px）がフォーカスした瞬間に角ばる。
+           outline は要素の角丸に自動で沿う */
+      }
 
       .site-header {
         border-bottom: 1px solid var(--line);
         background: var(--card);
-        position: sticky; top: 0; z-index: 5;
+        position: sticky; top: 0; z-index: var(--z-header);
       }
       .header-inner {
-        display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem;
-        align-items: baseline; padding-block: 0.75rem;
+        display: flex; flex-wrap: wrap; gap: 0.35rem 1.5rem;
+        align-items: center; padding-block: 0.7rem;
       }
-      .brand { font-weight: 700; font-size: 1.05rem; text-decoration: none; color: var(--fg); }
-      .site-header nav { display: flex; gap: 1rem; font-size: 0.9rem; }
+      .brand {
+        display: inline-flex; align-items: center; gap: 0.55rem;
+        font-weight: 700; font-size: 1.1rem; text-decoration: none; color: var(--fg);
+      }
+      .brand-mark { flex: none; display: block; }
+      .brand-mark .bg { fill: var(--accent); }
+      .brand-mark .bars rect { fill: var(--accent-fg); }
+
+      .site-header nav {
+        display: flex; flex-wrap: wrap; gap: 0.15rem 0.25rem; font-size: 0.92rem;
+      }
+      .site-header nav a {
+        text-decoration: none; color: var(--muted);
+        padding: 0.2rem 0.65rem; border-radius: 999px;
+      }
+      .site-header nav a:hover { color: var(--fg); background: var(--tint); }
+      /* 現在地。**色だけで示さない** — 文字も濃く太くする */
+      .site-header nav a[aria-current="page"] {
+        color: var(--fg); font-weight: 600; background: var(--accent-soft);
+      }
 
       .site-footer {
-        margin-top: 4rem; padding: 1.5rem 0 3rem;
-        border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--muted);
+        margin-top: 4.5rem; padding: 2rem 0 3rem;
+        border-top: 1px solid var(--line); background: var(--tint);
+        font-size: 0.88rem; color: var(--muted);
       }
-      .site-footer p { margin: 0.4rem 0; }
+      .site-footer p { margin: 0.5rem 0; }
 
-      h1 { font-size: 1.6rem; line-height: 1.4; margin: 1.5rem 0 0.5rem; }
-      h2 { font-size: 1.2rem; margin: 2rem 0 0.5rem; }
-      h3 { font-size: 1rem; margin: 1.5rem 0 0.25rem; }
+      /* 見出し。**字送りは触らない**（和文は字面が詰まって見えるだけで効果がない）。
+         `text-wrap: balance` は最後の行に1語だけ残るのを防ぐ */
+      h1, h2, h3 { text-wrap: balance; }
+      h1 {
+        font-size: clamp(1.65rem, 1.35rem + 1.2vw, 2.1rem);
+        line-height: 1.45; margin: 1.75rem 0 0.6rem;
+      }
+      h2 {
+        font-size: 1.28rem; margin: 2.25rem 0 0.6rem;
+        position: relative; padding-left: 0.85rem; line-height: 1.5;
+      }
+      /* 節の始まりを示す印。**色はアクセント1色に寄せてある** —
+         差し色をもう1色足すと、グラフの系列色（`--cat-*`）と competing になり、
+         「この節は色が違う＝重要」と読まれる。ここに意味は無い */
+      h2::before {
+        content: ""; position: absolute; left: 0; top: 0.32em; bottom: 0.32em;
+        width: 4px; border-radius: 2px; background: var(--accent);
+      }
+      h3 { font-size: 1.05rem; margin: 1.5rem 0 0.25rem; }
+
+      /* 本文は行末の孤立語を避ける。和文でも約物の位置が落ち着く */
+      p, li, dd { text-wrap: pretty; }
 
       .muted { color: var(--muted); }
-      .small { font-size: 0.85rem; }
+      .small { font-size: 0.9rem; }
 
-      mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+      mark {
+        background: var(--mark); color: inherit;
+        border-radius: 3px; padding: 0.05em 2px;
+      }
 
       /* --- 発言カード（検索結果・議員ページ・前後表示で共通） --- */
       .speech-list { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: 0.75rem; }
       .speech {
         background: var(--card); border: 1px solid var(--line);
-        border-radius: 8px; padding: 0.9rem 1rem;
+        border-radius: var(--radius); padding: 1rem 1.15rem;
+        box-shadow: var(--shadow);
       }
+      .speech:hover { border-color: var(--line-strong); }
       .speech-meta {
-        font-size: 0.82rem; color: var(--muted);
-        display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-bottom: 0.35rem;
+        font-size: 0.85rem; color: var(--muted);
+        display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; margin-bottom: 0.4rem;
       }
-      .speech-speaker { font-weight: 600; color: var(--fg); }
+      .speech-speaker { font-weight: 700; color: var(--fg); }
       .speech-body { margin: 0; }
       .speech-body a { text-decoration: none; color: inherit; }
       .speech-body a:hover { text-decoration: underline; }
 
       .year-heading {
-        margin: 1.5rem 0 0.5rem; font-size: 0.9rem; font-weight: 700; color: var(--muted);
-        border-bottom: 1px solid var(--line); padding-bottom: 0.25rem;
+        margin: 1.75rem 0 0.5rem; font-size: 0.9rem; font-weight: 700; color: var(--muted);
+        border-bottom: 1px solid var(--line-strong); padding-bottom: 0.3rem;
       }
 
       /* --- フォーム --- */
       input[type="search"], input[type="text"], select, button {
-        font: inherit; padding: 0.5rem 0.7rem;
-        border: 1px solid var(--line); border-radius: 6px;
+        font: inherit; padding: 0.5rem 0.75rem;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         background: var(--card); color: var(--fg);
       }
       button { cursor: pointer; }
-      button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+      button:hover:not(:disabled) { border-color: var(--accent); }
+      button.primary {
+        background: var(--accent); color: var(--accent-fg);
+        border-color: transparent; font-weight: 600;
+      }
+      button.primary:hover:not(:disabled) { filter: brightness(1.12); border-color: transparent; }
       button:disabled { opacity: 0.5; cursor: default; }
 
-      .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0.5rem 0; list-style: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0.6rem 0; list-style: none; }
       .chip {
-        display: inline-block; padding: 0.25rem 0.6rem; border-radius: 999px;
-        border: 1px solid var(--line); background: var(--card);
-        font-size: 0.85rem; text-decoration: none; color: var(--fg);
+        display: inline-block; padding: 0.3rem 0.75rem; border-radius: 999px;
+        border: 1px solid transparent; background: var(--accent-soft);
+        font-size: 0.9rem; text-decoration: none; color: var(--fg);
       }
       .chip:hover { border-color: var(--accent); }
 
+      /* --- 補足の囲み。**1つに統一してある**（以前はページごとに左罫の色が違った） --- */
+      .note {
+        border-left: 4px solid var(--accent);
+        padding: 0.6rem 0.95rem;
+        background: var(--tint);
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+      /* 0件・引けない語の案内（`/search`）。**行き止まりにしないための箱**なので、
+         見落とされない見た目にする。
+         ★`is:global` でないと当たらない — 中身は `results.innerHTML` で差し込むため
+         （search.astro に scoped で置いてあった頃は素の div で出ていた） */
+      .notfound {
+        border: 1px solid var(--line); border-radius: var(--radius);
+        background: var(--card); box-shadow: var(--shadow);
+        padding: 1.1rem 1.2rem; margin-top: 1rem;
+      }
+      .notfound p:first-child { margin-top: 0; font-weight: 700; }
+      .notfound > :last-child { margin-bottom: 0; }
+
       /* 公開前に埋めるべき箇所の警告（docs/SCOPE.md）。埋まれば出なくなる */
       .todo {
-        border-left: 3px solid #c9962e; padding: 0.5rem 0.8rem;
-        background: var(--card); border-radius: 0 6px 6px 0;
+        border-left: 4px solid var(--warn);
+        padding: 0.6rem 0.95rem;
+        background: var(--tint);
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
       }
 
       .status { color: var(--muted); font-size: 0.9rem; margin: 0.75rem 0; }
-      .error { color: #b4232a; }
-      @media (prefers-color-scheme: dark) { .error { color: #ff9d9d; } }
+      .error { color: var(--danger); }
 
-      table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
-      th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); }
-      th { color: var(--muted); font-weight: 600; }
+      table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+      th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); }
+      th {
+        color: var(--muted); font-weight: 600; background: var(--tint);
+        border-bottom-color: var(--line-strong);
+      }
+      th:first-child { border-top-left-radius: var(--radius-sm); }
+      th:last-child { border-top-right-radius: var(--radius-sm); }
+      tbody tr:hover { background: var(--tint); }
       td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
       .scroll-x { overflow-x: auto; }
+
+      /* --- 語のカードグリッド（争点語・頻出語・会期で共通） ---------------- */
+      /* 以前は `.topic-grid` と `.word-grid` が3ファイルに散っていて、
+         `minmax()` だけ 11rem / 12rem に割れていた。1つに寄せてある */
+      .card-grid {
+        list-style: none; padding: 0; margin: 0.6rem 0;
+        display: grid; gap: 0.5rem;
+        grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr));
+      }
+      .card-grid a {
+        display: flex; flex-wrap: wrap; justify-content: space-between;
+        align-items: baseline; gap: 0.15rem 0.5rem;
+        padding: 0.6rem 0.85rem;
+        border: 1px solid var(--line); border-radius: var(--radius-sm);
+        background: var(--card); text-decoration: none; color: var(--fg);
+      }
+      .card-grid a:hover { border-color: var(--accent); background: var(--accent-soft); }
+      /* ★語は縮めない（`flex: 1 0 auto`）。縮むと「憲法」が**2行に割れて**
+         「憲 / 法」になる。入り切らないときは件数のほうを次の行へ送る。
+         `max-width` は、語自体が1行に収まらないときにはみ出させないため */
+      .card-grid .term { font-weight: 600; flex: 1 0 auto; max-width: 100%; }
+      /* 件数・倍率は折らない。`body` の `overflow-wrap` に任せると
+         「10,200 / 件」で改行して数字に見えなくなる */
+      .card-grid .count, .card-grid .badge {
+        font-variant-numeric: tabular-nums; white-space: nowrap;
+      }
+
+      .badge {
+        border: 1px solid var(--line-strong); border-radius: 999px;
+        padding: 0 0.45rem; color: var(--muted); font-size: 0.85rem;
+      }
+
+      /* --- 数値の並び ------------------------------------------------------ */
+      /* トップの「収録しているもの」・会期の概要・議員の基本情報が同じ形の
+         `<dl><div><dt><dd>` を持っていたので1つに寄せた（旧 `.figures` / `.facts`）。
+         **数字を大きく出すだけで、順位や優劣は付けない**（docs/SCOPE.md） */
+      .figures {
+        display: flex; flex-wrap: wrap; gap: 0.9rem 2.5rem;
+        margin: 0.85rem 0; padding: 0.9rem 1.15rem;
+        background: var(--tint); border-radius: var(--radius);
+      }
+      .figures dt { font-size: 0.82rem; color: var(--muted); }
+      .figures dd {
+        margin: 0; font-size: 1.35rem; line-height: 1.35;
+        font-variant-numeric: tabular-nums;
+      }
+      /* 日付の範囲など、数字でないものは大きくしない。
+         `.small` だけでは `.figures dd` に負けるのでここで受ける */
+      .figures dd.span, .figures dd.small { font-size: 1rem; }
+
+      /* 氏名に添えるよみ。3ページで同じ定義を持っていたのを寄せた */
+      .kana { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+
+      /* 読み上げにだけ渡すラベル。3ページで同じ定義を持っていたのを寄せた */
+      .sr-only {
+        position: absolute; width: 1px; height: 1px; overflow: hidden;
+        clip-path: inset(50%); white-space: nowrap;
+      }
+
+      /* --- グラフ（`lib/chart.ts` が文字列で返すので `is:global` が要る） ----- */
+      /* ★ `/topic/<id>` と `/word/<語>` に同じ8行が重複していたのを寄せた。
+         **`/politician/<id>` の積み上げ棒には当たっていなかった**（同じ
+         `.chart` / `.grid` / `.tick` を出すのに定義がそちらに無く、
+         figure の既定余白で40pxぶん字下げされていた）。 */
+      .chart { margin: 1rem 0; }
+      .chart svg { width: 100%; height: auto; display: block; }
+      .chart .bar { fill: var(--accent); }
+      /* その月の総発言数が少ないことの印。薄くしすぎると消える */
+      .chart .bar.faint { fill: var(--accent); opacity: 0.32; }
+      .chart .grid { stroke: var(--line-strong); stroke-width: 1; }
+      .chart .tick { fill: var(--muted); font-size: 10px; }
+      .chart .tick.right { text-anchor: end; }
+      .chart figcaption { margin-top: 0.4rem; }
 
       /* --- 発言の本文パネル（src/lib/speech-panel.ts） -------------------- */
       /*
@@ -250,12 +507,15 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
          `/speech/<id>` へ普通に遷移する（パネルのCSSは読まれても使われない）。
       */
       .speech-panel {
-        position: fixed; inset-block: 0; right: 0; z-index: 20;
+        position: fixed; inset-block: 0; right: 0; z-index: var(--z-panel);
         width: min(38rem, 55vw);
+        /* ノッチ・ホームインジケータの下に本文が潜らないようにする */
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-right: env(safe-area-inset-right);
         display: flex; flex-direction: column;
         background: var(--bg);
-        border-left: 1px solid var(--line);
-        box-shadow: -8px 0 24px rgb(0 0 0 / 0.12);
+        border-left: 1px solid var(--line-strong);
+        box-shadow: var(--shadow-panel);
       }
       .speech-panel[hidden] { display: none; }
 
@@ -290,11 +550,15 @@ const canonical = new URL(Astro.url.pathname.replace(/\.html$/, ""), Astro.site)
 
       /* 隠している間だけ出る。**何が戻るのか分かるよう発言者と日付を出す** */
       .speech-panel-reopen {
-        position: fixed; right: 1rem; bottom: 1rem; z-index: 20;
-        border: 1px solid var(--line); border-radius: 999px;
+        position: fixed; z-index: var(--z-panel);
+        /* ★ホームインジケータの上に逃がす。`bottom: 1rem` のままだと
+           iOS で押せない位置に座ることがある */
+        right: calc(1rem + env(safe-area-inset-right));
+        bottom: calc(1rem + env(safe-area-inset-bottom));
+        border: 1px solid var(--line-strong); border-radius: 999px;
         background: var(--card); color: var(--fg);
         padding: 0.5rem 1rem; font-size: 0.85rem;
-        box-shadow: 0 2px 12px rgb(0 0 0 / 0.15); cursor: pointer;
+        box-shadow: var(--shadow-float); cursor: pointer;
       }
       .speech-panel-reopen:hover { border-color: var(--accent); }
       .speech-panel-reopen[hidden] { display: none; }

@@ -133,21 +133,9 @@ const description =
     run(false);
   </script>
 
-  <style is:global>
-    .chart { margin: 1rem 0; }
-    .chart svg { width: 100%; height: auto; display: block; }
-    .chart .bar { fill: var(--accent); }
-    .chart .bar.faint { fill: var(--accent); opacity: 0.32; }
-    .chart .grid { stroke: var(--line); stroke-width: 1; }
-    .chart .tick { fill: var(--muted); font-size: 10px; }
-    .chart .tick.right { text-anchor: end; }
-    .chart figcaption { margin-top: 0.4rem; }
-  </style>
-
   <style>
-    .note {
-      border-left: 3px solid var(--line); padding: 0.4rem 0.8rem;
-      background: var(--card); border-radius: 0 6px 6px 0; margin-top: 2.5rem;
-    }
+    /* `.chart …` 一式と `.note` は Base.astro の共通定義（左罫の色が
+       ページごとに割れていたのを1つにした） */
+    .note { margin-top: 2.5rem; }
   </style>
 </Base>
