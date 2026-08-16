@@ -70,7 +70,15 @@ docs/SCOPE.md。空になるまで公開しない）。
 `user@domain` の並びが1度も現れないことを確認済み）。コピーボタンはJSで後から差し込む
 —— 動かない環境に押せないボタンを残さないため。スタイルを `is:global` にしてあるのは
 そのボタンにスコープ付きの属性が付かないから。
-アクセス解析を入れたら `analytics` を必ず埋めること — `/privacy` の記述が変わる。
+**アクセス解析もここが唯一の入り口。** `analytics` を埋めると、計測タグ
+（`layouts/Base.astro`）と `/privacy` の記述が**同じ値から**出る。トークンだけ空だと
+`missing` に出て⚠が付く（計測されないのにポリシーには「使っています」と出る状態を防ぐ）。
+
+> **★ Cloudflare Pages のダッシュボードから Web Analytics を有効にしないこと。**
+> あれはリポジトリを1行も変えずに計測を始められる ＝ **公開中のプライバシーポリシーが
+> 黙って嘘になる。** CSP（`public/_headers`）には
+> `static.cloudflareinsights.com` を先に通してあるので、足すのは `analytics` の1か所だけ。
+> 判断の経緯は [docs/DECISIONS.md](../docs/DECISIONS.md)。
 
 `operator.ts` から `db.ts` を import しないこと。`format.ts` と同じ理由で、
 ビルド時（Node側）に読まれるので、ブラウザ専用のコードを引き込むと SSR が落ちる。

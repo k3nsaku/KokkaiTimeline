@@ -21,7 +21,17 @@
   # 年DBの取得先を connect-src に入れてある。**PUBLIC_DB_BASE を変えたらここも変える。**
   # 'wasm-unsafe-eval' は sql.js-httpvfs（SQLite の WASM）に要る。
   # worker-src は 'self' で足りる（blob: ワーカは使っていない）。
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://db.kokkai-timeline.com; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
+  #
+  # ★ cloudflareinsights.com はアクセス解析（Cloudflare Web Analytics）の計測タグ。
+  #   **タグを出すかどうかは `src/lib/operator.ts` の `analytics` だけで決まる**ので、
+  #   ここが許可されていても `analytics: false` のあいだは1バイトも読み込まれない
+  #   （CSP は許可リストであって読み込み指示ではない）。逆にここを絞ったまま
+  #   `analytics` を入れると、**エラーも出ずにただ計測されない。**
+  #     script-src  … static.cloudflareinsights.com/beacon.min.js を読む
+  #     connect-src … 計測値の送り先。Cloudflare を通っているので通常は
+  #                   同一オリジンの /cdn-cgi/rum（'self' で足りる）だが、
+  #                   経路が変わると cloudflareinsights.com へ直接送るため両方許す
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://db.kokkai-timeline.com https://cloudflareinsights.com; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'
   # frame-ancestors と同じ意味。CSP を解さない古いブラウザ向け
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff

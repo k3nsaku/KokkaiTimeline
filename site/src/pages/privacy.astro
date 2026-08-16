@@ -30,24 +30,57 @@ const analytics = OPERATOR.analytics;
   <h2>検索したことは送られません</h2>
   <p>
     このサイトはサーバを持たない静的サイトで、<strong>検索も集計もすべて閲覧者の端末の中で動きます</strong>。
-    入力した検索語、選んだ議員や争点語、閲覧したページの記録は、どこにも送信していません。
-    運営者はそれらを受け取りませんし、保存もしていません。
+    入力した検索語は、どこにも送信していません。運営者はそれを受け取りませんし、保存もしていません。
   </p>
   <p class="muted small">
-    仕組みとしては、年ごとに分けた SQLite ファイルをオブジェクトストレージに置き、
+    仕組みとしては、期間ごとに分けた SQLite ファイルをオブジェクトストレージに置き、
     ブラウザが HTTP Range で必要な部分だけを読んでいます。
     サーバに渡るのは「ファイルの何バイト目から何バイト目が欲しいか」だけで、
     検索語そのものではありません。
   </p>
+  {analytics ? (
+    <p>
+      <strong>ただし、閲覧したページのURLは集計に送られます。</strong>
+      たとえば争点語のページを開けば <code>/topic/12</code> が、議員のページを開けば
+      <code>/politician/9</code> が記録されます。「どのページがどれだけ見られたか」を
+      数えるためのもので、個々の閲覧者と結び付けてはいません（下の<a href="#analytics">アクセス解析</a>）。
+      <strong>検索語はURLの <code>?</code> より後ろにあり、そこは記録されません。</strong>
+    </p>
+  ) : (
+    <p>
+      選んだ議員や争点語、閲覧したページの記録も、どこにも送信していません。
+    </p>
+  )}
 
-  <h2>Cookie を使っていません</h2>
-  <p>
-    Cookie も、ローカルストレージも、その他の端末内への保存も行っていません。
-    設定を覚える仕組みが無いので、同意を求める表示も出しません。
-  </p>
+  {/* ★ `analytics.cookies` を true にしたらこの見出しごと変わる。
+      「Cookie を使っていません」と書いたまま計測で使う状態を作らない */}
+  {analytics && analytics.cookies ? (
+    <>
+      <h2>Cookie</h2>
+      <p>
+        サイトの機能としては Cookie もローカルストレージも使っていません
+        （設定を覚える仕組みがありません）。
+        下の<a href="#analytics">アクセス解析</a>でのみ Cookie を用います。
+      </p>
+    </>
+  ) : (
+    <>
+      <h2>Cookie を使っていません</h2>
+      <p>
+        Cookie も、ローカルストレージも、その他の端末内への保存も行っていません。
+        設定を覚える仕組みが無いので、同意を求める表示も出しません。
+      </p>
+    </>
+  )}
 
   <h2>アクセスに伴って発生する通信</h2>
-  <p>このサイトを表示すると、次の2か所と通信します。どちらも運営者が用意したものです。</p>
+  {/* ★解析を入れると通信先のホストは3つでは足りない（計測タグの読み込み元と、
+      計測値の送り先が別）。**ホストの数を言い切らない**で、用途で数える。
+      許している送り先は CSP（public/_headers）が正で、ここはそれより狭く書かない */}
+  <p>
+    このサイトを表示すると、{analytics ? "次の3つの用途で" : "次の2か所と"}通信します。
+    いずれも運営者が用意したものです。
+  </p>
   <ul>
     <li>
       <strong>ページ本体</strong> — Cloudflare Pages で配信しています
@@ -56,6 +89,15 @@ const analytics = OPERATOR.analytics;
       <strong>会議録のデータベース</strong> — <code>db.kokkai-timeline.com</code>（Cloudflare R2）。
       検索や発言の表示のたびに、必要な部分だけを読みに行きます
     </li>
+    {analytics && (
+      <li>
+        <strong>アクセス解析の計測</strong> — 計測用のスクリプトを
+        <code>static.cloudflareinsights.com</code> から読み込み、ページを開いたときに1回だけ、
+        下の<a href="#analytics">アクセス解析</a>の内容を送ります。
+        送り先は通常このサイト自身（<code>/cdn-cgi/rum</code>）ですが、
+        経路によっては <code>cloudflareinsights.com</code> へ直接送られます
+      </li>
+    )}
   </ul>
   <p>
     配信元である Cloudflare には、通信に伴って IPアドレス・日時・
@@ -65,19 +107,46 @@ const analytics = OPERATOR.analytics;
     <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener">Cloudflare のプライバシーポリシー</a>によります。
   </p>
   <p>
-    <strong>広告・第三者による解析・外部のフォント配信・SNSの埋め込みは使っていません。</strong>
-    上の2か所以外への通信は発生しません。
+    <strong>広告・外部のフォント配信・SNSの埋め込みは使っていません。</strong>
+    {analytics ? "ここに挙げた以外への通信は発生しません。" : "上の2か所以外への通信は発生しません。"}
   </p>
 
-  <h2>アクセス解析</h2>
+  <h2 id="analytics">アクセス解析</h2>
   {analytics ? (
-    <p>
-      アクセス状況の把握に
-      <a href={analytics.url} rel="noopener">{analytics.name}</a> を使っています。
-      {analytics.cookies
-        ? "この計測では Cookie を用います。"
-        : "この計測では Cookie を用いず、個々の閲覧者を追跡しません。"}
-    </p>
+    <>
+      <p>
+        どのページが読まれているかを知るために
+        <a href={analytics.url} rel="noopener">{analytics.name}</a> を使っています。
+        目的は<strong>次に直す場所を決めること</strong>で、閲覧者を識別したり、
+        誰が何を調べたかを知るためではありません。
+      </p>
+      <p>送っているのは、ページを開いたときの次のような情報です。</p>
+      <ul>
+        <li>ページのURL（<strong><code>?</code> より後ろは含みません</strong>＝検索語は入りません）</li>
+        <li>参照元・画面の大きさ・ブラウザの種類・おおまかな地域</li>
+        <li>ページの表示速度（読み込みや描画にかかった時間）</li>
+      </ul>
+      <p>
+        {analytics.cookies
+          ? "この計測では Cookie を用います。"
+          : "この計測では Cookie を使いません。"}
+        {!analytics.cookies && (
+          <>
+            提供元の Cloudflare は、
+            <strong>Cookie やローカルストレージなど端末側の記録を使わず、
+            IPアドレスやブラウザの特徴から個人を識別（フィンガープリント）することもしない</strong>
+            と説明しています。
+            そのため運営者が見られるのは<strong>合計の数字だけ</strong>で、
+            特定の人の閲覧履歴をたどることはできません。
+          </>
+        )}
+      </p>
+      <p class="muted small">
+        提供元は、ページ本体と会議録を配信しているのと同じ Cloudflare です。
+        取り扱いは<a href="https://www.cloudflare.com/privacypolicy/" rel="noopener">Cloudflare のプライバシーポリシー</a>によります。
+        <strong>この計測をやめたときは、このページからも記述を消します。</strong>
+      </p>
+    </>
   ) : (
     <p>
       <strong>導入していません。</strong>入れる場合は、事前にここへ何を使っているかを明記します。

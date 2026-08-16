@@ -5,6 +5,8 @@
  * 中身の大半はブラウザがDBから引くので、ここで出すのは骨組みと、
  * **事前生成できる分の本文**（議員の氏名・所属・争点語）だけ。
  */
+import { OPERATOR } from "../lib/operator";
+
 export interface Props {
   title: string;
   description?: string;
@@ -13,6 +15,17 @@ export interface Props {
 }
 
 const { title, description, noindex = false } = Astro.props;
+
+/**
+ * アクセス解析の計測タグ。**出すかどうかは `operator.ts` の1か所だけで決まる**
+ * （`/privacy` の記述と同じ値から出るので、片方だけ変わることがない）。
+ *
+ * ★ ダッシュボードの自動挿入は使わない。あれはリポジトリを変えずに計測を始められて
+ *   しまい、公開中のプライバシーポリシーが黙って嘘になる。
+ * ★ CSP に `static.cloudflareinsights.com` が要る（`public/_headers`）。
+ *   **無いと読み込まれず、エラーも出ずにただ計測されない。**
+ */
+const beaconToken = OPERATOR.analytics ? OPERATOR.analytics.beaconToken : null;
 const fullTitle = title === "国会タイムライン" ? title : `${title} | 国会タイムライン`;
 
 // 正規URL。`build.format: "file"` で `/politician/9.html` が出るが、配信されるURLは
@@ -567,5 +580,16 @@ const current = (m: string[]) => m.some((p) => (p.endsWith("/") ? path.startsWit
          `.wrap` に余白を足して押しのけると、一覧の幅を広げる案と同じことになる
          （＝読んでいる行がずれる）。隠せば全部見えるので、それで足りる。 */
     </style>
+
+    {/* ★`is:inline` が要る。付けないと Astro が自前のバンドルに巻き取ろうとする。
+        `defer` なので本文の表示は待たせない（読み込みに失敗しても中身は出る）。 */}
+    {beaconToken && (
+      <script
+        is:inline
+        defer
+        src="https://static.cloudflareinsights.com/beacon.min.js"
+        data-cf-beacon={JSON.stringify({ token: beaconToken })}
+      />
+    )}
   </body>
 </html>

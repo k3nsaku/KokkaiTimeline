@@ -69,6 +69,7 @@
 | 政党の手入力 | 3か月 | `reports/party_todo.md` → `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
 | 争点語のレビュー | 6か月 | `reports/trending_new_terms.md` → `data/topics.json`。**全期間のDBの作り直しを伴う** |
 | 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
+| **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。公式FAQに「クエリ文字列は記録しない」が**将来変わりうる**と書いてある（[docs/DECISIONS.md](docs/DECISIONS.md)）。変わったら `/privacy` を直すか解析をやめる |
 | R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
 | 配信DBの最大サイズを見る | 1か月 | 日次が `manifest.json` を見て 480MB で落とす。落ちたら分割を細かくする |
 

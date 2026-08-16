@@ -30,10 +30,21 @@ export interface Operator {
    */
   formUrl: string | null;
   /**
-   * アクセス解析を入れているか。**入れたら必ず true にする**
-   * （プライバシーポリシーの記述が変わる）。site/README.md「運営者名と連絡先」。
+   * アクセス解析。**ここが唯一の入り口。** 計測タグ（`Base.astro`）と
+   * プライバシーポリシーの記述（`privacy.astro`）が**同じ値から出る**ので、
+   * 「計測しているのにポリシーに書いていない」状態を作れない。
+   *
+   * ★ **ダッシュボード側の自動挿入を使わないのはこのため。** Cloudflare Pages の
+   *   Web Analytics を画面から有効にすると、リポジトリを1行も変えずに計測が始まり、
+   *   公開中のプライバシーポリシーが黙って嘘になる。**必ずここを埋めて配ること。**
+   *
+   * `beaconToken` は Cloudflare Web Analytics のサイトトークン。
+   * **秘密ではない**（全ページのHTMLに出る公開値）。空のままにすると
+   * `missing` に出て、`/privacy` などに⚠が出る。
    */
-  analytics: false | { name: string; url: string; cookies: boolean };
+  analytics:
+    | false
+    | { name: string; url: string; cookies: boolean; beaconToken: string };
 }
 
 export const OPERATOR: Operator = {
@@ -43,6 +54,16 @@ export const OPERATOR: Operator = {
   // **常時稼働プロセスは増えていない** — 転送は Cloudflare 側の設定だけで動く
   email: "info@kokkai-timeline.com",
   formUrl: null,
+  // アクセス解析を入れるときは、まるごとこの形に差し替える（ROADMAP「A」）:
+  //
+  //   analytics: {
+  //     name: "Cloudflare Web Analytics",
+  //     url: "https://www.cloudflare.com/web-analytics/",
+  //     cookies: false,
+  //     beaconToken: "＜ダッシュボードで発行される32桁＞",
+  //   },
+  //
+  // **CSP（site/public/_headers）は先に通してある。** 足すのはこの1か所だけ。
   analytics: false,
 };
 
@@ -50,6 +71,11 @@ export const OPERATOR: Operator = {
 export const missing: string[] = [
   OPERATOR.name ? null : "運営者の表示名",
   OPERATOR.email ? null : "連絡先メール",
+  // ★ 解析を入れる宣言だけしてトークンが空、は**計測されないのにポリシーには
+  //   「使っています」と出る**状態。片方だけ埋まらないように、ここで拾う
+  OPERATOR.analytics && !OPERATOR.analytics.beaconToken
+    ? "アクセス解析の計測トークン"
+    : null,
 ].filter((v): v is string => v !== null);
 
 /** 公開に必要な最低限（表示名と連絡先）が埋まっているか。 */

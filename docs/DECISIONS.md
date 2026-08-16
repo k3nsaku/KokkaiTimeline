@@ -416,6 +416,25 @@ OFFSET 80（5ページ目）が **134リクエスト・4.1秒**。keyset なら�
 より細かい期間は月粒度＋会期で出す予定（[ROADMAP.md](ROADMAP.md)）。
 **任意の日付範囲はやらない**——ブラウザ側の範囲集計が全走査になる。
 
+### アクセス解析は Cloudflare Web Analytics。**計測タグはコード側に置く**（2026-08-16）
+選んだ理由は、**Cookie もローカルストレージも使わず、クエリ文字列を記録しない**こと。
+`/search?q=<検索語>` の検索語が集計に残らないのは、この構成では譲れない
+（サイトの主張が「検索語はどこにも送らない」なので、解析で崩したら意味がない）。
+2026-08-16 に公式FAQで再確認: *"Cloudflare Web Analytics do not log query strings to
+avoid collecting potentially sensitive data"*。同じFAQに UTM パラメータについて
+*"we may add support for this in the future"* とあるので、**この前提は変わりうる**
+（CLAUDE.md の定期作業に6か月ごとの再確認を入れてある）。
+
+**ダッシュボードの自動挿入（Pages の Web Analytics トグル）は使わない。**
+あれはリポジトリを1行も変えずに計測を始められる ＝ **公開中のプライバシーポリシーが
+黙って嘘になる**。`site/src/lib/operator.ts` の `analytics` 1か所から、
+計測タグ（`Base.astro`）とポリシーの記述（`privacy.astro`）の両方を出している。
+トークンが空のままだと `missing` に出て⚠が表示される（片方だけ埋まらないようにする）。
+
+**記録されるのはURLのパス。** `?` より後ろは残らないので検索語は入らないが、
+`/topic/12` `/word/年金` `/politician/9` は残る。これは「どのページが読まれたか」
+そのもので、**プライバシーポリシーに明記してある**（黙って集めない）。
+
 ### 発言ページの OGP は共通のものしか出せない
 発言は650,785件あって事前生成できない。`/speech/<id>` は1枚の静的HTMLを
 200 rewrite で使い回しているので、OG画像も説明文も全発言で同じになる。
