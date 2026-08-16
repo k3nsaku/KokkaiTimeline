@@ -104,10 +104,14 @@ python scripts/build_topics.py --propose   # 争点語の候補（data/topics.js
 python scripts/build_topics.py             # 頻度推移（dist/topics.json・trending.json）
 python scripts/build_frequent.py           # 頻出語500語（dist/frequent.json）
 python scripts/build_activity.py           # 議員ごとの発言数の推移（dist/politician_activity.json）
+
+# 検証（配る前に必ず通す。日次更新もこれを関門にしている）
+python scripts/verify_dist.py              # data/dist の全期間（実測18秒）
+python scripts/verify_dist.py --id 2026H2  # 触った期間だけ
 ```
 
 **順番は `fetch_range` → `build_db`（単一DB）→ `build_politicians` / `build_topics`
-/ `build_frequent` → `build_db --split`。**
+/ `build_frequent` → `build_db --split` → `verify_dist`。**
 集計スクリプトは `data/kokkai.db` を材料にするので、単一DBが先に要る。
 
 **★`build_activity.py` だけは `build_politicians.py` の後に `build_db` を回し直した
@@ -122,7 +126,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,702ページ・22MB
-npm run check    # 型検査 + テスト120件
+npm run check    # 型検査 + テスト126件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`

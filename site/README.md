@@ -8,7 +8,7 @@ cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
 npm run build      # dist/ に静的HTMLを出す（1,702ページ / 22MB）
-npm run test       # 回帰テスト（120件・0.2秒）
+npm run test       # 回帰テスト（126件・0.2秒）
 npm run check      # 型検査 + テスト
 ```
 

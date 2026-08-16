@@ -1,7 +1,8 @@
 ﻿# push と PR ごとに site/ の型検査とテストを回す。
 #
-# **日次更新（daily.yml）はテストを通さずに本番へ配る**（`npm run build` だけ）。
-# ここが唯一の関門なので、`src/lib/query.ts` を壊す変更はここで止める。
+# 日次更新（daily.yml）も配る前に同じ `npm run check` を通すが、
+# **こちらのほうが早く気づける**（push した時点で分かる）。
+# `src/lib/query.ts` を壊す変更はここで止める。
 #
 # ★ `npm run build` は回さない。ビルドには `data/politicians.json` と
 #   `data/dist/topics.json` が要るが、生成物なのでリポジトリには入っていない
@@ -47,7 +48,7 @@ jobs:
         working-directory: site
 
       - name: 型検査とテスト
-        # astro check + node --test（テスト112件）。
+        # astro check + node --test（テスト126件）。
         # データファイルは読まない（`site-data.ts` の読み込みはページの
         # 事前生成のときだけ走る）ので、生成物が無くても通る
         run: npm run check

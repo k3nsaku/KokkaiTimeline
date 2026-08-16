@@ -4,6 +4,16 @@
 #   - **常時稼働プロセスを持たない。** ここが唯一の定期実行で、落ちても数日放置できる
 #   - **触った期間のDBだけ作り直す。** 閉じた期間は変わらないので CDN キャッシュが効き続ける
 #
+# ★ **外に出すものは、検証を全部終えてから出す。**
+#   R2 と Pages に配ってしまうと取り消せないので、
+#
+#       作る → 検証する（verify_dist.py / npm run check / npm run build）
+#            → 議員ID台帳を push → R2 → Pages
+#
+#   の順にしてある。完全な同時更新はできないが、**落ちたものを公開しない**順序にはできる。
+#   議員ID台帳が公開より前にあるのは、**失うと公開後のURLが全部変わる**ため
+#   （新しい議員IDでページを配ったのに台帳が残らないと、翌日に採番がやり直しになる）。
+#
 # 配信DBは半期で割ってある（`2026H1` = 1〜6月）。2文字語の索引は本文から
 # その場で作るので、**期間ごとに中身が違ってよい**（以前あった「語彙が年をまたいで
 # 食い違うと過去年が黙って0件になる」事故は、この設計では起きない）。
@@ -110,14 +120,30 @@ jobs:
         # SPARQL エンドポイントは共用資源なので毎日は叩かない（5秒間隔・数分かかる）。
         # ただし**無ければ必ず取る**。無いまま進むと議員マスタの更新で止まる。
         # 手元にあるなら、取り直しに失敗しても前回ぶんで続ける（Wikidata の一時障害で
-        # 日次更新ごと落とさない）
+        # 日次更新ごと落とさない）。
+        #
+        # ★ **取れたその場で状態バケットへ書き戻す。** これは公開物ではなく入力の
+        #   キャッシュで、最後まで持ち回る理由が無い。ジョブの終わりに回すと、
+        #   月初の実行がそこで落ちたときに古いリストが残り、
+        #   **翌月まで取り直しの機会が来ない**（取り直すのは日が 01 のときだけなので、
+        #   `fetch_range --force` のように翌日に自然に追いつかない）
         run: |
+          save() {
+            aws s3 cp data/raw/wikidata_members.json \
+              "s3://$STATE_BUCKET/raw/wikidata_members.json" $R2
+            aws s3 cp data/raw/wikidata_terms.json \
+              "s3://$STATE_BUCKET/raw/wikidata_terms.json" $R2
+          }
           if [ ! -f data/raw/wikidata_members.json ] || [ ! -f data/raw/wikidata_terms.json ]; then
             echo "議員リストが無いので取得する"
             python scripts/fetch_wikidata.py
+            save
           elif [ "$(date -u -d '9 hours' +%d)" = "01" ]; then
-            python scripts/fetch_wikidata.py \
-              || echo "★ 月初の取り直しに失敗。前回の議員リストで続ける"
+            if python scripts/fetch_wikidata.py; then
+              save
+            else
+              echo "★ 月初の取り直しに失敗。前回の議員リストで続ける"
+            fi
           else
             echo "前回の議員リストを使う"
           fi
@@ -167,22 +193,77 @@ jobs:
             python scripts/build_db.py $ids --page-size 8192
           fi
 
-      - name: 配信DBが CDN のキャッシュ上限に収まっているか確かめる
-        # **512MB を超えたファイルは黙ってキャッシュされなくなる**（docs/DECISIONS.md）。
-        # エラーにならず、ただ RTT が 8ms → 77ms になって検索が10倍遅くなるだけなので、
-        # ここで落として気づけるようにする
-        run: |
-          python - <<'PY'
-          import json, sys
-          m = json.load(open("data/dist/manifest.json", encoding="utf-8"))
-          worst = max(m["databases"], key=lambda d: d["size"])
-          print(f"最大: {worst['file']} {worst['size'] / 1e6:.0f} MB / 上限 512 MB")
-          if worst["size"] > 480e6:
-              sys.exit("★ 512MB に近い。分割を細かくすること"
-                       "（scripts/build_db.py の --period）")
-          PY
+      # --- 検証する（★ ここから先に落ちたものは1バイトも外へ出さない） ----------
 
-      # --- 配る ---------------------------------------------------------------
+      - name: 配信物を検証する
+        # 期間DBの PRAGMA quick_check、目録との突き合わせ（size / version / 収録範囲）、
+        # 分割規則が build_db.py と query.ts で揃っているか、
+        # **FTS・2文字語・争点語の3経路を代表語で1件ずつ実際に引く**スモークテスト。
+        #
+        # 配信DBの大きさもここで見る。**512MB を超えたファイルは黙って
+        # キャッシュされなくなる**（docs/DECISIONS.md）。エラーにならず、ただ
+        # RTT が 8ms → 77ms になって検索が10倍遅くなるだけなので、手前で落とす。
+        #
+        # ★ 検証するのは**手元にあるDBだけ**。閉じた期間は触っていないので降ろさない
+        #   （目録の記載を引き継いでいる。検証を飛ばした期間はログに出る）
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.all_years }}" = "true" ]; then
+            python scripts/verify_dist.py
+          else
+            ids="--id ${{ steps.when.outputs.period }}"
+            if [ "${{ steps.when.outputs.from_period }}" != "${{ steps.when.outputs.period }}" ]; then
+              ids="$ids --id ${{ steps.when.outputs.from_period }}"
+            fi
+            python scripts/verify_dist.py $ids
+          fi
+
+      - name: サイトの型検査・テストとビルド
+        # 議員1,111ページと争点語82ページはビルド時に生成される。
+        # 中身（politicians.json / topics.json / trending.json）が毎日変わるので、
+        # サイトも毎日作り直す。
+        #
+        # ★ `npm run check`（astro check + テスト）を**配る前に**通す。
+        #   CI（ci.yml）は `site/**` を触った push でしか走らないので、
+        #   ここが「毎日必ず通る関門」になる。
+        env:
+          PUBLIC_DB_BASE: ${{ vars.PUBLIC_DB_BASE }}
+        run: |
+          set -euo pipefail
+          cd site
+          npm ci
+          npm run check
+          npm run build
+
+      # --- 台帳を残す（★ 公開より前。失うとURLが全部変わる） --------------------
+
+      - name: 議員ID台帳が増えていたらコミットする
+        # ★ data/politician_ids.json は URL に出る議員IDの台帳。
+        #   失うと採番がやり直しになり、**公開後のリンクが全部壊れる**。
+        #   push できないときは黙って続けず、ジョブを失敗させる。
+        #
+        #   **公開より前に置いてある。** 新しい議員IDでページを配ったあとに
+        #   ここが落ちると、翌日は採番からやり直しになって、
+        #   前日に配ったURLが誰も指さない場所になる。
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data/politician_ids.json; then
+            echo "台帳に変更なし"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/politician_ids.json
+          git commit -m "議員ID台帳を更新（日次）"
+          # 台帳の push が公開の関門になったので、他の commit と競ったときに
+          # 1回だけやり直す。台帳は追記しかされないので rebase で衝突しない。
+          # ★ 追跡ブランチの設定に頼らず明示する（この経路はまだ一度も通っていない）
+          git push origin "HEAD:$GITHUB_REF_NAME" || {
+            git pull --rebase origin "$GITHUB_REF_NAME"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          }
+
+      # --- 配る（ここから先は取り消せない） -------------------------------------
 
       - name: 期間DBと目録を R2 へ
         run: |
@@ -203,26 +284,6 @@ jobs:
           aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" $R2 \
             --cache-control "public, max-age=300"
 
-      - name: 次回のための状態を R2 へ
-        run: |
-          set -euo pipefail
-          aws s3 sync data/raw/speeches "s3://$STATE_BUCKET/raw/speeches" $R2 --no-progress
-          # 名寄せの材料。次回はここから戻す（.gitignore なのでリポジトリには残らない）
-          aws s3 cp data/raw/wikidata_members.json "s3://$STATE_BUCKET/raw/wikidata_members.json" $R2
-          aws s3 cp data/raw/wikidata_terms.json "s3://$STATE_BUCKET/raw/wikidata_terms.json" $R2
-          aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
-
-      - name: サイトをビルドする
-        # 議員1,111ページと争点語82ページはビルド時に生成される。
-        # 中身（politicians.json / topics.json / trending.json）が毎日変わるので、
-        # サイトも毎日作り直す
-        env:
-          PUBLIC_DB_BASE: ${{ vars.PUBLIC_DB_BASE }}
-        run: |
-          cd site
-          npm ci
-          npm run build
-
       - name: Cloudflare Pages へデプロイ
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -231,23 +292,17 @@ jobs:
           npx --yes wrangler@4 pages deploy site/dist \
             --project-name "${{ vars.PAGES_PROJECT }}" --branch main
 
-      # --- 台帳を残す ---------------------------------------------------------
-
-      - name: 議員ID台帳が増えていたらコミットする
-        # ★ data/politician_ids.json は URL に出る議員IDの台帳。
-        #   失うと採番がやり直しになり、**公開後のリンクが全部壊れる**。
-        #   push できないときは黙って続けず、ジョブを失敗させる
+      - name: 次回のための状態を R2 へ
+        # 公開のあと。**外から見えないもので、落ちても翌日に自然に追いつく**ものだけを
+        # ここに置く（配ったものは壊れない）:
+        #   - 生データ … 差分が出るのは直近2か月ぶんだけで、翌日 `--force` で取り直す
+        #   - 議員マスタ … 毎回 build_politicians.py が作り直す（戻すのは材料としてだけ）
+        # ★ Wikidata の議員リストはここに置かない。**取り直すのが月初だけ**なので
+        #   翌日に追いつかない。取れたその場で書き戻している（上の手順2）
         run: |
           set -euo pipefail
-          if git diff --quiet -- data/politician_ids.json; then
-            echo "台帳に変更なし"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/politician_ids.json
-          git commit -m "議員ID台帳を更新（日次）"
-          git push
+          aws s3 sync data/raw/speeches "s3://$STATE_BUCKET/raw/speeches" $R2 --no-progress
+          aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
 
       # ★ reports/ は .gitignore なので、上げないとランナーの終了と一緒に消える。
       #   要約に出しているのは**件数だけ**で、「12行あります」と分かっても中身が読めず、
