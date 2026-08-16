@@ -54,17 +54,17 @@ export const OPERATOR: Operator = {
   // **常時稼働プロセスは増えていない** — 転送は Cloudflare 側の設定だけで動く
   email: "info@kokkai-timeline.com",
   formUrl: null,
-  // アクセス解析を入れるときは、まるごとこの形に差し替える（ROADMAP「A」）:
-  //
-  //   analytics: {
-  //     name: "Cloudflare Web Analytics",
-  //     url: "https://www.cloudflare.com/web-analytics/",
-  //     cookies: false,
-  //     beaconToken: "＜ダッシュボードで発行される32桁＞",
-  //   },
-  //
-  // **CSP（site/public/_headers）は先に通してある。** 足すのはこの1か所だけ。
-  analytics: false,
+  // ★ダッシュボードの RUM は「JS スニペットのインストールで有効にする」にしてある
+  //   （2026-08-16）。**「有効にする」に戻さないこと** — エッジで勝手に挿されて、
+  //   ここを false にしても計測が止まらなくなる（経緯は docs/PITFALLS.md）。
+  //   やめるときは、ここを false にするのと同時にダッシュボードも「無効にする」へ。
+  analytics: {
+    name: "Cloudflare Web Analytics",
+    url: "https://www.cloudflare.com/web-analytics/",
+    cookies: false,
+    // 秘密ではない（全ページのHTMLに出る公開値）
+    beaconToken: "f121ac20f1a845b0805f68b563bb6af3",
+  },
 };
 
 /** 公開に必要な最低限のうち、まだ埋まっていないもの。空なら公開してよい。 */

@@ -582,11 +582,13 @@ const current = (m: string[]) => m.some((p) => (p.endsWith("/") ? path.startsWit
     </style>
 
     {/* ★`is:inline` が要る。付けないと Astro が自前のバンドルに巻き取ろうとする。
-        `defer` なので本文の表示は待たせない（読み込みに失敗しても中身は出る）。 */}
+        `type="module"` はダッシュボードが出すスニペットに合わせたもの
+        （モジュールは既定で defer なので、本文の表示は待たせない。
+        読み込みに失敗しても中身は出る）。**勝手に classic script に変えない。** */}
     {beaconToken && (
       <script
         is:inline
-        defer
+        type="module"
         src="https://static.cloudflareinsights.com/beacon.min.js"
         data-cf-beacon={JSON.stringify({ token: beaconToken })}
       />

@@ -40,14 +40,18 @@
       6か月ごとの再確認を [CLAUDE.md](../CLAUDE.md) の定期作業に入れた
 - [x] `operator.ts` の `analytics` 1か所から、計測タグと `/privacy` の記述が出るようにした。
       **ダッシュボードの自動挿入は使わない**（ポリシーが黙って嘘になるため）
-- [x] CSP に `static.cloudflareinsights.com` を通した（`site/public/_headers`）
+- [x] CSP に `static.cloudflareinsights.com`（script-src）と `cloudflareinsights.com`
+      （connect-src）を通した（`site/public/_headers`）。**計測値は後者へ直接飛ぶ**（実測）
+- [x] ダッシュボードの RUM を**「JS スニペットのインストールで有効にする」**にして、
+      トークンを `operator.ts` に入れた（2026-08-16）。
+      **このとき自動挿入が有効なまま14日間動いていたのを見つけて止めた** —
+      CSP に阻まれて0件だっただけで、**許可リストを足した時点で計測が始まる状態だった**
+      （[PITFALLS.md](PITFALLS.md)「公開まわり」）
 
-**残り（運営者の作業と、その後の観測）:**
+**残り（公開と、その後の観測）:**
 
-- [ ] ★ Cloudflare ダッシュボードで Web Analytics のサイトを作り、
-      **トークンを `site/src/lib/operator.ts` の `analytics` に入れる。**
-      入れるまで計測は始まらない（コード側は入れ替えるだけの状態）
-- [ ] 反映後に**実機で1回確認する。** CSP 違反が出ていないこと、
+- [ ] ★ push して**実機で1回確認する。** Console に CSP 違反が出ていないこと、
+      `cloudflareinsights.com/cdn-cgi/rum` が 2xx で返ること、
       ダッシュボードに数字が入ること。**壊れてもエラーは出ない**
 - [ ] `/search`・争点語・頻出語・議員・会期の、ページ種別ごとの利用比率を見る
 - [ ] モバイル比率と Core Web Vitals を見る
