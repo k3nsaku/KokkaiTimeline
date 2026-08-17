@@ -1,7 +1,7 @@
 ---
 /**
  * 議員一覧。1,111人ぶんを静的に出す（約100KB）。
- * DBを引かないので絞り込みは即座に効くし、検索エンジンにも中身が渡る。
+ * DBを引かないので絞り込みも並べ替えも即座に効くし、検索エンジンにも中身が渡る。
  *
  * ★ 照合は `/search` の議員タブと**同じ `fold()` を通す**（`lib/politician-search.ts`）。
  *   素の `includes` だと**カタカナで打つと当たらず、「岸田 文雄」と空白を入れても
@@ -9,11 +9,19 @@
  *   寄りかかっていた）。同じ語で挙動が違うのは説明できない。
  *
  *   **並び順は揃えない。** あちらは一致の強い順に並べ替える検索、こちらは
- *   発言数順の一覧を絞り込むもの。当たる集合は同じで、順序だけが違う。
+ *   氏名のよみ順の一覧を絞り込むもの。当たる集合は同じで、順序だけが違う。
+ *
+ * ★ **既定は氏名のよみの五十音順**（発言数の多い順ではない）。発言数は委員会の所属と
+ *   役職で決まるので、**運営が既定で多い順に並べると事実上の議員評価になる**
+ *   （docs/SCOPE.md）。見出しを押せば利用者の側で並べ替えられる。
+ *
+ * ★ 既定順と見出しを押したときの並びは**同じ `compareKeys()` から出す**
+ *   （`lib/table-sort.ts`）。別々に書くと「氏名を2回押すと最初と違う並びになる」。
  */
 import Base from "../layouts/Base.astro";
 import { politicians, latestAffiliation } from "../lib/site-data";
 import { fold } from "../lib/politician-search";
+import { compareKeys } from "../lib/table-sort";
 import { formatNumber } from "../lib/format";
 
 /**
@@ -24,8 +32,13 @@ import { formatNumber } from "../lib/format";
 const searchKey = (r: { name: string; kana: string; kaiha: string }) =>
   [r.name, r.kana, r.kaiha].map(fold).join("|");
 
+/**
+ * 並べ替え用のよみ。**よみが無ければ氏名で代用する**（空にしない）。
+ * ja の照合では漢字がかなの後ろに来るので、代用した行はまとまって末尾に寄る。
+ */
+const sortName = (r: { name: string; kana: string }) => r.kana || r.name;
+
 const rows = [...politicians()]
-  .sort((a, b) => b.n_speeches - a.n_speeches)
   .map((p) => {
     const a = latestAffiliation(p);
     return {
@@ -35,13 +48,27 @@ const rows = [...politicians()]
       kaiha: a?.kaiha ?? "", n: p.n_speeches,
       last: p.last_date ?? "",
     };
-  });
+  })
+  .sort((a, b) => compareKeys(sortName(a), sortName(b), "text", "asc"));
+
+/**
+ * 列。**`type` は `<th>` の `data-sort` に出して、ブラウザ側はそれを読む**
+ * （列の定義をここと script の2か所に書くと必ずどちらかがずれる）。
+ */
+const COLUMNS = [
+  { label: "氏名", type: "text", num: false },
+  { label: "院", type: "text", num: false },
+  { label: "会派", type: "text", num: false },
+  { label: "発言数", type: "num", num: true },
+  { label: "最後の発言", type: "date", num: false },
+];
 ---
 
 <Base title="議員一覧" description={`国会会議録で発言している議員 ${formatNumber(rows.length)}人の一覧です。`}>
   <h1>議員一覧</h1>
   <p class="small muted">
-    会議録の発言を名寄せした{formatNumber(rows.length)}人です。発言数の多い順に並べています。
+    会議録の発言を名寄せした{formatNumber(rows.length)}人を、氏名のよみの五十音順に並べています。
+    表の見出しを押すとその列で並べ替わります（もう一度押すと逆順）。
     所属は<strong>会派</strong>（会議録に書いてある事実）で、政党とは一致しないことがあります。
   </p>
 
@@ -52,23 +79,35 @@ const rows = [...politicians()]
   </p>
 
   <div class="scroll-x">
-    <table>
+    <table id="list" class="sortable">
       <thead>
         <tr>
-          <th>氏名</th><th>院</th><th>会派</th>
-          <th class="num">発言数</th><th>最後の発言</th>
+          {COLUMNS.map((c, i) => (
+            <th
+              scope="col"
+              class={c.num ? "num" : undefined}
+              data-sort={c.type}
+              aria-sort={i === 0 ? "ascending" : undefined}
+            >
+              {/* ★ `<div>` に click を付けない。**素の `<button>`** にしておけば
+                  Tab で辿れて Enter / Space で押せる（`aria-sort` が向きを伝える） */}
+              <button type="button">{c.label}</button>
+            </th>
+          ))}
         </tr>
       </thead>
       <tbody id="rows">
         {rows.map((r) => (
           <tr data-key={searchKey(r)}>
-            <td>
+            {/* `data-v` ＝ その列の**並べ替えに使う値**。無い列はセルの文字をそのまま使う。
+                氏名はよみで、発言数は桁区切りの入っていない数で並べる */}
+            <td data-v={sortName(r)}>
               <a href={`/politician/${r.id}`}>{r.name}</a>
               {r.kana && <span class="kana"> {r.kana}</span>}
             </td>
             <td>{r.house}</td>
             <td>{r.kaiha}</td>
-            <td class="num">{formatNumber(r.n)}</td>
+            <td class="num" data-v={String(r.n)}>{formatNumber(r.n)}</td>
             <td class="small muted">{r.last}</td>
           </tr>
         ))}
@@ -76,13 +115,24 @@ const rows = [...politicians()]
     </table>
   </div>
 
+  {/* 並べ替えは見た目が変わるだけで、読み上げには何も起きない。何をしたかを1行で返す */}
+  <p id="sort-status" class="sr-only" role="status"></p>
+
   <script>
     // 打たれた側も同じ形に畳む。**両側に掛けないと釣り合わない**
     import { fold } from "../lib/politician-search";
+    // 既定の並び（ビルド時）と同じ比較を使う。**2つ書くとどちらかがずれる**
+    import { compareKeys, firstDir, toggleDir, type SortDir, type SortType }
+      from "../lib/table-sort";
 
     const input = document.getElementById("filter") as HTMLInputElement;
     const countEl = document.getElementById("count")!;
-    const trs = Array.from(document.querySelectorAll<HTMLTableRowElement>("#rows tr"));
+    const statusEl = document.getElementById("sort-status")!;
+    const tbody = document.getElementById("rows") as HTMLTableSectionElement;
+    const ths = Array.from(
+      document.querySelectorAll<HTMLTableCellElement>("#list thead th"),
+    );
+    const trs = Array.from(tbody.rows);
 
     function apply() {
       const q = fold(input.value.trim());
@@ -96,11 +146,76 @@ const rows = [...politicians()]
     }
 
     input.addEventListener("input", apply);
+
+    /** その行のその列の並べ替えキー。`data-v` が無ければセルの文字そのもの */
+    const keyOf = (tr: HTMLTableRowElement, col: number) => {
+      const td = tr.cells[col];
+      return td.dataset.v ?? (td.textContent ?? "").trim();
+    };
+
+    function sortBy(col: number, dir: SortDir) {
+      const type = (ths[col].dataset.sort ?? "text") as SortType;
+      // 同着は**氏名のよみの昇順**で解く。院や会派で並べたとき、
+      // 同じ会派の中がその時々の並びのままだと押すたびに順序が変わって見える
+      const sorted = [...trs].sort((a, b) =>
+        compareKeys(keyOf(a, col), keyOf(b, col), type, dir)
+        || compareKeys(keyOf(a, 0), keyOf(b, 0), "text", "asc"));
+
+      // 1回の差し替えで済ませる（1,111行を1行ずつ動かすと都度レイアウトが走る）
+      const frag = document.createDocumentFragment();
+      for (const tr of sorted) frag.append(tr);
+      tbody.append(frag);
+
+      ths.forEach((th, i) => {
+        if (i === col) th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
+        else th.removeAttribute("aria-sort");
+      });
+      const label = ths[col].textContent?.trim() ?? "";
+      statusEl.textContent = `${label}の${dir === "asc" ? "昇順" : "降順"}に並べ替えました`;
+    }
+
+    ths.forEach((th, col) => {
+      th.querySelector("button")!.addEventListener("click", () => {
+        const current = th.getAttribute("aria-sort");
+        const dir: SortDir = current === null
+          ? firstDir((th.dataset.sort ?? "text") as SortType)
+          : toggleDir(current === "ascending" ? "asc" : "desc");
+        sortBy(col, dir);
+      });
+    });
   </script>
 
   <style>
     /* `.kana` / `.sr-only` は Base.astro の共通定義 */
     .filter { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin: 1rem 0; }
     #filter { min-width: min(22rem, 100%); }
+
+    /* 見出しの押せる範囲をセル全体にする（`th` の余白をボタンへ移す）。
+       **ボタンらしくは飾らない** — 見出し行が5つのボタンに見えると、
+       押すと別の画面へ行くように読める。面と字は `th` のまま */
+    table.sortable th { padding: 0; }
+    table.sortable th button {
+      display: flex; align-items: center; gap: 0.35rem;
+      width: 100%; padding: 0.45rem 0.6rem;
+      border: 0; border-radius: 0; background: none;
+      font: inherit; font-weight: 600; color: inherit; text-align: left;
+    }
+    table.sortable th.num button { justify-content: flex-end; }
+    /* 角丸は `th` に付いている（Base.astro）。ボタンの面が角を四角く塗り潰さないように */
+    table.sortable th:first-child button { border-top-left-radius: var(--radius-sm); }
+    table.sortable th:last-child button { border-top-right-radius: var(--radius-sm); }
+    table.sortable th button:hover { color: var(--fg); background: var(--accent-soft); }
+
+    /* 並べ替えの向き。**色だけで示さない** — 三角の向きが本体で、色と字の濃さは補助。
+       押していない列にも印を出しておく（押せることが触る前に分かる）。
+       ★塗り潰しの ▲▼ にしてある。線の細い ▴▾ は 0.85em だと中黒に見えた */
+    table.sortable th button::after { content: "⇅"; color: var(--muted); font-size: 0.85em; }
+    table.sortable th[aria-sort] button { color: var(--fg); }
+    table.sortable th[aria-sort="ascending"] button::after {
+      content: "▲"; color: var(--accent); font-size: 0.7em;
+    }
+    table.sortable th[aria-sort="descending"] button::after {
+      content: "▼"; color: var(--accent); font-size: 0.7em;
+    }
   </style>
 </Base>

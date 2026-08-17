@@ -89,7 +89,8 @@ export interface MatchOptions {
  *
  * **氏名の一致をよみより先に出す。** 「はやし」で引いたときに
  * 氏名が「林」の人より先に「早矢仕」が出ると、探している人に辿り着けない。
- * 同じ強さなら発言数の多い順（`/politicians` の既定の並びと揃える）。
+ * 同じ強さなら発言数の多い順（**検索結果の中での同着の解き方**であって、
+ * 一覧の並びとは別。`/politicians` の既定は氏名のよみの五十音順）。
  */
 export function matchPoliticians(
   input: string, list: PoliticianLite[], options: MatchOptions = {},
