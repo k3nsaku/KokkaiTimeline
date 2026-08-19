@@ -112,10 +112,51 @@ async function query<T = Record<string, unknown>>(
     // 古いワーカは捨てるだけで、止められない（sql.js-httpvfs が Worker を
     // 外に出さないため）。差し替えは1日1回なので、取りこぼしても1つ残るだけ。
     console.warn(`${period} のDBを読み直す`, first);
+    void reportBadHeader(period, first);
     manifestPromise = null;
     workers.delete(period);
     const { db } = await workerFor(period, true);
     return (await db.query(sql, params as never)) as T[];
+  }
+}
+
+/**
+ * `file is not a database` を踏んだとき、**実際に返ってきた先頭16バイト**を出す。
+ *
+ * これが無いと、報告を受けても「ゼロ埋めか・HTMLか・別の世代のDBか」が分からず、
+ * 毎回サーバとブラウザのどちらが悪いのかを一から確かめ直すことになる
+ * （2026-08-02 と 2026-08-19 に2回やった。docs/ROADMAP.md「未解決の不具合」）。
+ *
+ * **メインスレッドの `fetch` を使うのが肝。** ワーカ内は同期XHRなので
+ * `cache` を指定できないが、ここでは `reload` と既定の両方を引けるので、
+ * **ブラウザキャッシュが壊れているのかネットワークが壊れているのかを分けられる。**
+ *
+ * 表示には出さない（利用者向けの文言は `describeError()`）。失敗しても黙る。
+ */
+async function reportBadHeader(period: string, err: unknown): Promise<void> {
+  if (!/not a database/.test(String(err))) return;
+  try {
+    const entry = (await getManifest()).databases.find((d) => d.id === period);
+    if (!entry) return;
+    const url = `${DB_BASE}/${entry.file}` + (entry.version ? `?v=${entry.version}` : "");
+    const head = async (cache: RequestCache) => {
+      const res = await fetch(url, { headers: { Range: "bytes=0-15" }, cache });
+      const bytes = [...new Uint8Array(await res.arrayBuffer())];
+      return {
+        status: res.status,
+        contentRange: res.headers.get("content-range"),
+        contentType: res.headers.get("content-type"),
+        head16: bytes.map((b) => b.toString(16).padStart(2, "0")).join(" "),
+        isSqlite: String.fromCharCode(...bytes.slice(0, 16)) === "SQLite format 3\0",
+      };
+    };
+    console.warn(`${period} の先頭16バイト`, {
+      url, size: entry.size,
+      cached: await head("default"),
+      network: await head("reload"),
+    });
+  } catch {
+    // 診断が失敗しても本筋（やり直し）は続ける
   }
 }
 

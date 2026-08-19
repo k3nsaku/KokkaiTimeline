@@ -25,7 +25,7 @@
 
 import { speechDetail, speechContext, type SpeechDetail } from "./db";
 import { renderContextList, splitContext } from "./speech-view";
-import { escapeHtml, formatDate, paragraphs } from "./format";
+import { describeError, escapeHtml, formatDate, paragraphs } from "./format";
 
 let root: HTMLElement | null = null;
 let bodyEl: HTMLElement | null = null;
@@ -158,7 +158,7 @@ async function open(speechId: string, trigger: HTMLElement): Promise<void> {
       `/speech/${encodeURIComponent(s.speech_id)}`);
     await fillContext(s);
   } catch (err) {
-    bodyEl.innerHTML = `<p class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</p>`;
+    bodyEl.innerHTML = `<p class="error">読み込みに失敗しました: ${escapeHtml(describeError(err))}</p>`;
     console.error(err);
   }
 }

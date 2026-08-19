@@ -50,6 +50,9 @@
 - **1ファイルが 512MB を超えると黙って CDN キャッシュから外れる**（RTT 8ms → 77ms）。
   半期分割の最大は 364MB。`--period` を変える判断は DECISIONS の実測値を見てから
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
+- **R2 へ上げるとき `--content-type` を省かない**（[docs/PIPELINE.md](docs/PIPELINE.md)）。
+  省くと aws-cli が拡張子から推測する ＝ **ランナー次第で付いたり付かなかったりする。**
+  実際 2026-08-18 に日次が差し替えた1本だけヘッダが欠けた。**エラーは出ない**
 - **インラインの `style` 属性を書かない**（CSP に黙って消され、見た目だけ静かに壊れる。
   公開時から会派バーが全部同じ長さだった）。色や幅は SVG の `fill` / `width` で出す
 
@@ -109,6 +112,9 @@ python scripts/build_activity.py           # 議員ごとの発言数の推移�
 # 検証（配る前に必ず通す。日次更新もこれを関門にしている）
 python scripts/verify_dist.py              # data/dist の全期間（実測18秒）
 python scripts/verify_dist.py --id 2026H2  # 触った期間だけ
+
+# 検算（配ったあと。**公開URLが返すもの**を見る。関門ではなく知らせるためのもの）
+python scripts/verify_published.py --base https://db.kokkai-timeline.com
 ```
 
 **順番は `fetch_range` → `build_db`（単一DB）→ `build_politicians` / `build_topics`

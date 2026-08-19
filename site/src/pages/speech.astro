@@ -29,7 +29,7 @@ import Base from "../layouts/Base.astro";
   <script>
     import { speechDetail, speechContext, type SpeechDetail } from "../lib/db";
     import { renderContextList, splitContext } from "../lib/speech-view";
-    import { escapeHtml, formatDate, paragraphs } from "../lib/format";
+    import { describeError, escapeHtml, formatDate, paragraphs } from "../lib/format";
 
     const statusEl = document.getElementById("status")!;
     const article = document.getElementById("speech")!;
@@ -104,7 +104,7 @@ import Base from "../layouts/Base.astro";
           article.scrollIntoView();
         }
       } catch (err) {
-        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(describeError(err))}</span>`;
         console.error(err);
       }
     }

@@ -126,7 +126,7 @@ const people = politicians().map((p) => {
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
     import { initSpeechPanel } from "../lib/speech-panel";
     import { matchPoliticians, type PoliticianLite } from "../lib/politician-search";
-    import { escapeHtml, formatNumber } from "../lib/format";
+    import { describeError, escapeHtml, formatNumber } from "../lib/format";
 
     initSpeechPanel();
 
@@ -358,7 +358,7 @@ const people = politicians().map((p) => {
         show(page, started, gen);
       } catch (err) {
         if (gen !== generation) return;
-        statusEl.innerHTML = `<span class="error">検索に失敗しました: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">検索に失敗しました: ${escapeHtml(describeError(err))}</span>`;
         console.error(err);
       }
     }

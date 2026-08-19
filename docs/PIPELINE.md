@@ -23,6 +23,7 @@
 | 10 | 期間DBと目録を R2 へ | 1〜2分 |
 | 11 | Cloudflare Pages へデプロイ | 1分 |
 | 12 | 次回のための状態（生データ・議員マスタ）を R2 へ | 1〜2分 |
+| 13 | **配ったものを公開URLごしに検算する**（`scripts/verify_published.py`。下記） | 数秒 |
 
 閉じた期間のDBは触らない。**変わるのは1〜2ファイルだけ**なので、
 CDN キャッシュは残りが効き続ける。配信DBは半期で割ってある（`2026H1` = 1〜6月）。
@@ -89,6 +90,35 @@ python scripts/verify_dist.py --id 2026H2  # 触った期間だけ。日次は�
 （`fetch_range.py` はその月を完成済みとして扱うので、`--force` の範囲から外れた
 時点で永久に更新されなくなる）。前月1日から取り直すぶん、**7月は6月に、1月は前年12月に
 触る**ので、当該期間に加えて前の期間も作り直す（`--id` は複数指定できる）。
+
+### ★ 手順13: 配ったものの検算（`scripts/verify_published.py`）
+
+```bash
+# 日次はこれ（配信されている目録が手元と同じかも見る）
+PUBLIC_DB_BASE=https://db.kokkai-timeline.com python scripts/verify_published.py --expect-local
+# 手元から様子を見るとき（手元の目録は配信より古いのが普通なので --expect-local は付けない）
+python scripts/verify_published.py --base https://db.kokkai-timeline.com
+```
+
+**手順7（`verify_dist.py`）と役割が違う。混ぜないこと。**
+
+| | 見る対象 | 落ちたら |
+|---|---|---|
+| 手順7 | **配る前**の手元のファイル | 配らない（関門） |
+| 手順13 | **配ったあと**の公開URLが返すもの | もう配ってある。**知らせるだけ** |
+
+だから手順13は**ジョブの一番最後**に置いてある。ここで落ちても Pages のデプロイと
+状態の書き戻しは済んでいて、実行だけが赤くなる（月1回の `gh run list` で気づく）。
+
+見るもの: `Content-Type` / `Accept-Ranges` / `Content-Length` が目録の `size` と一致するか /
+先頭16バイトが SQLite か / `page_size` が 8192 か / 配信中の目録が手元と同じか。
+
+**`Accept-Ranges` はブラウザからは見えない**（R2 の CORS が公開していないので
+`getAllResponseHeaders()` に出ない）。ここでしか確かめられない。
+
+> **★ `User-Agent` を名乗ること。** 既定の `Python-urllib/3.x` は Cloudflare に
+> **403 で弾かれる**（2026-08-19 実測）。消すと「配信が壊れている」ではなく
+> 「検算が届かない」で落ちて、原因を取り違える。
 
 ### 走らせないもの
 
@@ -159,6 +189,36 @@ CI は `site/**` を触ったときしか走らないので、**毎日必ず通�
 - コストは1時間ごとの条件付きリクエスト1本（エッジが 304 を 8ms で返す）
 
 `site/src/lib/db.ts` の `&retry=` は残す。1時間待たずにその場で復旧させるため。
+
+### ★ `--content-type` は必ず明示する（2026-08-19）
+
+```bash
+aws s3 cp "$db" "s3://$PUBLIC_BUCKET/$(basename "$db")" $R2 \
+  --content-type "application/vnd.sqlite3" \
+  --cache-control "public, max-age=3600, s-maxage=31536000"
+```
+
+**省くと `aws-cli` が拡張子から推測する** ＝ **ランナーの mime データベース次第**で
+付いたり付かなかったりする。実際、2026-08-18 の日次が差し替えた `kokkai-2026H2.db`
+だけ `Content-Type` が落ちた（8/12 に上げた11本には `application/vnd.sqlite3` が
+付いていた）。**ヘッダが欠けてもエラーにはならず、日次も通る。**
+
+同じ日に Chrome の1つの窓口だけ 2026H2 で `file is not a database` が出ている
+（[ROADMAP.md](ROADMAP.md)「未解決の不具合」）。**因果は証明できていない**が、
+容疑者を1つ減らすために固定した。気づく手は手順13（`verify_published.py`）。
+
+**既に配ってあるものを直すとき**は、中身を上げ直さずメタデータだけ差し替える:
+
+```powershell
+aws s3 cp "s3://kokkai-timeline/kokkai-2026H2.db" "s3://kokkai-timeline/kokkai-2026H2.db" `
+  --endpoint-url $R2 --metadata-directive REPLACE `
+  --content-type "application/vnd.sqlite3" `
+  --cache-control "public, max-age=3600, s-maxage=31536000"
+```
+
+**★ 中身が変わらないので `?v=` も変わらず、エッジは `s-maxage` で1年握ったまま。**
+打ち直しただけでは配信に出ない。そのURLをパージするか、
+**当期のDBなら翌日の日次で別の `?v=` になるのを待てばよい**（毎日中身が変わるため）。
 
 ## ★ 争点語を変えるとき
 

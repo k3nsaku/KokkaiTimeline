@@ -87,3 +87,23 @@ export function toQuery(params: Record<string, string | number | undefined | nul
   const s = q.toString();
   return s ? `?${s}` : "";
 }
+
+/**
+ * 画面に出す1行にする。**利用者が次にできることがある**ものだけ言い換える。
+ *
+ * `SQLite: file is not a database` は、配信DBの先頭がSQLiteに見えないときに出る。
+ * サーバ側が正しくてもブラウザのキャッシュが壊れていれば起きるので、生の英語を
+ * そのまま見せずに「キャッシュを消せば直ることがある」とだけ言う
+ * （原因は未特定。docs/ROADMAP.md「未解決の不具合」）。
+ *
+ * **これ以外は言い換えない。** 知らないエラーを親切な文に丸めると、
+ * 報告してもらったときに何が起きたのか分からなくなる。
+ */
+export function describeError(err: unknown): string {
+  const text = String(err);
+  if (/not a database/.test(text)) {
+    return "配信データを読み込めませんでした。ブラウザのキャッシュを削除してから"
+      + "開き直すと直ることがあります。";
+  }
+  return text;
+}

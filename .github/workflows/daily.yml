@@ -275,13 +275,22 @@ jobs:
           #   入ったときに Ctrl+Shift+R でも直せなくなる（実際に踏んだ。
           #   docs/PIPELINE.md「DBの差し替えとキャッシュ」）。
           #   エッジは s-maxage で1年握るので CDN の効きは落ちない
+          #
+          # ★ --content-type を必ず渡すこと。**省くと aws-cli が拡張子から推測する**ので、
+          #   ランナーの mime データベース次第で付いたり付かなかったりする。
+          #   実際 2026-08-18 の実行で kokkai-2026H2.db だけ Content-Type 無しで
+          #   配られた（8/12 に上げた11本には application/vnd.sqlite3 が付いていた）。
+          #   ヘッダが欠けても検索は動くこともあるので、**気づく手が無い**
+          #   （だから下に配布後の検算を置いてある）
           for db in data/dist/kokkai-*.db; do
             aws s3 cp "$db" "s3://$PUBLIC_BUCKET/$(basename "$db")" $R2 --no-progress \
+              --content-type "application/vnd.sqlite3" \
               --cache-control "public, max-age=3600, s-maxage=31536000"
           done
           # 目録は**DBを上げ終わってから**。先に上げると、まだ無いDBをサイトが引きにいく。
           # これだけは短くする（新しい世代に気づく入口がここしかない）
           aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" $R2 \
+            --content-type "application/json" \
             --cache-control "public, max-age=300"
 
       - name: Cloudflare Pages へデプロイ
@@ -303,6 +312,22 @@ jobs:
           set -euo pipefail
           aws s3 sync data/raw/speeches "s3://$STATE_BUCKET/raw/speeches" $R2 --no-progress
           aws s3 cp data/politicians.json "s3://$STATE_BUCKET/politicians.json" $R2
+
+      - name: 配ったものを公開URLごしに検算する
+        # ★ **これは関門ではない。もう配ってある。** 落ちても取り消せないので、
+        #   目的は「翌朝ここを見れば、サーバ側が変かどうか推測せずに分かる」こと。
+        #   だから**一番最後**に置いてある。ここで落としても
+        #   Pages のデプロイと状態の書き戻しは済んでいる（＝この検算のせいで
+        #   他のものが飛ばない）。落ちた実行は赤くなるので、月1回の
+        #   `gh run list --workflow=daily.yml` で気づける。
+        #
+        #   verify_dist.py（配る前）が見るのは手元のファイル。こちらが見るのは
+        #   **URLが返すもの**で、Content-Type・Accept-Ranges・Content-Length・
+        #   先頭16バイト・page_size を12期間ぶん確かめる。
+        #   上げ方とエッジの設定で壊れる事故は、ここでしか捕まらない。
+        env:
+          PUBLIC_DB_BASE: ${{ vars.PUBLIC_DB_BASE }}
+        run: python scripts/verify_published.py --expect-local
 
       # ★ reports/ は .gitignore なので、上げないとランナーの終了と一緒に消える。
       #   要約に出しているのは**件数だけ**で、「12行あります」と分かっても中身が読めず、

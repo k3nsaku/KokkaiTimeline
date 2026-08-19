@@ -240,7 +240,7 @@ const description =
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
     import { initSpeechPanel } from "../../lib/speech-panel";
-    import { escapeHtml } from "../../lib/format";
+    import { describeError, escapeHtml } from "../../lib/format";
 
     initSpeechPanel();
 
@@ -307,7 +307,7 @@ const description =
           : term ? `「${term}」を含む発言はありませんでした。` : "発言が見つかりません。";
       } catch (err) {
         if (gen !== generation) return;
-        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(String(err))}</span>`;
+        statusEl.innerHTML = `<span class="error">読み込みに失敗しました: ${escapeHtml(describeError(err))}</span>`;
         console.error(err);
       }
     }
