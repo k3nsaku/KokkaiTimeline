@@ -131,7 +131,7 @@ python scripts/verify_published.py --base https://db.kokkai-timeline.com
 
 ## もう一つのワークフロー: CI（`.github/workflows/ci.yml`）
 
-`site/**` を触った push と PR で `npm run check`（`astro check` + テスト126件）を回す。
+`site/**` を触った push と PR で `npm run check`（`astro check` + テスト198件）を回す。
 **`src/lib/query.ts` を壊す変更はここで止める。**
 
 **日次更新も同じ `npm run check` を配る前に通す**（手順8）。CI のほうが速く気づけるが、

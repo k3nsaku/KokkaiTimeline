@@ -15,7 +15,8 @@
 
 import { createDbWorker, type WorkerHttpvfs } from "sql.js-httpvfs";
 import {
-  countQuery, mergePages, searchQuery, splitTerms, timelineQuery, toMatchExpr,
+  countQuery, fillBounds, mergePages, monthBoundsQuery, monthlyQuery, monthsInPeriod,
+  searchQuery, splitTerms, timelineQuery, toMatchExpr,
   wordPlan, wordProbeKeys, periodOfIssueId, periodOfSpeechId,
   type QueryPlan, type SearchOptions, type SearchPage, type SpeechRow,
 } from "./query";
@@ -236,6 +237,63 @@ export async function countHits(opts: SearchOptions): Promise<number> {
   });
 
   return counts.reduce((a, b) => a + b, 0);
+}
+
+// --- 月別の件数（検索結果のグラフ）-----------------------------------------
+
+export interface MonthlyPoint {
+  /** `YYYY-MM` */
+  month: string;
+  n: number;
+}
+
+/** 期間 × 世代 → 月境界。**世代（目録の `version`）をキーに含める。**
+ *  日次でDBが差し替わると rowid の付き直しで境界が動くので、
+ *  期間だけをキーにすると古い境界で月を割ってしまう。 */
+const monthBoundsCache = new Map<string, Promise<number[]>>();
+
+async function monthBounds(period: string, months: string[]): Promise<number[]> {
+  const entry = (await getManifest()).databases.find((d) => d.id === period);
+  const key = `${period}:${entry?.version ?? "0"}`;
+  let bounds = monthBoundsCache.get(key);
+  if (!bounds) {
+    const [sql, params] = monthBoundsQuery(months);
+    bounds = query<{ i: number; at: number | null }>(period, sql, params)
+      .then((rows) => fillBounds(
+        [...rows].sort((a, b) => a.i - b.i).map((r) => r.at), months.length))
+      .catch((e) => { monthBoundsCache.delete(key); throw e; });
+    monthBoundsCache.set(key, bounds);
+  }
+  return bounds;
+}
+
+/**
+ * 月ごとの件数。**検索結果ページのグラフはこれで描く。**
+ *
+ * 件数（`countHits`）とは別に走らせる。絞り込みが無いときの件数は索引の1行で
+ * 出るので（`countQuery` の近道）、そちらを月別で置き換えると速い場合まで
+ * 遅くなる。**同じ索引を2回読むが、2回目はワーカのページキャッシュに乗る。**
+ *
+ * 月は期間DBごとに閉じている（`build_db.py` が期間で分ける）ので、
+ * 期間をまたいでも足し合わせは要らない——古い順に並べるだけでよい。
+ */
+export async function monthlyHits(opts: SearchOptions): Promise<MonthlyPoint[]> {
+  const periods = await targetPeriods(opts.periods);
+  const manifest = await getManifest();
+
+  const perPeriod = await eachPeriod(periods, async (period) => {
+    const entry = manifest.databases.find((d) => d.id === period);
+    // 収録範囲で月を詰める。**無い月まで並べると seek が空振りする**
+    const months = monthsInPeriod(period, entry?.from || undefined, entry?.to || undefined);
+    if (!months.length) return [] as MonthlyPoint[];
+
+    const bounds = await monthBounds(period, months);
+    const [sql, params] = monthlyQuery(opts, opts.plan, bounds);
+    const rows = await query<{ b: number; n: number }>(period, sql, params);
+    return rows.flatMap((r) => (months[r.b] ? [{ month: months[r.b], n: r.n }] : []));
+  });
+
+  return perPeriod.flat().sort((a, b) => a.month.localeCompare(b.month));
 }
 
 // --- 議員ページ -----------------------------------------------------------

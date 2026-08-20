@@ -15,7 +15,8 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
-  canonicalQuery, countQuery, searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
+  canonicalQuery, countQuery, fillBounds, monthBoundsQuery, monthlyQuery, monthsInPeriod,
+  searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
   wordPlan, wordProbeKeys, periodOf, periodOfIssueId, periodOfSpeechId,
   periodsInYearRange, unsearchableTerms, yearsOfPeriods,
   type QueryPlan, type SearchOptions,
@@ -54,6 +55,11 @@ const SPEECHES = [
   { issue: "B", pol: 1,    kind: "議員",       body: "生成ＡＩの規制は憲法との関係でも論点になる。" },
 ];
 
+/** 発言を月にばらけさせる。**rowid の昇順が日付の昇順**でなければならない
+ *  （`build_db.py` の `load()` がそう並べる。月別の集計はこれに乗っている）。 */
+const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04"];
+const dateOf = (i: number) => `${MONTHS[Math.min(Math.floor(i / 4), MONTHS.length - 1)]}-01`;
+
 const TOPIC_ID = 1;
 const TOPIC_TERM = "安全保障";
 const WORD_TERM = "憲法";
@@ -89,6 +95,8 @@ function fixture(): DatabaseSync {
       PRIMARY KEY (word_id, speech_rowid)) WITHOUT ROWID;
     CREATE VIRTUAL TABLE speech_fts USING fts5(
       body, content='speech', content_rowid='rowid', tokenize='trigram');
+    -- ★ 月境界の seek はこの索引だけで済ませる（build_db.py と同じ）
+    CREATE INDEX idx_speech_date ON speech(date);
   `);
 
   const meeting = db.prepare(
@@ -98,9 +106,9 @@ function fixture(): DatabaseSync {
   const speech = db.prepare(`
     INSERT INTO speech (rowid, speech_id, issue_id, speech_order, date, speaker, body,
                         speech_url, is_speech, speaker_kind, politician_id)
-    VALUES (?, ?, ?, ?, '2026-01-01', '誰か', ?, 'http://example.invalid', 1, ?, ?)`);
+    VALUES (?, ?, ?, ?, ?, '誰か', ?, 'http://example.invalid', 1, ?, ?)`);
   SPEECHES.forEach((s, i) => {
-    speech.run(i + 1, `S${i + 1}`, s.issue, i + 1, s.body, s.kind, s.pol);
+    speech.run(i + 1, `S${i + 1}`, s.issue, i + 1, dateOf(i), s.body, s.kind, s.pol);
   });
 
   // ★ 索引は「議員」だけに張る（build_db.py と同じ）。rebuild は使わない
@@ -222,6 +230,149 @@ describe("絞り込みが実際に効いている", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+// --- 月別の件数 -----------------------------------------------------------
+//
+// 検索結果ページのグラフ。**日付では GROUP BY せず rowid の範囲で割る**ので、
+// 「バケットが本当に日付と一致しているか」をここで押さえる。
+// ずれても件数の合計は合ってしまうため、合計だけ見ていると気づけない。
+
+/** 月別の件数（月 → 件数）。**境界も本番と同じ SQL で引く。** */
+function monthly(
+  db: DatabaseSync, opts: SearchOptions, plan?: QueryPlan, months = MONTHS,
+): Map<string, number> {
+  const [boundsSql, boundsParams] = monthBoundsQuery(months);
+  const raw = db.prepare(boundsSql).all(...(boundsParams as never[])) as
+    { i: number; at: number | null }[];
+  const bounds = fillBounds(
+    [...raw].sort((a, b) => a.i - b.i).map((r) => r.at), months.length);
+
+  const [sql, params] = monthlyQuery(opts, plan, bounds);
+  const rows = db.prepare(sql).all(...(params as never[])) as { b: number; n: number }[];
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(months[r.b], (out.get(months[r.b]) ?? 0) + r.n);
+  return out;
+}
+
+/** 答え合わせ用。**検索結果そのものを日付でまとめる**（重いので本番ではやらない）。 */
+function monthlyByDate(
+  db: DatabaseSync, opts: SearchOptions, plan?: QueryPlan,
+): Map<string, number> {
+  const [sql, params] = searchQuery({ ...opts, limit: 1000 }, plan, undefined);
+  const rows = db.prepare(sql).all(...(params as never[])) as { date: string }[];
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const month = r.date.slice(0, 7);
+    out.set(month, (out.get(month) ?? 0) + 1);
+  }
+  return out;
+}
+
+describe("月別の件数（検索結果のグラフ）", () => {
+  for (const mode of MODES) {
+    for (const f of FILTERS) {
+      it(`${mode.name} × ${f.name}: 合計が件数と一致する`, () => {
+        const db = fixture();
+        try {
+          const opts = { ...mode.opts, ...f.extra };
+          const sum = [...monthly(db, opts, mode.plan).values()].reduce((a, b) => a + b, 0);
+          assert.equal(sum, counted(db, opts, mode.plan));
+        } finally {
+          db.close();
+        }
+      });
+
+      it(`${mode.name} × ${f.name}: 月の割り当てが日付と一致する`, () => {
+        const db = fixture();
+        try {
+          const opts = { ...mode.opts, ...f.extra };
+          const got = monthly(db, opts, mode.plan);
+          const want = monthlyByDate(db, opts, mode.plan);
+          // 0件の月は返らないので、あるものだけを突き合わせる
+          assert.deepEqual([...got].sort(), [...want].sort());
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
+  it("月をまたいで数が分かれている（1つの月に寄っていたら検証にならない）", () => {
+    const db = fixture();
+    try {
+      const got = monthly(db, MODES[0].opts, MODES[0].plan);
+      assert.ok(got.size >= 2, `月が ${got.size} 種類しか出ていない`);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("発言の無い月は 0 件になる（境界が NULL でも壊れない）", () => {
+    const db = fixture();
+    try {
+      // 2026-05 以降にはデータが無い。**その月の seek は NULL を返す**
+      const months = [...MONTHS, "2026-05", "2026-06"];
+      const got = monthly(db, MODES[0].opts, MODES[0].plan, months);
+      assert.equal(got.get("2026-05"), undefined);
+      assert.equal(got.get("2026-06"), undefined);
+      // 手前の月は変わらない
+      assert.deepEqual([...got].sort(), [...monthly(db, MODES[0].opts, MODES[0].plan)].sort());
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("monthBoundsQuery（月の先頭 rowid）", () => {
+  it("GROUP BY で数えた境界と一致する", () => {
+    const db = fixture();
+    try {
+      const [sql, params] = monthBoundsQuery(MONTHS);
+      const got = (db.prepare(sql).all(...(params as never[])) as { i: number; at: number }[])
+        .sort((a, b) => a.i - b.i).map((r) => r.at);
+      // ★ こちらが答え。全走査になるので本番では使わない
+      const want = (db.prepare(
+        "SELECT substr(date, 1, 7) AS m, MIN(rowid) AS at FROM speech GROUP BY m ORDER BY m")
+        .all() as { m: string; at: number }[]).map((r) => r.at);
+      assert.deepEqual(got, want);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("speech の行を読まない（covering index だけで済む）", () => {
+    const db = fixture();
+    try {
+      const [sql, params] = monthBoundsQuery(MONTHS);
+      const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+        .all(...(params as never[])) as { detail: string }[]).map((r) => r.detail).join(" / ");
+      assert.ok(plan.includes("COVERING INDEX idx_speech_date"), plan);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("monthsInPeriod（期間DBに入っている月）", () => {
+  it("半期は6か月ぶん", () => {
+    assert.deepEqual(monthsInPeriod("2025H1"),
+                     ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"]);
+    assert.deepEqual(monthsInPeriod("2025H2"),
+                     ["2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12"]);
+  });
+
+  it("year 規則なら12か月ぶん", () => {
+    assert.equal(monthsInPeriod("2025").length, 12);
+    assert.equal(monthsInPeriod("2025")[0], "2025-01");
+    assert.equal(monthsInPeriod("2025")[11], "2025-12");
+  });
+
+  it("目録の収録範囲で詰める（空振りする seek を減らす）", () => {
+    assert.deepEqual(monthsInPeriod("2026H2", "2026-07-01", "2026-07-31"), ["2026-07"]);
+    assert.deepEqual(monthsInPeriod("2025H1", "2025-01-24", "2025-06-21"),
+                     ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"]);
   });
 });
 

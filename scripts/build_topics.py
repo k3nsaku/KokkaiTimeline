@@ -377,6 +377,30 @@ def count_hits(body: str, forms: list[str]) -> int:
     return sum(body.count(form) for form in forms)
 
 
+def meeting_totals(con: sqlite3.Connection, month_list: list[str]) -> dict[str, list[int]]:
+    """会議名 × 月の議員発言数。**検索結果のグラフを会議名で絞ったときの分母。**
+
+    分子（ヒット）は会議名で絞れるが、**分母を実行時に数えるのは高い**。
+    `m.name` から発言へ辿る索引が無いので、SQLite は `speaker_kind` の索引を
+    端から端まで舐めて1行ずつ会議名を照合する（実測 80ms/期間・ローカル。
+    ブラウザは HTTP Range 越しなので桁が変わる）。
+
+    前もって配れば小さい: 全期間で**会議名105件・(会議名×月)1,714組・22KB**
+    （gzip 5KB）。`speech_totals` と同じく**その月の議員の発言数**で、
+    索引の母集団（`speaker_kind='議員'`）と揃えてある。
+    """
+    index = {m: i for i, m in enumerate(month_list)}
+    totals: dict[str, list[int]] = {}
+    for name, month, n in con.execute(
+            "SELECT m.name, substr(s.date, 1, 7), COUNT(*)"
+            " FROM speech s JOIN meeting m ON m.issue_id = s.issue_id"
+            " WHERE s.speaker_kind = '議員' GROUP BY 1, 2"):
+        if month not in index:
+            continue
+        totals.setdefault(name, [0] * len(month_list))[index[month]] = n
+    return totals
+
+
 def aggregate(con: sqlite3.Connection, topics: list[dict],
               min_kaiha_speeches: int) -> dict:
     """全期間の月次集計。頻度推移ページはこれだけで描ける。
@@ -446,6 +470,9 @@ def aggregate(con: sqlite3.Connection, topics: list[dict],
             key: [denom[(m, "" if key == "*" else key)] for m in month_list]
             for key in ["*", *kept]
         },
+        # 会議名 × 月の分母。**検索結果のグラフを会議名で絞ったときだけ使う。**
+        # 会派の分母（上）とは別物で、こちらは絞り込みの選択肢と1対1に対応する
+        "meeting_totals": meeting_totals(con, month_list),
         "topics": [{
             "id": t["id"], "term": t["term"], "category": t["category"],
             "variants": t["variants"],

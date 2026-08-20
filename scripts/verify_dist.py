@@ -273,6 +273,45 @@ def smoke_topic(report: Report, con: sqlite3.Connection) -> None:
                  f"争点語: `{term}` の n_speeches {n_speeches:,} = topic_hit {actual:,}")
 
 
+def check_monthly(report: Report, con: sqlite3.Connection) -> None:
+    """月別の集計（検索結果のグラフ）が乗っている前提を見る。
+
+    ブラウザは**日付では GROUP BY せず、`rowid` の範囲で月に割る**
+    （`site/src/lib/query.ts` の `monthlyQuery`）。日付でまとめると当たった発言の
+    行を1件ずつ読みに行くことになり、HTTP Range 越しでは桁が変わるため。
+
+    その代わり、成り立っていないと**黙って別の月に足される**前提が2つある:
+
+      1. `speech.rowid` が日付の昇順であること（`build_db.py` の `load()`）
+      2. 月の先頭 rowid を `idx_speech_date` の seek で採れること
+
+    件数の合計は正しいまま月の割り当てだけがずれるので、
+    **利用者にも運営にも気づく手が無い。** ここで実物と突き合わせておく。
+    """
+    has_index = bool(con.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'idx_speech_date'").fetchone())
+    if not report.check(has_index, "idx_speech_date がある（月境界の seek に要る）"):
+        return
+
+    # 1. rowid の昇順 = 日付の昇順
+    out_of_order = con.execute(
+        "SELECT COUNT(*) FROM (SELECT date, LAG(date) OVER (ORDER BY rowid) AS prev"
+        " FROM speech) WHERE prev > date").fetchone()[0]
+    report.check(out_of_order == 0,
+                 f"rowid の昇順が日付の昇順（逆転 {out_of_order:,}件）"
+                 " - 逆転すると月別の集計が別の月に混ざる")
+
+    # 2. seek で採った境界 == 実際の最小 rowid
+    truth = con.execute(
+        "SELECT substr(date, 1, 7) AS m, MIN(rowid) FROM speech GROUP BY m ORDER BY m").fetchall()
+    if not truth:
+        return
+    seek = [con.execute("SELECT rowid FROM speech WHERE date >= ? ORDER BY date LIMIT 1",
+                        (f"{month}-01",)).fetchone()[0] for month, _ in truth]
+    report.check(seek == [at for _, at in truth],
+                 f"月の先頭 rowid が seek と一致（{len(truth)}か月）")
+
+
 def check_db(report: Report, path: Path, period: str, entry: dict | None,
              rule: str, topics_fp: str, n_topics: int,
              page_size: int, min_smoke: int) -> None:
@@ -325,6 +364,7 @@ def check_db(report: Report, path: Path, period: str, entry: dict | None,
 
         # --- 骨格（発言の量に関係なく成り立つもの） ---
         has_fts = check_schema(report, con, n_topics)
+        check_monthly(report, con)
 
         # --- スモークテスト（3経路） ---
         indexed = con.execute(

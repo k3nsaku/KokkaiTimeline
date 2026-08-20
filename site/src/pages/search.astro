@@ -16,8 +16,18 @@ import { yearsOfPeriods } from "../lib/query";
 
 const periods = manifest().periods;
 const years = yearsOfPeriods(periods);
+const series = topicSeries();
 // 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）
-const topics = topicSeries().topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
+const topics = series.topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
+
+// 月ごとの分母。**グラフを「1,000発言あたり」に切り替えたときだけ使う。**
+// 全体は64か月ぶんの数値1本（約1KB）、会議名ごとは105会議×64か月（22KB・gzip 5KB）。
+// ★ヒットは `speaker_kind='議員'` の索引から来るので、分母も議員の発言数で揃えてある
+const trend = {
+  months: series.months,
+  totals: series.speech_totals["*"] ?? [],
+  meetings: series.meeting_totals ?? {},
+};
 
 // 議員1,111人。**DBは引かない**（`lib/politician-search.ts` の冒頭）。
 // 会派と院は同じ文字列の繰り返しなので、表に逃がして添字で持つ（そのままだと2倍近くなる）
@@ -98,6 +108,21 @@ const people = politicians().map((p) => {
 
   <div id="panel-speeches" role="tabpanel" aria-labelledby="tab-speeches">
     <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    {/* 検索語の月ごとの推移。**件数はDBから引く**（`monthlyHits()`）が、
+        「1,000発言あたり」に切り替えたときの分母はページに埋め込んである。
+        0件のときと引けない語のときは丸ごと隠す */}
+    <section id="trend" hidden>
+      <h2>いつ議論されたか</h2>
+      <fieldset class="trend-mode">
+        <legend class="sr-only">グラフの縦軸</legend>
+        <label><input type="radio" name="trend-mode" value="count" checked /> 件数</label>
+        <label><input type="radio" name="trend-mode" value="rate" /> 1,000発言あたり</label>
+      </fieldset>
+      <div id="trend-chart"></div>
+      <p id="trend-note" class="small muted" hidden></p>
+    </section>
+
     <div id="results"></div>
     <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
   </div>
@@ -114,13 +139,16 @@ const people = politicians().map((p) => {
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ years, periods, topics, people, kaihaTable, houseTable })}
+    set:html={JSON.stringify({ years, periods, topics, people, kaihaTable, houseTable, trend })}
   />
 
   <script>
-    import { search, countHits, meetingNames, resolveQuery, splitTerms, canonicalQuery, toFullWidth,
-             periodsInYearRange, unsearchableTerms,
+    import { search, countHits, monthlyHits, meetingNames, resolveQuery, splitTerms,
+             canonicalQuery, toFullWidth, periodsInYearRange, unsearchableTerms,
+             type MonthlyPoint,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
+    // **グラフはビルド時と同じ関数で描く**（争点語・頻出語のページと同じ `monthlyChart`）
+    import { monthlyChart, toSeries, type MonthlyMode } from "../lib/chart";
     import { renderSpeeches } from "../lib/render";
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
@@ -133,11 +161,21 @@ const people = politicians().map((p) => {
     interface TopicLite { id: number; term: string; variants: string[] }
     type PackedPerson = [number, string, string, number, number, number];
 
-    const { periods, topics, people: packed, kaihaTable, houseTable } = JSON.parse(
+    /** 月ごとの分母。**率に切り替えたときだけ使う**（件数のグラフには要らない） */
+    interface TrendData {
+      months: string[];
+      /** `months` と同じ並びの、その月の議員発言数 */
+      totals: number[];
+      /** 会議名 → その会議の月ごとの発言数。会議名で絞ったときの分母 */
+      meetings: Record<string, number[]>;
+    }
+
+    const { periods, topics, people: packed, kaihaTable, houseTable, trend } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
     ) as {
       years: number[]; periods: string[]; topics: TopicLite[];
       people: PackedPerson[]; kaihaTable: string[]; houseTable: string[];
+      trend: TrendData;
     };
 
     // 埋め込みは添字で持っているので、ここで戻す（1,111件・一度きり）
@@ -246,6 +284,93 @@ const people = politicians().map((p) => {
         </p>`;
     }
 
+    // --- いつ議論されたか（月ごとの推移）-------------------------------------
+    //
+    // 件数はDBから引く（`monthlyHits()`）。**日付では GROUP BY せず rowid の
+    // 範囲で割っている**ので、件数を数えるのと同じ手間で出る（`lib/query.ts`）。
+    //
+    // ★ 既定は**件数**。率（1,000発言あたり）に切り替えると、ページに埋め込んだ
+    //   分母で割る。**同じデータでも結論が変わる**ので、どちらで見ているかは
+    //   グラフの下に必ず書く（`monthlyChart` の figcaption）。
+
+    const trendSection = el<HTMLElement>("trend");
+    const trendChart = el<HTMLDivElement>("trend-chart");
+    const trendNote = el<HTMLParagraphElement>("trend-note");
+
+    /** 利用者が選んだ縦軸。**検索をやり直しても保つ**（毎回選び直させない） */
+    let trendMode: MonthlyMode = "count";
+    /** 直近の検索の月別件数。**切り替えだけならDBを引き直さない** */
+    let trendPoints: MonthlyPoint[] | null = null;
+
+    for (const input of document.querySelectorAll<HTMLInputElement>('input[name="trend-mode"]')) {
+      input.addEventListener("change", () => {
+        if (!input.checked) return;
+        trendMode = input.value === "rate" ? "rate" : "count";
+        drawTrend();
+      });
+    }
+
+    function hideTrend() {
+      trendPoints = null;
+      trendSection.hidden = true;
+      trendChart.innerHTML = "";
+    }
+
+    /** その検索の分母。会議名で絞っているならその会議のもの。
+     *  **全体の分母で割ってはいけない**（分子だけ絞られて率が小さく出る）。 */
+    function trendTotals(months: string[], meetingName: string | undefined): number[] {
+      const source = meetingName ? trend.meetings[meetingName] : trend.totals;
+      const at = new Map(trend.months.map((m, i) => [m, i]));
+      return months.map((m) => source?.[at.get(m) ?? -1] ?? 0);
+    }
+
+    function drawTrend() {
+      const st = state;
+      if (!trendPoints?.length || !st) { trendSection.hidden = true; return; }
+
+      // 横軸は**実際に引いた期間**に閉じる。引いてもいない期間まで並べると、
+      // そこが「0件だった月」に見える。
+      // ★ 年の選択（`from` / `until`）ではなく `opts.periods` から作ること。
+      //   選択は逆順（2026年〜2021年）でも成立し、`periodsInYearRange()` が
+      //   入れ替えて引いてくれる。年で判定すると、そのときだけ軸が空になって
+      //   **グラフが黙って消える**
+      const years = new Set((st.opts.periods ?? []).map((p) => p.slice(0, 4)));
+      const inRange = (m: string) => !years.size || years.has(m.slice(0, 4));
+      // 分母の側に無い月でも、当たっていれば軸に出す（配った分母より
+      // 期間DBが新しいことがある。`toSeries` の keepHitsWithoutTotal と対）
+      const months = [...new Set([...trend.months, ...trendPoints.map((p) => p.month)])]
+        .filter(inRange).sort();
+
+      const hits = new Map(trendPoints.map((p) => [p.month, p.n]));
+      const totals = trendTotals(months, st.opts.meetingName);
+      // 率に切り替えてよいのは、**当たった月すべてに分母があるとき**だけ。
+      // 1か月でも欠けていると、その月だけ率0の棒になって「当たっていない」ように
+      // 見える（配った分母より期間DBが新しいとき。月が変わった直後に、
+      // 前日のHTMLを握ったままのブラウザで起きうる）
+      const canRate = totals.some((t) => t > 0)
+        && months.every((m, i) => totals[i] > 0 || !hits.get(m));
+      const mode: MonthlyMode = trendMode === "rate" && canRate ? "rate" : "count";
+
+      const points = toSeries(months, months.map((m) => hits.get(m) ?? 0), totals,
+                              { keepHitsWithoutTotal: true });
+      const what = mode === "count" ? "件数" : "1,000発言あたりの件数";
+      trendChart.innerHTML = points.length
+        ? monthlyChart(points, `${st.opts.query ?? ""} の月ごとの${what}`, mode)
+        : "";
+
+      const notes: string[] = [];
+      if (st.opts.meetingName && mode === "rate") {
+        notes.push(`分母は「${st.opts.meetingName}」の発言数です。`);
+      }
+      if (trendMode === "rate" && !canRate) {
+        // 会議名の分母が無いときと、当たった月の分母が欠けているときの両方がここに来る
+        notes.push("分母（その月の発言数）が揃わないため、件数で表示しています。");
+      }
+      trendNote.textContent = notes.join("");
+      trendNote.hidden = !notes.length;
+      trendSection.hidden = !points.length;
+    }
+
     /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。
      *  **大文字小文字を無視して突き合わせる。** 争点語は `ＬＧＢＴ` `生成ＡＩ` のように
      *  全角の大文字で書いてあるので、`lgbt` と打たれた分をここで拾えないと
@@ -336,6 +461,7 @@ const people = politicians().map((p) => {
 
       results.innerHTML = "";
       moreWrap.hidden = true;
+      hideTrend();
       statusEl.textContent = "検索中…";
       const started = performance.now();
 
@@ -436,6 +562,15 @@ const people = politicians().map((p) => {
       statusEl.textContent =
         `${selectedYearCount()}年分を並列に検索・${elapsed}ms${convertedNote}`;
 
+      // 月ごとの件数。**件数（下）とは別に引く。** 絞り込みが無ければ件数は索引の
+      // 1行で出るので（`countQuery` の近道）、そちらを月別で置き換えると
+      // 速い場合まで遅くなる。同じ索引を2度読むが、2度目はワーカのキャッシュに乗る
+      monthlyHits(state!.opts).then((points) => {
+        if (gen !== generation || !state) return;
+        trendPoints = points;
+        drawTrend();
+      }).catch((e) => console.warn("月別の件数を引けなかった", e));
+
       // 総件数は別に数える。FTS の COUNT は結果取得と同じくらい重いので待たせない
       const opts = state!.opts;
       countHits(opts).then((n) => {
@@ -522,6 +657,15 @@ const people = politicians().map((p) => {
     }
     .tab-count { font-variant-numeric: tabular-nums; font-weight: 400; color: var(--muted); }
     [role="tabpanel"] { padding-top: 0.5rem; }
+
+    /* 縦軸の切り替え。fieldset の既定の枠は消す（見出しの下に並ぶだけのもの） */
+    .trend-mode { border: 0; padding: 0; margin: 0.25rem 0 0; display: flex; gap: 1rem; }
+    .trend-mode label {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.9rem; color: var(--muted); cursor: pointer;
+    }
+    #trend h2 { margin-bottom: 0; }
+    #trend { margin-bottom: 1.25rem; }
 
     .search-form { margin: 1rem 0 0.5rem; }
     .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }

@@ -413,59 +413,186 @@ export function timelineQuery(
     cursor != null ? [politicianId, cursor, limit] : [politicianId, limit]];
 }
 
-// --- 件数の SQL -----------------------------------------------------------
+// --- 件数と月別の SQL -----------------------------------------------------
+//
+// **ヒットの集合（FROM と WHERE）は `hitSource()` 1か所で組む。** 件数と月別は
+// そこに `COUNT(*)` を被せるか、月のバケットで割るかの違いしかない。
+// 3経路 × 絞り込みの組み合わせを2か所に書くと、片方だけ直したときに
+// 一覧と件数が黙って食い違う（実際にそうなった。docs/PITFALLS.md）。
+
+/** ヒットの集合。`from` と `where` に `SELECT` を被せて使う。 */
+interface HitSource {
+  from: string;
+  where: string;
+  params: unknown[];
+  /** 発言の rowid を指す式。月のバケットはこれを範囲で割る */
+  rowid: string;
+}
 
 /**
- * 件数の SQL とパラメータ。絞り込みが無ければ索引だけで数えられる。
+ * 検索条件 → ヒットの集合（FROM と WHERE）。
  *
- * **`searchQuery()` と同じ条件を必ず全部付けること。** 件数は結果取得とは
- * 別のSQLなので、片方だけ絞ると一覧と画面上部の件数が食い違う
+ * **`searchQuery()` と同じ条件を必ず全部付けること。** 結果取得とは別のSQLなので、
+ * 片方だけ絞ると一覧と画面上部の件数が食い違う
  * （実際に会議名の絞り込みが件数に効いておらず、2,594件と557件が入れ替わっていた）。
  */
-export function countQuery(
-  opts: SearchOptions, plan: QueryPlan | undefined,
-): [string, unknown[]] {
+function hitSource(opts: SearchOptions, plan: QueryPlan | undefined): HitSource {
   const byPolitician = opts.politicianId != null;
   const byMeeting = !!opts.meetingName;
-  const plain = !byPolitician && !byMeeting;
+  // 議員で絞るなら speech が要る。**meeting は speech 経由でしか繋がらない**
+  const needsSpeech = byPolitician || byMeeting;
 
-  // speech を JOIN 済みの問い合わせに足す分。順番はパラメータと揃える
-  const joinMeeting = byMeeting ? "JOIN meeting m ON m.issue_id = s.issue_id" : "";
-  const filterSql = (byPolitician ? "AND s.politician_id = ? " : "")
-                  + (byMeeting ? "AND m.name = ? " : "");
+  const joinMeeting = byMeeting ? " JOIN meeting m ON m.issue_id = s.issue_id" : "";
+  const filterSql = (byPolitician ? " AND s.politician_id = ?" : "")
+                  + (byMeeting ? " AND m.name = ?" : "");
   const filterParams: unknown[] = [
     ...(byPolitician ? [opts.politicianId] : []),
     ...(byMeeting ? [opts.meetingName] : []),
   ];
 
   if (opts.topicId != null) {
-    return plain
-      ? ["SELECT COUNT(*) AS n FROM topic_hit WHERE topic_id = ?", [opts.topicId]]
-      : [`SELECT COUNT(*) AS n FROM topic_hit h
-          JOIN speech s ON s.rowid = h.speech_rowid ${joinMeeting}
-          WHERE h.topic_id = ? ${filterSql}`, [opts.topicId, ...filterParams]];
+    return {
+      from: "FROM topic_hit h"
+        + (needsSpeech ? " JOIN speech s ON s.rowid = h.speech_rowid" : "") + joinMeeting,
+      where: `h.topic_id = ?${filterSql}`,
+      params: [opts.topicId, ...filterParams],
+      rowid: "h.speech_rowid",
+    };
   }
 
   if (plan?.mode === "word") {
-    // 絞り込みが何も無ければ word.n_speeches に答えが入っている（1行読むだけ）
-    if (!plan.filters.length && plain) {
-      return ["SELECT n_speeches AS n FROM word WHERE term = ?", [plan.driver]];
-    }
-    return [`SELECT COUNT(*) AS n FROM word w
-             JOIN word_hit h ON h.word_id = w.id
-             JOIN speech s ON s.rowid = h.speech_rowid ${joinMeeting}
-             WHERE w.term = ?
-               ${"AND instr(s.body, ?) > 0 ".repeat(plan.filters.length)}
-               ${filterSql}`,
-            [plan.driver, ...plan.filters, ...filterParams]];
+    // 絞り込みの語は本文を見るので speech が要る（instr）
+    const withBody = plan.filters.length > 0;
+    return {
+      from: "FROM word w JOIN word_hit h ON h.word_id = w.id"
+        + (withBody || needsSpeech ? " JOIN speech s ON s.rowid = h.speech_rowid" : "")
+        + joinMeeting,
+      where: "w.term = ?"
+        + " AND instr(s.body, ?) > 0".repeat(plan.filters.length) + filterSql,
+      params: [plan.driver, ...plan.filters, ...filterParams],
+      rowid: "h.speech_rowid",
+    };
   }
 
   const match = plan?.mode === "fts" ? plan.match : toMatchExpr(opts.query ?? "");
-  return plain
-    ? ["SELECT COUNT(*) AS n FROM speech_fts WHERE speech_fts MATCH ?", [match]]
-    : [`SELECT COUNT(*) AS n FROM speech_fts f
-        JOIN speech s ON s.rowid = f.rowid ${joinMeeting}
-        WHERE speech_fts MATCH ? ${filterSql}`, [match, ...filterParams]];
+  return {
+    from: "FROM speech_fts f"
+      + (needsSpeech ? " JOIN speech s ON s.rowid = f.rowid" : "") + joinMeeting,
+    where: `speech_fts MATCH ?${filterSql}`,
+    params: [match, ...filterParams],
+    rowid: "f.rowid",
+  };
+}
+
+/**
+ * 件数の SQL とパラメータ。
+ *
+ * **絞り込みが無いときは索引の1行で答えが出る**ので、そこだけ別扱いにしてある
+ * （2文字語は `word.n_speeches`、争点語は `topic_hit` の索引だけを数える）。
+ * 月別（`monthlyQuery`）にはこの近道が無い——月ごとに分けるには、
+ * どのみち当たった発言を1件ずつ数え直すしかない。
+ */
+export function countQuery(
+  opts: SearchOptions, plan: QueryPlan | undefined,
+): [string, unknown[]] {
+  const plain = opts.politicianId == null && !opts.meetingName;
+
+  if (plain && opts.topicId != null) {
+    return ["SELECT COUNT(*) AS n FROM topic_hit WHERE topic_id = ?", [opts.topicId]];
+  }
+  // 絞り込みが何も無ければ word.n_speeches に答えが入っている（1行読むだけ）
+  if (plain && plan?.mode === "word" && !plan.filters.length) {
+    return ["SELECT n_speeches AS n FROM word WHERE term = ?", [plan.driver]];
+  }
+
+  const hits = hitSource(opts, plan);
+  return [`SELECT COUNT(*) AS n ${hits.from} WHERE ${hits.where}`, hits.params];
+}
+
+// --- 月別の件数 -----------------------------------------------------------
+
+/**
+ * 月ごとの件数の SQL。**日付では絶対に GROUP BY しない。**
+ *
+ * `substr(s.date, 1, 7)` でまとめると、当たった発言の**行を1件ずつ読みに行く**。
+ * 実測（`data/dist/kokkai-2025H1.db`・ローカル）で `安全保障` が 1.0ms → 170.6ms、
+ * `風力発電` が 0.4ms → 26.4ms。HTTP Range 越しなら「ヒット件数ぶんの
+ * ランダム読み」そのもので、`ORDER BY date DESC` と同じ穴に落ちる
+ * （docs/PITFALLS.md）。
+ *
+ * 代わりに **`speech.rowid` が日付の昇順**であること（`build_db.py` の `load()`）を
+ * 使って、rowid の範囲でバケットに割る。索引（FTS の docid リスト・`word_hit`・
+ * `topic_hit`）だけで済み、**件数を数えるのと同じ手間で月別が出る。**
+ *
+ * @param bounds 月ごとの先頭 rowid。`monthBoundsQuery()` で引いたもの。
+ *               返る `b` は `bounds` の添字（＝月の添字）。
+ */
+export function monthlyQuery(
+  opts: SearchOptions, plan: QueryPlan | undefined, bounds: number[],
+): [string, unknown[]] {
+  const hits = hitSource(opts, plan);
+  // 先頭の月に下限は要らない（それより前の発言はこの期間DBに無い）
+  const cuts = bounds.slice(1);
+  const bucket = cuts.length
+    ? `CASE${cuts.map((_, i) => ` WHEN ${hits.rowid} < ? THEN ${i}`).join("")} ELSE ${cuts.length} END`
+    : "0";
+  return [
+    `SELECT ${bucket} AS b, COUNT(*) AS n ${hits.from} WHERE ${hits.where} GROUP BY b`,
+    // ★ CASE は SELECT 句にあるので、**バケットの境界が先に束縛される**
+    [...cuts, ...hits.params],
+  ];
+}
+
+/**
+ * 月ごとの先頭 rowid を引く SQL。**`idx_speech_date` の seek を月数ぶん並べるだけ。**
+ *
+ * `MIN(rowid) ... GROUP BY substr(date, 1, 7)` は全走査になるので使わない。
+ * 索引は `(date, rowid)` の順に並んでいるので、「その月の1日以降で最初の1件」が
+ * そのままその月の先頭 rowid になる（実測でも `GROUP BY` の結果と一致する）。
+ * covering index だけで済み、`speech` の行は1件も読まない。
+ *
+ * その月に発言が無ければ、返るのは**次に発言があった月の先頭**（＝幅0のバケット）。
+ * どの月にも無ければ NULL が返る（`fillBounds()` が埋める）。
+ */
+export function monthBoundsQuery(months: string[]): [string, unknown[]] {
+  const sql = months.map((_, i) =>
+    `SELECT ${i} AS i, (SELECT rowid FROM speech WHERE date >= ? ORDER BY date LIMIT 1) AS at`)
+    .join(" UNION ALL ");
+  return [sql, months.map((m) => `${m}-01`)];
+}
+
+/** 月の数だけ並んでいない・NULL が混じっている境界を埋める。
+ *  NULL は「その月以降に発言が無い」なので、**当たりようのない大きな値**にする
+ *  （バケットの幅が0になるだけで、前の月の集計は壊れない）。 */
+export function fillBounds(raw: (number | null | undefined)[], count: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const at = raw[i];
+    out.push(typeof at === "number" ? at : Number.MAX_SAFE_INTEGER);
+  }
+  return out;
+}
+
+/**
+ * 期間DBに入っている月（`YYYY-MM`・古い順）。
+ *
+ * 期間IDから月の幅を出し、目録の収録範囲（`from` / `to`）で詰める。
+ * **無い月まで並べると、そのぶん seek が空振りする**だけなので詰めておく。
+ */
+export function monthsInPeriod(period: string, from?: string, to?: string): string[] {
+  const year = yearOfPeriod(period);
+  const half = period.slice(4);
+  const first = half === "H2" ? 7 : 1;
+  const last = half === "H1" ? 6 : 12;
+
+  const months: string[] = [];
+  for (let m = first; m <= last; m++) {
+    const key = `${year}-${String(m).padStart(2, "0")}`;
+    if (from && key < from.slice(0, 7)) continue;
+    if (to && key > to.slice(0, 7)) continue;
+    months.push(key);
+  }
+  return months;
 }
 
 // --- 期間をまたぐページ送り -----------------------------------------------

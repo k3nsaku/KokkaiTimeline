@@ -41,7 +41,11 @@
 - **検索語の正規化は `query.ts` の `splitTerms()` を必ず通す。** 会議録の英数字は全部全角で、
   半角のままだと黙って0件。**NFKC は逆方向なので使わない**
 - **大文字に畳むのは word 経路の2文字以下だけ。** FTS 経路で畳むと `ＳＤＧｓ` が壊れる
-- **検索の引き先は3経路ある。** 絞り込みを足すときは結果取得と件数の**両方を3経路とも**直す
+- **検索の引き先は3経路ある。** 絞り込みを足すときは結果取得（`ftsSql` / `topicSql` /
+  `wordSql`）と `hitSource()` の**両方**を直す（件数と月別は `hitSource()` を共有する）
+- **月ごとに数えるとき `date` で GROUP BY しない**（当たった発言の行を1件ずつ読む。
+  実測 1.0ms → 170.6ms）。`rowid` の範囲で割る。**前提は「rowid の昇順 ＝ 日付の昇順」**で、
+  崩れると**件数は合ったまま月だけずれる**
 - **`topics.json` を変えたら全期間のDBを作り直す**（`topic_id` がずれて別の争点を引く）
 - **頻出語を頻度順に並べない**（実測の上位は `国務大` `日本` `重要` `関係`）。
   並べるのは burst。`frequent.json` は期間DBの作り直しが要らない
@@ -110,7 +114,7 @@ python scripts/build_frequent.py           # 頻出語500語（dist/frequent.jso
 python scripts/build_activity.py           # 議員ごとの発言数の推移（dist/politician_activity.json）
 
 # 検証（配る前に必ず通す。日次更新もこれを関門にしている）
-python scripts/verify_dist.py              # data/dist の全期間（実測18秒）
+python scripts/verify_dist.py              # data/dist の全期間（実測21秒）
 python scripts/verify_dist.py --id 2026H2  # 触った期間だけ
 
 # 検算（配ったあと。**公開URLが返すもの**を見る。関門ではなく知らせるためのもの）
@@ -133,7 +137,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,702ページ・22MB
-npm run check    # 型検査 + テスト126件
+npm run check    # 型検査 + テスト198件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`

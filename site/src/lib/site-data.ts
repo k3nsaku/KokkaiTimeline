@@ -55,6 +55,14 @@ export interface TopicSeries {
   kaiha: string[];
   /** 会派（と `*` ＝全体）ごとの、その月の総発言数。**必ずこれで割る** */
   speech_totals: Record<string, number[]>;
+  /**
+   * 会議名ごとの、その月の議員発言数。**検索を会議名で絞ったときの分母。**
+   *
+   * 会派の分母（`speech_totals`）とは別物で、こちらは検索の絞り込みと1対1。
+   * ブラウザから数えると `speaker_kind` の索引を全部舐めることになるので
+   * 配ってある（`scripts/build_topics.py` の `meeting_totals()`）。
+   */
+  meeting_totals: Record<string, number[]>;
   topics: Topic[];
   series: Record<string, Record<string, number[]>>;
 }
