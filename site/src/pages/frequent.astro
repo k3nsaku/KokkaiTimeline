@@ -10,11 +10,13 @@
  * 読めない一覧になる（実測。`scripts/build_frequent.py` の冒頭）。
  */
 import Base from "../layouts/Base.astro";
-import { frequent } from "../lib/site-data";
+import { frequent, topicSeries } from "../lib/site-data";
 import { formatNumber, jsonScript } from "../lib/format";
 import { formatSpan } from "../lib/frequent";
 
 const data = frequent();
+// 争点語の件数。**手で書かない**（運営が語を足した日に黙って古くなる）
+const nTopics = topicSeries().topics.length;
 
 // 会期で絞るための材料。**DBは引かない**（site/README.md / lib/frequent.ts）。
 // 月の系列（`series`）はここでは要らないので落とす。500語ぶんで約30KB
@@ -53,7 +55,7 @@ const description =
 
   <p class="small muted note">
     <strong>これは<a href="/topics">争点語</a>とは別のものです。</strong>
-    争点語は運営が選んだ82語で、選んだこと自体に判断が入っています。
+    争点語は運営が選んだ{nTopics}語で、選んだこと自体に判断が入っています。
     こちらは<strong>運営が語を選んでいません</strong>。会議録に出てくる語を数え、
     <strong>ある時期に集中して使われた順</strong>に並べているだけです。
     どちらが重要かという意味は含みません。

@@ -42,7 +42,9 @@ LLM に「立場が変わったか」を判定させて事実として出すこ�
 [ブラウザ] sql.js-httpvfs が HTTP Range で必要なページだけ取得
 ```
 
-**検索はブラウザの中で完結する。** 検索語はどこにも送られない。
+**照合はブラウザの中で完結する。** 検索語はURLの `#` より後ろに置いてあり、
+ふつうは要求に載らない（**「どこにも送られない」とは書けない**。JS 無効のときと
+古い `?q=` のURLを開いたときだけ届く。[docs/DECISIONS.md](docs/DECISIONS.md)）。
 ブラウザが最大 377MB の SQLite を「必要な 8KB ページだけ」HTTP Range で
 読みながら引く。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 

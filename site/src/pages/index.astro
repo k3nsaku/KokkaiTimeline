@@ -60,9 +60,9 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
 >
   <h1>国会で、誰が何を言ったか</h1>
   <p class="lede">
-    国会会議録の発言を、<strong>語から</strong>・<strong>議員から</strong>・
+    国会会議録の発言とその頻度の推移を、<strong>語から</strong>・<strong>議員から</strong>・
     <strong>全文検索から</strong>たどれます。
-    数字は出しますが、評価も採点もしません。判断の材料を出すだけのサイトです。
+    数字は出しますが、評価も採点もしません。
   </p>
 
   <section class="lead-section">
@@ -123,9 +123,10 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   <section>
     <h2>語を指定して探す</h2>
     <p class="small muted">
-      上の一覧に無い語も引けます。議員・会議名・年でも絞り込めます。
+      上の一覧に無い語も引けます。会議名と年でも絞り込めます（議員は名前で探せます）。
       <strong>照合はブラウザの中で完結します</strong>
-      —— 発言を探すこと自体に通信は要りません（<a href="/privacy">プライバシーポリシー</a>）。
+      —— 読みに行くのはデータベースの必要な部分だけで、検索語そのものは要求に載りません
+      （例外は<a href="/privacy">プライバシーポリシー</a>）。
     </p>
     <form class="site-search" action="/search" method="get">
       <label class="sr-only" for="q">キーワード</label>
@@ -158,8 +159,7 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
     <h2>議員から見る</h2>
     <p class="small muted">
       {formatNumber(people.length)}人ぶんの発言を、新しい順に並べて読めます。
-      所属会派の変遷も出します。
-      <strong>発言数で議員を並べることはしません</strong>
+      所属会派の変遷も出します。一覧の既定は氏名のよみ順です
       —— 発言数は委員会の所属と役職で決まるもので、活動量の指標にはならないためです。
     </p>
     <p><a class="chip" href="/politicians">議員の一覧 →</a></p>

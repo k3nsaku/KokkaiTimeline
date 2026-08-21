@@ -57,7 +57,7 @@
 - **配信DBの分割規則は2か所にある。** `build_db.py` の `period_of()` と
   `query.ts` の `periodOf()`。**片方だけ変えると存在しないファイルを引きに行く**
 - **1ファイルが 512MB を超えると黙って CDN キャッシュから外れる**（RTT 8ms → 77ms）。
-  半期分割の最大は 364MB。`--period` を変える判断は DECISIONS の実測値を見てから
+  半期分割の最大は 377MB。`--period` を変える判断は DECISIONS の実測値を見てから
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
 - **R2 へ上げるとき `--content-type` を省かない**（[docs/PIPELINE.md](docs/PIPELINE.md)）。
   省くと aws-cli が拡張子から推測する ＝ **ランナー次第で付いたり付かなかったりする。**
