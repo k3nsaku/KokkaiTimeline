@@ -41,12 +41,24 @@ export interface Politician {
 }
 
 export interface Topic {
+  /** **不変の識別子**（`data/topics.json` に書いてある）。並び順ではない */
   id: number;
   term: string;
   category: string | null;
   variants: string[];
   n_speeches: number;
   n_occurrences: number;
+  /**
+   * **配信済みの全期間DBが、この id を、この語のまま持っているか**
+   * （`scripts/build_db.py` の `stamp_indexed()` が目録を見て付ける）。
+   *
+   * 真なら `topic_hit` を引く（3.3倍速く、別表記も合算される）。
+   * **偽なら普通の検索経路に落とす**（2文字語は `word`、3文字以上は FTS）。
+   * 争点語を足しても全期間のDBを作り直さなくてよいのはこのため。
+   * 落ちても**結果は変わらない**（実測: 82語中80語で件数が完全に一致し、
+   * 食い違うのは別表記を持つ2語だけ。`docs/DECISIONS.md`）。
+   */
+  indexed: boolean;
 }
 
 /** 月×会派の出現件数と**分母**。頻度推移はこれだけで描ける。 */

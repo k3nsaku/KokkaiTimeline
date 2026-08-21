@@ -17,8 +17,12 @@ import { yearsOfPeriods } from "../lib/query";
 const periods = manifest().periods;
 const years = yearsOfPeriods(periods);
 const series = topicSeries();
-// 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）
-const topics = series.topics.map((t) => ({ id: t.id, term: t.term, variants: t.variants }));
+// 争点語は「その語なら速く引ける」判定に使うので、ページに埋め込んでおく（82件・数KB）。
+// `indexed` は**配信済みの全期間DBがその語を持っているか**（`scripts/build_db.py` の
+// `stamp_indexed()`）。偽なら topic_hit を引かず、普通の検索経路に落とす
+const topics = series.topics.map((t) => ({
+  id: t.id, term: t.term, variants: t.variants, indexed: t.indexed,
+}));
 
 // 月ごとの分母。**グラフを「1,000発言あたり」に切り替えたときだけ使う。**
 // 全体は64か月ぶんの数値1本（約1KB）、会議名ごとは105会議×64か月（22KB・gzip 5KB）。
@@ -158,7 +162,11 @@ const people = politicians().map((p) => {
 
     initSpeechPanel();
 
-    interface TopicLite { id: number; term: string; variants: string[] }
+    interface TopicLite {
+      id: number; term: string; variants: string[];
+      /** 配信済みの全期間DBが持っているか。偽なら topic_hit を引けない */
+      indexed: boolean;
+    }
     type PackedPerson = [number, string, string, number, number, number];
 
     /** 月ごとの分母。**率に切り替えたときだけ使う**（件数のグラフには要らない） */
@@ -374,11 +382,16 @@ const people = politicians().map((p) => {
     /** 争点語に一致するか。別表記（variants）も同じ争点として扱う。
      *  **大文字小文字を無視して突き合わせる。** 争点語は `ＬＧＢＴ` `生成ＡＩ` のように
      *  全角の大文字で書いてあるので、`lgbt` と打たれた分をここで拾えないと
-     *  3.3倍遅い FTS に落ちる（`topic_hit` を使えず、別表記の合算も効かない）。 */
+     *  3.3倍遅い FTS に落ちる（`topic_hit` を使えず、別表記の合算も効かない）。
+     *
+     *  ★ **`indexed` が偽の語は拾わない。** 配信済みDBに `topic_hit` が無いので、
+     *  引きに行くと**0件になる**（遅いのではなく間違う）。普通の検索経路に流せば
+     *  同じ結果が出る（`scripts/build_db.py` の `stamp_indexed()`）。 */
     function matchTopic(query: string): TopicLite | null {
       const q = toFullWidth(query).trim().toUpperCase();
-      return topics.find((t) => t.term.toUpperCase() === q
-        || (t.variants ?? []).some((v) => v.toUpperCase() === q)) ?? null;
+      return topics.find((t) => t.indexed
+        && (t.term.toUpperCase() === q
+            || (t.variants ?? []).some((v) => v.toUpperCase() === q))) ?? null;
     }
 
     /** 選ばれた年の範囲 → 引く期間ID。**配信DBは半期で割ってある**が、

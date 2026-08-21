@@ -59,7 +59,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import NamedTuple
 
-from build_topics import STOPWORDS, make_word_filter
+from build_topics import STOPWORDS, load_topics, make_word_filter
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "data" / "kokkai.db"
@@ -344,14 +344,15 @@ def main() -> None:
     terms, burst = select(df_total, by_month, months, denom, keep, fragments,
                           min_df=args.min_df, top=args.top, dup_ratio=args.dup_ratio)
 
-    # 争点語に載っている語は、そちらのページへ寄せる（一覧に同じ語が2つ出ないように）
-    topics = json.loads(args.topics.read_text(encoding="utf-8"))["topics"] \
-        if args.topics.exists() else []
+    # 争点語に載っている語は、そちらのページへ寄せる（一覧に同じ語が2つ出ないように）。
+    # **id は topics.json に書いてあるものを使う。並び順から採らない**
+    # （並びで採ると、語を1つ差し込むだけで全部のリンク先が隣の争点にずれる）
+    topics = load_topics(args.topics) if args.topics.exists() else []
     topic_id: dict[str, int] = {}
-    for i, topic in enumerate(topics, 1):
-        topic_id.setdefault(topic["term"], i)
+    for topic in topics:
+        topic_id.setdefault(topic["term"], topic["id"])
         for variant in topic.get("variants", []):
-            topic_id.setdefault(variant, i)
+            topic_id.setdefault(variant, topic["id"])
 
     def peak_month(term: str) -> str:
         return max(months, key=lambda m: (by_month[m][term] / denom[m]) if denom[m] else 0)

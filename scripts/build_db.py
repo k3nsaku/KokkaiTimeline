@@ -388,14 +388,165 @@ def insert_politicians(con: sqlite3.Connection, politicians: list[dict]) -> int:
     return sum(len(p["affiliations"]) for p in politicians)
 
 
+def check_topic_ids(topics: list[dict], path: Path) -> None:
+    """`id` が**書いてあること**と、重複が無いことを確かめる。
+
+    **並び順から採らない。** 以前は `enumerate` で振っていたが、それだと語を1つ
+    差し込むだけで以降の `topic_id` が全部ずれ、配信済みDBの `topic_hit` が
+    **別の争点の発言を黙って返す**（件数は正しいまま中身だけ入れ替わる）。
+    id を書かせることで、`topics.json` の編集と配信済みDBが独立になる。
+    """
+    missing = [t.get("term") for t in topics if not isinstance(t.get("id"), int)]
+    if missing:
+        raise SystemExit(
+            f"★ {path} に id の無い争点語がある: {missing}\n"
+            f"  id は不変の識別子。未使用の最大値+1 を手で振ること（消した id は再利用しない）")
+    seen: dict[int, str] = {}
+    for topic in topics:
+        if topic["id"] in seen:
+            raise SystemExit(
+                f"★ {path} の id {topic['id']} が重複している"
+                f"（{seen[topic['id']]!r} と {topic['term']!r}）")
+        seen[topic["id"]] = topic["term"]
+
+
+def topics_fingerprint(items: list[tuple[int, str, list[str]]]) -> str:
+    """争点語の**中身**の指紋。`(id, term, variants)` の組で作る。
+
+    id だけでは足りない。`term` を書き換えて作り直さないと、配信済みDBの
+    `topic_hit` は**古い語**のヒットを持ったまま新しい語の名前で表示される。
+    目録（`write_manifest`）に期間ごとに載せて、サイト側が
+    「この期間の `topic_hit` を信じてよいか」を判断する材料にする。
+    """
+    return fingerprint([f"{i}\t{term}\t{chr(31).join(variants)}"
+                        for i, term, variants in sorted(items)])
+
+
+def format_id_ranges(ids: list[int]) -> str:
+    """`[1,2,3,5]` → `"1-3,5"`。**目録に82個の数値を並べないため**だけの表現。
+
+    `json.dumps(indent=1)` は配列を1要素1行で書くので、素直に持つと目録が
+    1,000行近くになる（期間12本 × 争点語82件）。人が読める形のまま短くする。
+    """
+    runs: list[list[int]] = []
+    for value in sorted(set(ids)):
+        if runs and value == runs[-1][1] + 1:
+            runs[-1][1] = value
+        else:
+            runs.append([value, value])
+    return ",".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+def parse_id_ranges(text: str) -> list[int]:
+    """`"1-3,5"` → `[1,2,3,5]`。読めない表記は空（＝その期間は争点語を持たない扱い）。"""
+    ids: list[int] = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                start, end = (int(x) for x in part.split("-", 1))
+                ids.extend(range(start, end + 1))
+            else:
+                ids.append(int(part))
+        except ValueError:
+            return []
+    return sorted(set(ids))
+
+
+def read_topics(con: sqlite3.Connection) -> list[tuple[int, str, list[str]]]:
+    """期間DBが実際に持っている争点語。`topic` 表が無ければ `OperationalError`。"""
+    return [(int(i), term, json.loads(variants or "[]"))
+            for i, term, variants in con.execute(
+                "SELECT id, term, variants FROM topic ORDER BY id")]
+
+
+def stamp_indexed(topics_json: Path, manifest_json: Path) -> tuple[int, int]:
+    """`dist/topics.json` の各語に `indexed` を付け直す。**サイトの引き先が決まる。**
+
+    `indexed` は「**配信済みの全期間に、この id が、この語のまま入っている**」。
+    偽なら `/topic/<id>` と検索は `topic_hit` を使わず、普通の検索経路
+    （2文字語は `word`、3文字以上は FTS）に落ちる。**結果は同じで、遅くなるだけ**
+    （実測: 82語のうち別表記を持つ2語を除いて件数が完全に一致する）。
+
+    これがあるので **`topics.json` に語を足すのに全期間のDBの作り直しが要らない。**
+    作り直しは「新しい語を FTS 速度から救う」ための任意の作業になる。
+
+    ★ **`write_manifest()` の後に呼ぶこと。** 目録がその期間の中身の正本で、
+      手元に無い期間は前回の記載を引き継いでいる（日次更新はそれで正しい）。
+
+    戻り値は (indexed の数, 争点語の数)。
+    """
+    if not topics_json.exists():
+        return (0, 0)
+    data = json.loads(topics_json.read_text(encoding="utf-8"))
+    topics = data.get("topics", [])
+    by_id = {t["id"]: t for t in topics}
+
+    periods: list[tuple[str, set[int]]] = []
+    trusted = True
+    if manifest_json.exists():
+        databases = json.loads(manifest_json.read_text(encoding="utf-8"))["databases"]
+    else:
+        databases = []
+        trusted = False
+        logger.warning("%s が無い。争点語の索引は使わない扱いにする", manifest_json.name)
+
+    unrecorded: list[str] = []
+    for entry in databases:
+        held = entry.get("topics") or {}
+        if not held:
+            unrecorded.append(entry["id"])
+        ids = set(parse_id_ranges(held.get("ids", "")))
+        periods.append((entry["id"], ids))
+        # **中身の照合。** id が同じでも term を書き換えていれば、配信済みDBの
+        # topic_hit は古い語のヒットを持ったまま新しい語の名前で出てしまう。
+        #
+        # ★ 指紋は**その期間が持っている語ぜんぶ**で作ってあるので、
+        #   `topics.json` から語を消すと照合できなくなる（消えた語の term が手元に無い）。
+        #   **照合できないものは信じない**。遅くなるだけで、間違ったものは出ない
+        if dropped := sorted(ids - by_id.keys()):
+            trusted = False
+            logger.warning("%s は topics.json に無い争点語を持っている（id=%s）。"
+                           "照合できないので topic_hit を使わない"
+                           " - 全期間を作り直すと解消する",
+                           entry["id"], format_id_ranges(dropped))
+            continue
+        if ids and held.get("fp") != topics_fingerprint(
+                [(i, by_id[i]["term"], by_id[i]["variants"]) for i in sorted(ids)]):
+            trusted = False
+            logger.error("★ %s の争点語が topics.json と違う（同じ id のまま term か "
+                         "variants を書き換えた）。全期間を作り直すまで topic_hit を使わない",
+                         entry["id"])
+
+    # **記載が無い期間は「持っていない」扱い**（推測しない）。全部が検索経路に落ちるので
+    # 遅くなるだけだが、放置する理由も無い。手元にDBがあるなら --manifest-only で載る
+    if unrecorded:
+        logger.warning("目録に争点語の記載が無い期間: %s"
+                       " - その期間を持っていない扱いにする（争点語の検索が遅くなる）。"
+                       "手元にDBを揃えて build_db.py --manifest-only で載る",
+                       " ".join(unrecorded))
+
+    n_indexed = 0
+    for topic in topics:
+        ok = bool(trusted and periods) and all(topic["id"] in ids for _, ids in periods)
+        topic["indexed"] = ok
+        n_indexed += ok
+
+    topics_json.write_text(
+        json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    return (n_indexed, len(topics))
+
+
 def load_topics(path: Path) -> list[dict]:
     """争点語のリスト。無ければ空で通す（争点語の機能が無いDBになるだけ）。"""
     if not path.exists():
         logger.warning("%s が無い。争点語の索引を作らない", path.name)
         return []
     topics = json.loads(path.read_text(encoding="utf-8"))["topics"]
-    for i, topic in enumerate(topics, 1):
-        topic.setdefault("id", i)
+    check_topic_ids(topics, path)
+    for topic in topics:
         topic.setdefault("variants", [])
         topic.setdefault("category", None)
     return topics
@@ -702,6 +853,11 @@ def write_manifest(dist_dir: Path) -> Path:
 
     `from` / `to` を載せるのは、サイトが「この年を検索する」を期間IDに直すため。
     **規則（`periodOf`）でも引けるが、目録の実データを正とする。**
+
+    `topics` は**その期間DBが実際に持っている争点語**（`{"ids": "1-82", "fp": …}`）。
+    `topics.json` に語を足しても古い期間DBには `topic_hit` が無いので、
+    どの期間が何を持っているかをここに残す。**引き継いだ期間の記載も同じ意味で正しい**
+    （手元に無い＝作り直していない＝中身は前回のまま）。使うのは `stamp_indexed()`。
     """
     out = dist_dir / "manifest.json"
     previous: dict[str, dict] = {}
@@ -724,12 +880,20 @@ def write_manifest(dist_dir: Path) -> Path:
             meta = dict(con.execute("SELECT key, value FROM meta"))
         except sqlite3.OperationalError:
             meta = {}                      # meta を持たない古いDB
+        try:
+            held = read_topics(con)
+        except sqlite3.OperationalError:
+            held = []                      # 争点語を持たないDB
         finally:
             con.close()
         rule = meta.get("period_rule", rule)
-        files.append({"id": period, "file": path.name, "size": path.stat().st_size,
-                      "version": file_version(path),
-                      "from": meta.get("from", ""), "to": meta.get("to", "")})
+        entry = {"id": period, "file": path.name, "size": path.stat().st_size,
+                 "version": file_version(path),
+                 "from": meta.get("from", ""), "to": meta.get("to", "")}
+        if held:
+            entry["topics"] = {"ids": format_id_ranges([i for i, _, _ in held]),
+                               "fp": topics_fingerprint(held)}
+        files.append(entry)
 
     built = {f["id"] for f in files}
     for period, entry in sorted(previous.items()):
@@ -781,8 +945,19 @@ def run_split(args: argparse.Namespace) -> None:
         logger.error("★ 512MB に近い。超えると黙ってキャッシュされなくなる"
                      "（RTT 8ms → 77ms）。分割を細かくすること")
 
-    manifest = write_manifest(args.dist)
-    print(f"目録: {manifest}")
+    print(refresh_manifest(args.dist))
+
+
+def refresh_manifest(dist_dir: Path) -> str:
+    """目録を書き直し、`dist/topics.json` の `indexed` を付け直す。**この順で。**
+
+    目録がその期間の中身の正本なので、印はそれを見てから付ける。
+    """
+    manifest = write_manifest(dist_dir)
+    n_indexed, n_topics = stamp_indexed(dist_dir / "topics.json", manifest)
+    return (f"目録: {manifest}\n"
+            f"争点語: {n_indexed}/{n_topics}件を topic_hit で引ける"
+            f"（残りは検索経路で出る）")
 
 
 def main() -> None:
@@ -808,7 +983,14 @@ def main() -> None:
                         help="scripts/build_politicians.py の出力。無ければ議員を紐づけない")
     parser.add_argument("--topics", type=Path, default=TOPICS_PATH,
                         help="争点語のリスト。無ければ争点語の索引を作らない")
+    parser.add_argument("--manifest-only", action="store_true",
+                        help="DBを作らず、手元の data/dist を走査して目録と "
+                             "dist/topics.json の indexed だけ作り直す")
     args = parser.parse_args()
+
+    if args.manifest_only:
+        print(refresh_manifest(args.dist))
+        return
 
     if args.split or args.year or args.id:
         run_split(args)

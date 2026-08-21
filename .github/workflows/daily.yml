@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       all_years:
-        description: "全期間のDBを作り直す（争点語や分割の単位を変えたとき）"
+        description: "全期間のDBを作り直す（分割の単位を変えたとき・争点語の variants や term を変えたとき）"
         type: boolean
         default: false
 

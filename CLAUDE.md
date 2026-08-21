@@ -46,7 +46,11 @@
 - **月ごとに数えるとき `date` で GROUP BY しない**（当たった発言の行を1件ずつ読む。
   実測 1.0ms → 170.6ms）。`rowid` の範囲で割る。**前提は「rowid の昇順 ＝ 日付の昇順」**で、
   崩れると**件数は合ったまま月だけずれる**
-- **`topics.json` を変えたら全期間のDBを作り直す**（`topic_id` がずれて別の争点を引く）
+- **争点語の `id` は `topics.json` に書いてある不変の識別子。並び順から採らない。**
+  **消した id は再利用しない**（配信済みDBの `topic_hit` を別の争点として引く）。
+  **語を足すだけなら全期間の作り直しは要らない**（`indexed` が偽なら検索経路で出る）。
+  **消す・書き直す・`variants` を足すときは要る**（照合できないものは全部
+  検索経路に落ちる ＝ 正しいまま遅くなる。[docs/PIPELINE.md](docs/PIPELINE.md)）
 - **頻出語を頻度順に並べない**（実測の上位は `国務大` `日本` `重要` `関係`）。
   並べるのは burst。`frequent.json` は期間DBの作り直しが要らない
 - **配信DBの分割規則は2か所にある。** `build_db.py` の `period_of()` と
@@ -74,7 +78,7 @@
 | **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★まだ一度も通っていない。**落ちたまま放置すると台帳を失い公開後のURLが全部変わる** |
 | 頻出語のノイズを denylist に入れる | 3か月 | `reports/frequent_words.md` → `data/topic_denylist.json` に1行 |
 | 政党の手入力 | 3か月 | `reports/party_todo.md` → `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
-| 争点語のレビュー | 6か月 | `reports/trending_new_terms.md` → `data/topics.json`。**全期間のDBの作り直しを伴う** |
+| 争点語のレビュー | 3か月 | `reports/trending_new_terms.md` → `data/topics.json`。**足すだけなら `build_topics.py` だけ**（全期間の作り直しは要らない） |
 | 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
 | **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。公式FAQに「クエリ文字列は記録しない」が**将来変わりうる**と書いてある（[docs/DECISIONS.md](docs/DECISIONS.md)）。変わったら `/privacy` を直すか解析をやめる |
 | R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
@@ -100,6 +104,7 @@ python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31 --status
 python scripts/build_db.py --fresh                                # 単一DB
 python scripts/build_db.py --split --page-size 8192               # 配信用の期間DB（半期）
 python scripts/build_db.py --id 2026H2 --page-size 8192           # 日次は触った期間だけ
+python scripts/build_db.py --manifest-only                        # 目録と indexed だけ作り直す
 
 # 議員マスタ
 python scripts/fetch_wikidata.py
@@ -156,7 +161,9 @@ frequent   : 頻出語500件。**機械抽出の一覧**（dist/frequent.json・
 
 **この3つは役割が違う。混ぜないこと。**
 
-- `topic` は「何を争点と呼ぶか」という**編集方針**。増やすほど意味が薄まるので膨らませない
+- `topic` は「何を争点と呼ぶか」という**編集方針**。増やすほど意味が薄まるので膨らませない。
+  `topic_hit` は**速くするための索引で、正しさの前提ではない**（持っていない語は
+  サイトが検索経路で出す。実測で82語中80語は件数が完全に一致する）
 - `word` は2文字語を引くための**索引**。一覧としては表示しない。
   **語彙リストは持たない**ので、期間ごとに中身が違ってよい（無い語は素直に0件）
 - `frequent` は「いつ・どれだけ議論されたか」を見せる**一覧**。運営は語を選ばない

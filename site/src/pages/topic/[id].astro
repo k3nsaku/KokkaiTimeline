@@ -5,10 +5,15 @@
  * グラフは `data/dist/topics.json`（258KB）だけで描けるので**ビルド時に SVG にする**。
  * DBを一切引かないので即座に出るし、検索エンジンにも中身が渡る。
  * 発言一覧だけがブラウザからの `topic_hit` 引き（0.7秒）。
+ *
+ * ★ **配信済みDBがこの語を持っていないとき（`indexed` が偽）は普通の検索経路で出す。**
+ *   争点語を足した直後がこれで、全期間のDBを作り直すまでの間だけ FTS 相当の速さになる
+ *   （結果は同じ。別表記の合算だけが効かない）。`scripts/build_db.py` の `stamp_indexed()`。
  */
 import Base from "../../layouts/Base.astro";
 import { topicSeries, manifest } from "../../lib/site-data";
 import { toSeries, monthlyChart, kaihaRates } from "../../lib/chart";
+import { splitTerms, unsearchableTerms } from "../../lib/query";
 import { formatNumber } from "../../lib/format";
 
 export function getStaticPaths() {
@@ -28,6 +33,11 @@ const byKaiha = kaihaRates(data.kaiha, series, data.speech_totals);
 // ピークの月。「いつ議論されたか」が争点語ページで一番知りたいこと
 const peak = [...overall].sort((a, b) => b.rate - a.rate)[0];
 
+// **索引に載っていない語のうち、検索経路でも引けないもの**（1文字・ひらがな・
+// 文字種をまたぐ2文字）。DBを引いても0件にしかならないので、引かずにそう書く。
+// グラフは本文の部分一致で数えてあるので、そちらは出る（件数と一覧が食い違う）
+const searchable = topic.indexed || !unsearchableTerms(splitTerms(topic.term)).length;
+
 const description =
   `国会で「${topic.term}」がいつ、どの会派から発言されたか。` +
   `${formatNumber(topic.n_speeches)}件の発言を月ごとの出現率で見られます。`;
@@ -42,6 +52,12 @@ const description =
     {formatNumber(topic.n_speeches)}件の発言に{formatNumber(topic.n_occurrences)}回
     {topic.variants.length > 0 && <>・別表記として {topic.variants.join("、")} も同じ語として数えています</>}
   </p>
+  {topic.variants.length > 0 && !topic.indexed && (
+    <p class="small muted">
+      ※ 下の発言一覧には<strong>「{topic.term}」を含む発言だけ</strong>が出ます
+      （別表記は上のグラフと件数にだけ入っています）。
+    </p>
+  )}
 
   <section>
     <h2>いつ議論されたか</h2>
@@ -109,11 +125,13 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ topicId: topic.id, term: topic.term, periods })}
+    set:html={JSON.stringify({ topicId: topic.id, term: topic.term,
+                               indexed: topic.indexed, searchable, periods })}
   />
 
   <script>
-    import { search } from "../../lib/db";
+    import { resolveQuery, search } from "../../lib/db";
+    import type { QueryPlan } from "../../lib/query";
     import { renderSpeeches } from "../../lib/render";
     // 抜粋のクリックを横取りして本文パネルを出す（広い画面だけ）。
     // 狭い画面・JS無効では /speech/<id> へそのまま遷移する
@@ -122,9 +140,10 @@ const description =
 
     initSpeechPanel();
 
-    const { topicId, term, periods } = JSON.parse(
+    const { topicId, term, indexed, searchable, periods } = JSON.parse(
       document.getElementById("site-data")!.textContent!,
-    ) as { topicId: number; term: string; periods: string[] };
+    ) as { topicId: number; term: string; indexed: boolean; searchable: boolean;
+           periods: string[] };
 
     const statusEl = document.getElementById("status")!;
     const results = document.getElementById("results")!;
@@ -132,12 +151,18 @@ const description =
     const moreBtn = document.getElementById("more") as HTMLButtonElement;
 
     let cursor: Record<string, number> | undefined;
+    // 配信済みDBがこの語を持っていないときだけ使う。**1回だけ解いてページ送りで使い回す**
+    let plan: QueryPlan | undefined;
 
     async function run(append: boolean) {
       const started = performance.now();
       try {
-        // 争点語は FTS を通さず topic_hit を引く。3.3倍速く、2文字語もここでだけ引ける
-        const page = await search({ topicId, periods, limit: 20,
+        // 索引に載っていれば FTS を通さず topic_hit を引く。3.3倍速く、別表記も合算される。
+        // 載っていなければ普通の検索経路（2文字語は word / 3文字以上は FTS）に落とす
+        if (!indexed) plan ??= await resolveQuery(term, periods);
+        const page = await search({ topicId: indexed ? topicId : undefined,
+                                    query: indexed ? undefined : term, plan,
+                                    periods, limit: 20,
                                     before: append ? cursor : undefined });
         cursor = page.before;
         results.insertAdjacentHTML("beforeend",
@@ -156,7 +181,16 @@ const description =
       moreBtn.disabled = false;
     });
 
-    run(false);
+    // **引きようがない語はDBを引かない。** 0件を出すと「国会で使われていない」と
+    // 区別が付かないので、上のグラフとは数え方が違うことをそのまま書く
+    if (searchable) {
+      run(false);
+    } else {
+      statusEl.innerHTML =
+        `この語は発言一覧を出せません（<strong>${escapeHtml(term)}</strong> は`
+        + "1文字・ひらがな・文字種をまたぐ2文字のいずれかで、索引の単位に当たりません）。"
+        + "上のグラフは本文を数えたものなので、そちらは出ています。";
+    }
   </script>
 
   <style>

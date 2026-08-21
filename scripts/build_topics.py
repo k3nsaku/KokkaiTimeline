@@ -53,6 +53,10 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# 争点語の id の検査と、`indexed`（どの期間DBが実際に持っているか）の判定は
+# 配信DBを作る側が持っている。**同じ規則を2か所に書かない**
+from build_db import check_topic_ids, stamp_indexed
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = ROOT / "data" / "kokkai.db"
 TOPICS_PATH = ROOT / "data" / "topics.json"
@@ -348,17 +352,53 @@ def write_new_terms(trending: dict, topics: list[dict], out: Path) -> int:
 # --- 集計 -------------------------------------------------------------------
 
 def load_topics(path: Path) -> list[dict]:
+    """**`id` は `topics.json` に書いてある。並び順から採らない**（`build_db.check_topic_ids`）。
+
+    以前は `enumerate` で振っていたので、語を1つ差し込むと以降の `topic_id` が
+    全部ずれ、配信済みDBを作り直すまで `/topic/<id>` が別の争点の発言を出していた。
+    """
     if not path.exists():
         raise SystemExit(
             f"{path} が無い。先に `python scripts/build_topics.py --propose` で候補を出し、"
             f"採用する語を書くこと")
     topics = json.loads(path.read_text(encoding="utf-8"))["topics"]
-    for i, topic in enumerate(topics, 1):
-        topic.setdefault("id", i)
+    check_topic_ids(topics, path)
+    for topic in topics:
         topic.setdefault("variants", [])
         topic.setdefault("category", None)
     warn_overlaps(topics)
+    warn_unsearchable(topics)
     return topics
+
+
+# 2文字語の索引が見ている文字クラス。**`build_db.py` の `WORD_RUN_PATTERN` と、
+# `site/src/lib/query.ts` の `CHAR_CLASSES` と同じ区切り。**
+# ここは「争点語に採ってよい語か」を知らせるためだけに持っている（判定の正本は query.ts）。
+CHAR_CLASSES = [re.compile(r"[一-鿿々]"), re.compile(r"[ァ-ヴー]"), re.compile(r"[Ａ-Ｚａ-ｚ０-９]")]
+
+
+def warn_unsearchable(topics: list[dict]) -> None:
+    """**普通の検索経路で引きようがない語**を知らせる。
+
+    配信済みDBに `topic_hit` が無い語（＝足したばかりの語）は検索経路に落ちるので、
+    そこで引けない語を足すと**全期間を作り直すまで発言一覧が空になる**。
+    引けないのは 1文字・ひらがなだけの2文字・**文字種をまたぐ2文字**（`お金`）。
+    索引が漢字/カタカナ/全角英数の**連続の中**しか2文字窓を切らないため
+    （`docs/DECISIONS.md`「語彙リストをやめて全bigramにする」）。
+
+    落とさずに警告で済ませるのは、採るかどうかが運営の判断だから
+    （採るなら全期間のDBを作り直す。`docs/PIPELINE.md`）。
+    """
+    def class_of(ch: str) -> int:
+        return next((i for i, r in enumerate(CHAR_CLASSES) if r.fullmatch(ch)), -1)
+
+    for topic in topics:
+        term = topic["term"]
+        if len(term) >= 3:
+            continue
+        if len(term) == 1 or class_of(term[0]) < 0 or class_of(term[0]) != class_of(term[1]):
+            logger.error("★ `%s` は普通の検索経路で引けない（1文字・ひらがな・文字種またぎ）。"
+                         "**全期間のDBを作り直すまで発言一覧が空になる**", term)
 
 
 def warn_overlaps(topics: list[dict]) -> None:
@@ -473,10 +513,14 @@ def aggregate(con: sqlite3.Connection, topics: list[dict],
         # 会議名 × 月の分母。**検索結果のグラフを会議名で絞ったときだけ使う。**
         # 会派の分母（上）とは別物で、こちらは絞り込みの選択肢と1対1に対応する
         "meeting_totals": meeting_totals(con, month_list),
+        # `indexed` は**この後 `stamp_indexed()` が目録を見て付け直す**。
+        # ここでは偽で置く（配信済みDBが持っていない語を `topic_hit` で引かないため。
+        # 偽なら普通の検索経路に落ちるだけで、結果は変わらない）
         "topics": [{
             "id": t["id"], "term": t["term"], "category": t["category"],
             "variants": t["variants"],
             "n_speeches": totals[t["id"]][0], "n_occurrences": totals[t["id"]][1],
+            "indexed": False,
         } for t in topics],
         "series": series,
     }
@@ -530,6 +574,14 @@ def main() -> None:
                         encoding="utf-8")
     size = args.out.stat().st_size
     logger.info("集計を保存: %s（%.0f KB）", args.out, size / 1024)
+
+    # どの語を `topic_hit` で引けるかは**配信済みDBが持っているかどうか**で決まる。
+    # 目録に載っている中身と突き合わせて印を付ける（`scripts/build_db.py`）。
+    # ★ 全期間を作り直す流れでは、この後 `build_db.py --split` が目録を書き換えて
+    #   もう一度ここを付け直す。順序が逆でも「遅いが正しい」側に倒れる
+    n_indexed, n_topics = stamp_indexed(args.out, args.out.with_name("manifest.json"))
+    logger.info("配信済みDBで topic_hit を引ける語: %d/%d件"
+                "（残りは検索経路で出る。全期間を作り直すと速くなる）", n_indexed, n_topics)
 
     print(f"\n{'語':<16}{'含む発言':>10}{'延べ出現':>10}  文字数")
     for t in sorted(data["topics"], key=lambda x: -x["n_speeches"]):

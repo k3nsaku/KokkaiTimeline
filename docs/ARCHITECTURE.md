@@ -67,11 +67,12 @@ speech       : speech_id, issue_id, 発言順, 日付, 発言者, よみ, 会派
 speech_fts   : FTS5 + trigram。議員の発言のみを索引化（本文は speech 側）
 politician   : 名寄せ後の議員マスタ（1,111人）。id は URL に出る
 affiliation  : 会派の時系列。party は特定できたときだけ入る（NULL あり）
-topic        : 争点語（82件）。リストは data/topics.json
-topic_hit    : 争点語 → 発言
+topic        : 争点語（82件）。リストは data/topics.json。**id は不変**（並び順ではない）
+topic_hit    : 争点語 → 発言。**速くするための索引で、正しさの前提ではない**
+               （持っていない語はサイトが検索経路で出す。docs/DECISIONS.md）
 word         : 2文字語の索引（本文の2文字窓を全部。期間ごとに 31,000〜108,000語）
 word_hit     : 2文字語 → 発言
-meta         : 期間DBの素性（period / period_rule / from / to / 争点語の指紋）
+meta         : 期間DBの素性（period / period_rule / from / to / 作った時点の争点語の指紋）
 ```
 
 **`speech.rowid` は日付の昇順**（`build_db.py` の `load()` が並べ替えている）。
@@ -118,9 +119,13 @@ UIの「新しい順」はすべて `ORDER BY rowid DESC` で書く。これは�
 
 | 条件 | 引き先 | 速さ |
 |---|---|---|
-| 争点語（`topics.json`）に一致 | `topic_hit` | 0.7秒。別表記も合算される |
+| 争点語に一致し、**配信済みDBが持っている**（`indexed`） | `topic_hit` | 0.7秒。別表記も合算される |
 | 2文字以下の語を含む | `word_hit` | FTS では**原理的に引けない**もの |
 | それ以外 | FTS5 trigram | 1.5〜6秒 |
+
+**争点語を足しても全期間のDBを作り直さなくてよい。** 配信済みDBが持っていない語は
+`indexed` が偽になり、下の2経路に落ちる（結果は同じで、3文字以上の語だけ 3.3倍遅い）。
+判定は `scripts/build_db.py` の `stamp_indexed()` が目録と突き合わせて付ける。
 
 **「引けない語」は無い。** 索引に無い2文字語は素直に0件になる。
 `resolveQuery()` は**対象の全期間から件数を引いて合算**し、いちばん珍しい2文字語を
@@ -175,9 +180,9 @@ UIの「新しい順」はすべて `ORDER BY rowid DESC` で書く。これは�
 
 | | |
 |---|---|
-| `data/dist/topics.json`（292KB） | 月×会派の出現件数と**分母（その月の発言数）**。頻度推移ページはこれだけで描ける。**分母で割らずにグラフにしないこと**。会議名×月の分母（`meeting_totals`・22KB）も入っていて、検索を会議名で絞ったときの分母になる |
+| `data/dist/topics.json`（292KB） | 月×会派の出現件数と**分母（その月の発言数）**。頻度推移ページはこれだけで描ける。**分母で割らずにグラフにしないこと**。会議名×月の分母（`meeting_totals`・22KB）も入っていて、検索を会議名で絞ったときの分母になる。各語の `indexed` は**配信済みDBが `topic_hit` を持っているか**（偽ならサイトが検索経路で出す） |
 | `data/dist/trending.json`（10KB） | 直近の国会で急に増えた語。**カレンダー週で区切らない**（発言のあった日を5日ずつまとめる）。中身は「その週に審議された法案の専門用語」が主で、**「今週の争点」ではない** |
-| `data/dist/manifest.json` | 期間DBの目録（上記） |
+| `data/dist/manifest.json` | 期間DBの目録（上記）。ファイル名・大きさ・世代（`?v=`）・収録範囲に加えて、**その期間が持っている争点語**（`topics.ids` / `topics.fp`）を載せる |
 
 ## スクリプト
 

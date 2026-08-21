@@ -220,20 +220,71 @@ aws s3 cp "s3://kokkai-timeline/kokkai-2026H2.db" "s3://kokkai-timeline/kokkai-2
 打ち直しただけでは配信に出ない。そのURLをパージするか、
 **当期のDBなら翌日の日次で別の `?v=` になるのを待てばよい**（毎日中身が変わるため）。
 
-## ★ 争点語を変えるとき
+## 争点語を変えるとき
 
-**`data/topics.json` を1語でも触ったら、全期間のDBを作り直すこと。**
-
-`topic_hit` の `topic_id` は `topics.json` の並びで決まる。一部の期間だけ作り直すと
-**`/topic/<id>` が別の争点の発言を出す**（引けなくなるのではなく、黙って中身が入れ替わる）。
+**語を足すだけなら、全期間のDBの作り直しは要らない**（2026-08-21）。
+**消す・書き直す・別表記を足すときは要る**（下の表）。
 
 ```bash
-python scripts/build_topics.py                          # dist/topics.json・trending.json
+python scripts/build_topics.py     # dist/topics.json・trending.json を作り直すだけ
+```
+
+配信済みDBが持っていない語には `dist/topics.json` の `indexed` が偽で付き、
+サイトは `topic_hit` を使わず**普通の検索経路**（2文字語は `word` / 3文字以上は FTS）で出す。
+実測で 82語のうち80語は両経路の結果が完全に一致する（食い違うのは別表記を持つ2語）。
+**正しさは変わらず、3文字以上の語だけ 3.3倍遅くなる。**
+
+`data/topics.json` の `id` は**不変の識別子**。追加は未使用の最大値+1、削除しても
+再利用しない。`build_db.py` / `build_topics.py` は id の無いリストを受け付けない。
+
+### 作り直しが要るのは「足す」以外
+
+| 変えたもの | 作り直しまでの間 | なぜ |
+|---|---|---|
+| **足しただけ** | 足した語だけ検索経路（正しい・遅い） | 古い期間DBに `topic_hit` が無いだけ |
+| **`variants` を足した・変えた** | その語が**代表表記しか出ない** | 検索経路は AND しか無く、別表記を合算できない。ページにその旨を出す |
+| **`term` を書き直した（id はそのまま）** | **全部**が検索経路（正しい・遅い） | 配信済みDBは**古い語**のヒットを持っている。指紋が合わないので全部を信じない |
+| **語を消した** | **全部**が検索経路（正しい・遅い） | 消した語の表記が手元に無く、指紋を照合できない |
+
+下2つで全部が落ちるのは**照合できないものを信じない**ため。遅くなるだけで、
+間違ったものは出ない（`stamp_indexed()` が期間ごとに照合して理由をログに出す）。
+
+```bash
+python scripts/build_topics.py
 python scripts/build_db.py --split --page-size 8192     # 全期間（実測 約6分・12本）
 ```
 
 CI からやるなら `workflow_dispatch` を `all_years=true` で実行する。
-安全網として、各期間DBの `meta` に争点語の指紋が入っている。
+
+### 速くしたくなったら（任意）
+
+足した語を `topic_hit` に載せる作業は**いつやってもよい**。次に全期間を作り直した
+ときに自動で載る。**2文字語は載せても速くならない**ので、放っておいてよい
+（実測: word 経路 451req ≒ 争点語経路 471req）。
+
+> **目録（`manifest.json`）が期間ごとの争点語を持っている。** `{"ids": "1-82", "fp": …}`。
+> ここが実物とずれていると、持っていない語を `topic_hit` で引いて**0件**になる。
+> DBを作り直さずに目録だけ直すなら `python scripts/build_db.py --manifest-only`。
+
+### ★ 一度だけ要る移行（2026-08-21 の変更）
+
+**公開中の目録には `topics` の記載が無い。** 記載の無い期間は「持っていない」扱いに
+なるので（推測しない）、そのままだと**全部の争点語が検索経路に落ちて遅いまま**になる。
+日次はそのとき手元に無い期間の記載を引き継ぐだけなので、放っておいても直らない。
+
+手元に全期間のDBが揃っている端末で目録を作り直し、**それを1回だけ配ること**:
+
+```bash
+python scripts/build_db.py --manifest-only      # data/dist を走査して目録を作り直す
+python scripts/verify_dist.py                   # 目録と実物が合っているか（実測21秒）
+aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
+  --endpoint-url "$R2_ENDPOINT" \
+  --content-type "application/json" \
+  --cache-control "public, max-age=300"
+```
+
+**`--content-type` を省かない**（このページの上のほうの注意）。
+翌日の日次はこの目録を降ろしてくるので、そこから先は勝手に維持される。
 
 > **2文字語の語彙を作り直す作業はもう無い**（2026-08-12）。
 > 索引は本文の2文字窓を全部拾うようになり、`build_words.py` と `data/words.json`、

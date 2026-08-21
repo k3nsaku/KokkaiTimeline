@@ -11,8 +11,10 @@
                    site/src/lib/query.ts の periodOf() が同じ写像か
                    （**片方だけ変えると存在しないファイルを引きに行く**）
     3. 期間DB      PRAGMA quick_check・page_size・journal_mode・
-                   meta（period / period_rule / from / to / topics の指紋）
-    4. 骨格        speech_fts があるか・争点語が入っているか
+                   meta（period / period_rule / from / to）・
+                   目録の `topics`（その期間が持つ争点語）が実物と一致するか
+    4. 骨格        speech_fts があるか・争点語が入っているか・
+                   **両方にある争点語の term が一致するか**
                    （**発言の量に関係なく成り立つもの。4と5を混ぜないこと**）
     5. スモーク    FTS・2文字語・争点語の**3経路を1件ずつ実際に引く**
 
@@ -22,7 +24,8 @@
 
     FTS      3文字以上。trigram の索引。--no-fts で作られていないことがある
     word     2文字。FTS では**原理的に引けない**ので、ここが空だと `年金` が0件になる
-    topic    争点語。topic_id が期間をまたいでずれると、**別の争点の発言が黙って出る**
+    topic    争点語。id を使い回して語を書き換えると、**別の争点の発言が黙って出る**
+             （id は `topics.json` に書いてある不変の識別子。並び順から採らない）
 
 どれも「引けない」ではなく「**0件**」や「**中身が入れ替わる**」形で壊れる。
 エラーにならないので、実際に引いてみる以外に気づく手が無い。
@@ -56,9 +59,12 @@ from build_db import (  # noqa: E402
     DIST_DIR,
     TOPICS_PATH,
     file_version,
-    fingerprint,
+    format_id_ranges,
     load_topics,
+    parse_id_ranges,
     period_of,
+    read_topics,
+    topics_fingerprint,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -193,7 +199,7 @@ def check_manifest(report: Report, dist_dir: Path, rule: str, max_size: float) -
     return manifest
 
 
-def check_schema(report: Report, con: sqlite3.Connection, n_topics: int) -> bool:
+def check_schema(report: Report, con: sqlite3.Connection, topics: list[dict]) -> bool:
     """**中身の量に関係なく成り立っていなければならないもの。**
 
     ★ スモークテストのしきい値（`--min-smoke`）の外に置いてある。
@@ -202,13 +208,39 @@ def check_schema(report: Report, con: sqlite3.Connection, n_topics: int) -> bool
       `no such table: speech_fts` で落ち、後者は `/topic/<id>` が全部0件になる。
       **どちらも「発言が少ないから引けない」とは別の壊れ方。**
 
+    **件数の一致は求めない**（2026-08-21）。`topics.json` に語を足しても古い期間DBは
+    作り直さなくてよい ＝ **DBのほうが少ないのが正常**で、足りない語はサイトが
+    普通の検索経路（word / FTS）で出す（`build_db.stamp_indexed`）。
+    代わりに**両方にある id は term も variants も一致していること**を見る。
+    ここがずれると `/topic/<id>` が古い語のヒットを新しい語の名前で出す。
+
     戻り値は speech_fts があるかどうか（無ければ FTS のスモークを飛ばす）。
     """
     has_fts = bool(con.execute(
         "SELECT 1 FROM sqlite_master WHERE name = 'speech_fts'").fetchone())
     report.check(has_fts, "speech_fts がある")
-    in_db = con.execute("SELECT COUNT(*) FROM topic").fetchone()[0]
-    report.check(in_db == n_topics, f"争点語 {in_db}件（topics.json は {n_topics}件）")
+
+    held = {i: (term, variants) for i, term, variants in read_topics(con)}
+    report.check(bool(held), "争点語が入っている")
+    wanted = {t["id"]: (t["term"], t["variants"]) for t in topics}
+
+    mismatched = [f"id={i}: DB `{held[i][0]}` ≠ topics.json `{wanted[i][0]}`"
+                  for i in sorted(held.keys() & wanted.keys()) if held[i] != wanted[i]]
+    report.check(not mismatched,
+                 f"両方にある争点語 {len(held.keys() & wanted.keys())}件の term/variants が一致"
+                 + ("" if not mismatched else
+                    " - " + " / ".join(mismatched[:3])
+                    + "。**id を使い回して語を書き換えている。**"
+                      "別の争点なら新しい id を振る。書き直しなら全期間を作り直す"))
+
+    # 足りない語・余った語は事故ではない。**印を付けて配るだけ**（黙って通さない）
+    if missing := sorted(wanted.keys() - held.keys()):
+        report.note(f"このDBに無い争点語 {len(missing)}件（id={format_id_ranges(missing)}）"
+                    " - 検索経路で出る。全期間を作り直すと topic_hit に載って速くなる")
+    if stale := sorted(held.keys() - wanted.keys()):
+        report.note(f"topics.json から消えた争点語 {len(stale)}件"
+                    f"（id={format_id_ranges(stale)}）が残っている"
+                    " - 引かれないので害は無い。作り直すと消える")
     return has_fts
 
 
@@ -245,11 +277,11 @@ def smoke_word(report: Report, con: sqlite3.Connection) -> None:
 
 
 def smoke_topic(report: Report, con: sqlite3.Connection) -> None:
-    """争点語の経路。**`topic_id` のずれはここでしか捕まらない。**
+    """争点語の経路。**`topic_hit` が本当にその語の発言を指しているかを見る。**
 
-    件数は正しいまま中身だけ入れ替わるので、引けた発言の本文にその語が
-    入っているかを見る（`topics.json` を触ったのに一部の期間しか作り直さなかった
-    ときに起きる。docs/PITFALLS.md）。
+    件数は正しいまま中身だけ入れ替わる壊れ方をするので、引けた発言の本文に
+    その語が入っているかまで見る。**代表語はDBから採る**ので、`topics.json` が
+    先に進んでいてもここは成立する（両者の照合は `check_schema()` の仕事）。
     """
     row = con.execute("SELECT id, term, variants, n_speeches FROM topic"
                       " ORDER BY n_speeches DESC, id LIMIT 1").fetchone()
@@ -266,7 +298,7 @@ def smoke_topic(report: Report, con: sqlite3.Connection) -> None:
     report.check(
         any(form in hit[1] for form in forms),
         f"争点語: 引けた発言 rowid={hit[0]} の本文に `{term}` が入っている"
-        " - 入っていなければ topic_id がずれている（全期間の作り直しが要る）")
+        " - 入っていなければ topic_hit と topic の対応が壊れている（作り直しが要る）")
     actual = con.execute("SELECT COUNT(*) FROM topic_hit WHERE topic_id = ?",
                          (topic_id,)).fetchone()[0]
     report.check(n_speeches == actual,
@@ -313,7 +345,7 @@ def check_monthly(report: Report, con: sqlite3.Connection) -> None:
 
 
 def check_db(report: Report, path: Path, period: str, entry: dict | None,
-             rule: str, topics_fp: str, n_topics: int,
+             rule: str, topics: list[dict],
              page_size: int, min_smoke: int) -> None:
     report.section(f"{path.name}（{path.stat().st_size / 1e6:.0f} MB）")
 
@@ -347,11 +379,18 @@ def check_db(report: Report, path: Path, period: str, entry: dict | None,
                      f"meta.period = {meta.get('period')!r}（ファイル名は {period!r}）")
         report.check(meta.get("period_rule") == rule,
                      f"meta.period_rule = {meta.get('period_rule')!r}（目録は {rule!r}）")
-        # **争点語の指紋が期間をまたいで揃っていること。** ずれたまま配ると
-        # `/topic/<id>` が別の争点の発言を出す
-        report.check(meta.get("topics") == topics_fp,
-                     f"meta.topics = {meta.get('topics')!r}"
-                     f"（topics.json の指紋 {topics_fp!r}）")
+
+        # **目録の `topics` が実物と合っていること。** サイトはこれを見て
+        # 「この語を topic_hit で引いてよいか」を決める（`build_db.stamp_indexed`）。
+        # ずれると、持っていない語を topic_hit で引いて**0件**になる
+        if entry is not None:
+            held = read_topics(con)
+            listed = entry.get("topics") or {}
+            report.check(
+                parse_id_ranges(listed.get("ids", "")) == [i for i, _, _ in held]
+                and listed.get("fp") == topics_fingerprint(held),
+                f"目録の争点語の記載が実物と一致（{len(held)}件）"
+                " - ずれていたら build_db.py --manifest-only で目録を作り直す")
 
         covers = (meta.get("from", ""), meta.get("to", ""))
         for key, value in zip(("from", "to"), covers):
@@ -363,7 +402,7 @@ def check_db(report: Report, path: Path, period: str, entry: dict | None,
                          f"目録の収録範囲が meta と一致（{covers[0] or 'なし'} 〜 {covers[1] or 'なし'}）")
 
         # --- 骨格（発言の量に関係なく成り立つもの） ---
-        has_fts = check_schema(report, con, n_topics)
+        has_fts = check_schema(report, con, topics)
         check_monthly(report, con)
 
         # --- スモークテスト（3経路） ---
@@ -409,8 +448,7 @@ def main() -> None:
 
     topics = load_topics(args.topics)
     if not topics:
-        sys.exit(f"★ {args.topics} を読めない。争点語の指紋を照合できないので配らないこと")
-    topics_fp = fingerprint([t["term"] for t in topics])
+        sys.exit(f"★ {args.topics} を読めない。争点語を照合できないので配らないこと")
 
     found = {p.stem.removeprefix("kokkai-"): p
              for p in sorted(args.dist.glob("kokkai-*.db"))
@@ -432,7 +470,7 @@ def main() -> None:
 
     for period in targets:
         check_db(report, found[period], period, entries.get(period), rule,
-                 topics_fp, len(topics), args.page_size, args.min_smoke)
+                 topics, args.page_size, args.min_smoke)
 
     print()
     if report.failures:
