@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.3",
-    "astro": "^5.14.1",
+    "astro": "^7.1.1",
     "sql.js-httpvfs": "^0.8.12"
   },
   "devDependencies": {
