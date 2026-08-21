@@ -57,11 +57,35 @@ let manifestPromise: Promise<Manifest> | null = null;
 /** やり直しのときにURLを変えるための通し番号（ブラウザキャッシュを外す用）。 */
 let retryCount = 0;
 
+async function fetchManifest(suffix = ""): Promise<Manifest> {
+  const res = await fetch(`${DB_BASE}/manifest.json${suffix}`);
+  if (!res.ok) throw new Error(`目録を読めません: ${res.status}`);
+  return (await res.json()) as Manifest;
+}
+
+/**
+ * 配信DBの目録。**セッションに1回だけ引いて使い回す。**
+ *
+ * ★ **失敗したらURLを変えて1度だけ引き直す。** エッジに `Access-Control-Allow-Origin`
+ * の無い応答が載ることがあるため（R2 は `Origin` の付いた要求にだけ CORS ヘッダを
+ * 返し、応答に `Vary: Origin` を付けない。`Origin` 無しの要求が先にキャッシュを
+ * 埋めると、それが全ブラウザに配られる）。**目録が読めないとサイトは丸ごと止まる**
+ * ので、ここだけは自力で抜け出せるようにしておく。2026-08-21 に実際に踏んだ
+ * （日次の「配る → 検算する」の検算側が発生源。`scripts/verify_published.py`）。
+ *
+ * 失敗を握ったままにしない（`manifestPromise` を戻す）。握ると、次の操作まで
+ * 同じ失敗を配り続けることになる。
+ */
 export function getManifest(): Promise<Manifest> {
-  manifestPromise ??= fetch(`${DB_BASE}/manifest.json`).then((r) => {
-    if (!r.ok) throw new Error(`目録を読めません: ${r.status}`);
-    return r.json() as Promise<Manifest>;
-  });
+  manifestPromise ??= fetchManifest()
+    .catch((first) => {
+      console.warn("目録を引き直す（キャッシュを外す）", first);
+      return fetchManifest(`?retry=${++retryCount}`);
+    })
+    .catch((err) => {
+      manifestPromise = null;
+      throw err;
+    });
   return manifestPromise;
 }
 

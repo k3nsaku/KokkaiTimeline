@@ -475,6 +475,19 @@ R2 → バケット → Settings → CORS policy:
 **プレビュー配置（`<ハッシュ>.kokkai-timeline.pages.dev`）は別オリジンになるので通らない。**
 確認は本番配置か、カスタムドメインでやること。
 
+> ### ★ 公開URLを `Origin` 無しで引かない（2026-08-21 に踏んだ）
+>
+> R2 は **`Origin` の付いた要求にだけ** CORS ヘッダを返し、応答に `Vary: Origin` を
+> 付けない。**`Origin` 無しの要求が先にエッジのキャッシュを埋めると、
+> `Access-Control-Allow-Origin` の無い応答がそのまま全ブラウザに配られる。**
+> 目録で起きるとサイトが丸ごと止まる（`Failed to fetch`。どの期間DBにも辿り着けない）。
+>
+> **発生源は検算だった。** 日次は「配る → 検算する」の順で、`verify_published.py`
+> （Python の `urllib`）が `Origin` を送っていなかったため、**デプロイのたびに
+> 5分間の穴**が開いていた（目録は `max-age=300`）。いまは `Origin` を付けて引き、
+> 返ってきた CORS ヘッダまで検算に含めている。`curl` で手当てするときも
+> `-H 'Origin: https://kokkai-timeline.com'` を付けること。
+
 ### 3.5. ★ Cache Rule を作る（**これが無いとキャッシュされない**）
 
 **カスタムドメインを付けただけではエッジに乗らない。** Cloudflare は

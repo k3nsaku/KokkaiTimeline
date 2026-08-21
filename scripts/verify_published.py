@@ -21,12 +21,26 @@
 
     HEAD          200 / Content-Length が目録の size と一致 /
                   Content-Type が application/vnd.sqlite3 /
-                  Accept-Ranges: bytes
+                  Accept-Ranges: bytes / Access-Control-Allow-Origin
     Range 0-99    206 / Content-Range が size と一致 /
                   先頭16バイトが SQLite のマジック / page_size が 8192
 
 `Accept-Ranges` は**ブラウザからは見えない**（R2 の CORS が公開していないので
 `getAllResponseHeaders()` に出ない）。ここでしか確かめられない。
+
+## ★ `Origin` を必ず付ける（2026-08-21 に踏んだ）
+
+**この検算そのものが配信を壊していた。**
+
+R2 は `Origin` の付いた要求にだけ CORS ヘッダを返し、応答に `Vary: Origin` を
+付けない。日次は「配る → 検算する」の順なので、上げ直した直後に
+**`Origin` 無しの応答がエッジに載り、そこから `max-age` の間（目録なら5分）
+すべてのブラウザで目録が読めなくなる**（`Failed to fetch` ＝ サイトが丸ごと止まる）。
+
+だから `Origin` を付けて引き、**返ってきた CORS ヘッダまで見る**。
+ブラウザと同じ形で引くことが、発生源を消すことと検査を増やすことの両方になる。
+サイト側にも保険がある（`site/src/lib/db.ts` は目録の取得に失敗したら
+URLを変えて1度だけ引き直す）。
 
 `--expect-local` を付けると、配信されている目録を手元の
 `data/dist/manifest.json` とも突き合わせる。食い違っていたら、上げ損ねたか、
@@ -59,6 +73,14 @@ DIST_DIR = Path(__file__).resolve().parent.parent / "data" / "dist"
 #: （.github/workflows/daily.yml の `--content-type`）。
 EXPECT_CONTENT_TYPE = "application/vnd.sqlite3"
 
+#: **ブラウザのふりをするための Origin。** サイトの正本は site/astro.config.mjs の `site`。
+#:
+#: ★ 飾りではない。R2 は **`Origin` の付いた要求にだけ** CORS ヘッダを返し、
+#:   応答に `Vary: Origin` が付かない。だから **`Origin` 無しで引くと、CORS ヘッダの
+#:   無い応答がエッジに載り、そこから5分間すべてのブラウザで目録が読めなくなる**
+#:   （`max-age=300`）。検算そのものが配信を壊していた。2026-08-21 に踏んだ。
+DEFAULT_ORIGIN = "https://kokkai-timeline.com"
+
 #: 配信DBの page_size。sql.js-httpvfs の requestChunkSize と揃っている必要がある
 #: （site/src/lib/db.ts の CHUNK）。
 EXPECT_PAGE_SIZE = 8192
@@ -87,12 +109,18 @@ class Report:
         return ok
 
 
-def request(url: str, method: str = "GET", headers: dict[str, str] | None = None):
-    """`(status, headers, body)` を返す。206 も 200 も例外にしない。"""
+def request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
+            origin: str = DEFAULT_ORIGIN):
+    """`(status, headers, body)` を返す。206 も 200 も例外にしない。
+
+    **`Origin` を必ず付ける。** ブラウザと同じ形で引くためで、外すと
+    CORS ヘッダの無い応答をエッジに載せてしまう（`DEFAULT_ORIGIN` の注記）。
+    """
     last: Exception | None = None
     for attempt in range(ATTEMPTS):
         req = urllib.request.Request(
-            url, method=method, headers={"User-Agent": USER_AGENT, **(headers or {})})
+            url, method=method,
+            headers={"User-Agent": USER_AGENT, "Origin": origin, **(headers or {})})
         try:
             with urllib.request.urlopen(req, timeout=30) as res:
                 return res.status, {k.lower(): v for k, v in res.headers.items()}, res.read()
@@ -106,15 +134,32 @@ def request(url: str, method: str = "GET", headers: dict[str, str] | None = None
     raise SystemExit(f"★ {url} に到達できない（{ATTEMPTS}回）: {last}")
 
 
-def check_database(report: Report, base: str, entry: dict) -> None:
+def check_cors(report: Report, label: str, headers: dict[str, str], origin: str) -> None:
+    """**ブラウザから読めるか。**
+
+    R2 は `Origin` の付いた要求にだけ CORS ヘッダを返し、応答に `Vary: Origin` を
+    付けない。**`Origin` 無しの要求が先にエッジのキャッシュを埋めると、
+    CORS ヘッダの無い応答が全ブラウザに配られる。** 目録でこれが起きると
+    サイトは丸ごと止まる（どの期間DBも引けない）。
+    """
+    allow = headers.get("access-control-allow-origin")
+    report.check(
+        allow in (origin, "*"),
+        f"{label}: Access-Control-Allow-Origin が {allow or '（無し）'}（期待 {origin}）"
+        " - 無いなら Origin 無しの要求がキャッシュを埋めている。"
+        "max-age が切れるまでブラウザから読めない")
+
+
+def check_database(report: Report, base: str, entry: dict, origin: str) -> None:
     period, size = entry["id"], entry["size"]
     url = f"{base}/{entry['file']}"
     if entry.get("version"):
         url += f"?v={entry['version']}"
 
-    status, headers, _ = request(url, method="HEAD")
+    status, headers, _ = request(url, method="HEAD", origin=origin)
     if not report.check(status == 200, f"{period}: HEAD が {status}（200 でない）{url}"):
         return
+    check_cors(report, period, headers, origin)
 
     length = headers.get("content-length")
     report.check(length == str(size),
@@ -126,7 +171,7 @@ def check_database(report: Report, base: str, entry: dict) -> None:
                  f"{period}: Accept-Ranges が {headers.get('accept-ranges') or '（無し）'}。"
                  "バイト単位で取れないとDB全体を1つとして読みに行く")
 
-    status, headers, body = request(url, headers={"Range": "bytes=0-99"})
+    status, headers, body = request(url, headers={"Range": "bytes=0-99"}, origin=origin)
     if not report.check(status == 206,
                         f"{period}: Range 要求に {status} で答えている（206 でない）"):
         return
@@ -142,13 +187,16 @@ def check_database(report: Report, base: str, entry: dict) -> None:
                  f"{period}: page_size が {page_size}（期待 {EXPECT_PAGE_SIZE}）")
 
 
-def check_manifest(report: Report, base: str, local: Path | None) -> dict | None:
+def check_manifest(report: Report, base: str, local: Path | None,
+                   origin: str) -> dict | None:
     url = f"{base}/manifest.json"
-    status, headers, body = request(url)
+    status, headers, body = request(url, origin=origin)
     if not report.check(status == 200, f"目録: {status} が返る {url}"):
         return None
     report.check((headers.get("content-type") or "").startswith("application/json"),
                  f"目録: Content-Type が {headers.get('content-type') or '（無し）'}")
+    # **ここが落ちるとサイトは丸ごと止まる。** 目録を読めなければ期間DBに辿り着けない
+    check_cors(report, "目録", headers, origin)
 
     try:
         served = json.loads(body)
@@ -182,6 +230,9 @@ def main() -> None:
                         help="配信されている目録が手元のものと同じか見る（日次更新の直後用）")
     parser.add_argument("--id", action="append", metavar="YYYYH1",
                         help="検算する期間ID。複数指定可。既定は目録にある全部")
+    parser.add_argument("--origin", default=os.environ.get("PUBLIC_SITE_ORIGIN", DEFAULT_ORIGIN),
+                        help="ブラウザのふりをするときの Origin"
+                             f"（既定 {DEFAULT_ORIGIN}）。**外さないこと**")
     args = parser.parse_args()
 
     if not args.base:
@@ -190,7 +241,7 @@ def main() -> None:
 
     report = Report()
     local = args.dist / "manifest.json" if args.expect_local else None
-    manifest = check_manifest(report, base, local)
+    manifest = check_manifest(report, base, local, args.origin)
     if manifest is None:
         for message in report.failures:
             print(f"× {message}")
@@ -204,9 +255,9 @@ def main() -> None:
             sys.exit(f"★ 目録に無い期間を指定している: {' '.join(missing)}")
         entries = [e for e in entries if e["id"] in wanted]
 
-    print(f"{base} を検算する（{len(entries)}期間）")
+    print(f"{base} を検算する（{len(entries)}期間・Origin {args.origin}）")
     for entry in entries:
-        check_database(report, base, entry)
+        check_database(report, base, entry, args.origin)
 
     print()
     if report.failures:
