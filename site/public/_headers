@@ -39,5 +39,10 @@
   Referrer-Policy: strict-origin-when-cross-origin
   # 使っていない機能を明示的に切る。**clipboard は入れない**（コピーボタンが死ぬ）
   Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=(), midi=()
-  # HTTPS 固定。includeSubDomains は付けない（db. を巻き込む必要がない）
+  # HTTPS 固定。**このヘッダは Pages（サイト本体）にだけ付く。**
+  # ★ `includeSubDomains` は付けない。`db.` を巻き込む必要が無いのと、
+  #   **HSTS は一方通行**（覚えたブラウザは max-age のあいだ http で開けない）だから。
+  #   `db.` の平文は**ゾーンの「常に HTTPS を使用」**で 301 にしてある（2026-08-21）。
+  #   ゾーン側で HSTS を有効にするなら、**この行を消して一本化すること**
+  #   （両方が出すとヘッダが重複する）。判断の経緯は docs/DECISIONS.md
   Strict-Transport-Security: max-age=31536000
