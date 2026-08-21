@@ -895,6 +895,19 @@ def write_manifest(dist_dir: Path) -> Path:
                                "fp": topics_fingerprint(held)}
         files.append(entry)
 
+    # **手元のほうが古いことがある。** 日次が当期を作り直し続けているので、
+    # ローカルの `data/dist` は当期だけ何日も遅れる。走査した実物で上書きすると
+    # **目録がその期間だけ過去の世代に巻き戻る**（`?v=` が戻り、エッジに残っていれば
+    # 古いDBを配る）。判断はできないので、書き換えた事実を必ず出す。
+    # 実際 2026-08-21 に踏んだ（8/12 のローカルから作った目録を上げてしまった）
+    for entry in files:
+        before = previous.get(entry["id"])
+        if before and before.get("version") != entry.get("version"):
+            logger.warning("目録: %s の世代が変わる（%s %s バイト → %s %s バイト）"
+                           " - 手元が配信より古くないか確かめること",
+                           entry["id"], before.get("version"), f"{before.get('size', 0):,}",
+                           entry.get("version"), f"{entry['size']:,}")
+
     built = {f["id"] for f in files}
     for period, entry in sorted(previous.items()):
         if period not in built:
