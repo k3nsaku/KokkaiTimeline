@@ -615,6 +615,13 @@ Pages 用（手順6）は `github-actions-pages-deploy` にして対にしてお
 このサイトは 1,211ファイル**（議員ページだけで1,111枚ある）。**将来も超え続ける。**
 名前を入れた時点でプロジェクトだけは作られるので、アップロードは Wrangler でやる。
 
+★ 下の `npx --yes wrangler@4` は**この初期構築（手元で1回）だけ**。
+**日次更新では使っていない** —— あれは実行のたびに npm から最新の 4.x を落として、
+Cloudflare のトークンが見えるプロセスとして走らせることになる。
+`daily.yml` は `site` の devDependency に**版を固定した** wrangler を
+`npm ci`（lockfile の完全性検査つき）で入れ、`npx --no-install wrangler` で呼ぶ。
+**日次側をここに合わせて戻さないこと**（docs/SECURITY.md）。
+
 ```powershell
 $env:CLOUDFLARE_API_TOKEN = '＜手順6のトークン＞'
 $env:CLOUDFLARE_ACCOUNT_ID = '＜アカウントID＞'
