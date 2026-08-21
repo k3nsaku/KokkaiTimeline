@@ -14,7 +14,7 @@ import Base from "../../layouts/Base.astro";
 import { politicians, manifest, latestAffiliation, activity, densify } from "../../lib/site-data";
 import { periodOf } from "../../lib/query";
 import { stackedMonthlyChart, type StackedSeries } from "../../lib/chart";
-import { formatNumber } from "../../lib/format";
+import { formatNumber, jsonScript } from "../../lib/format";
 
 /** 委員会に振る色。**並び順が意味を持つ**（Base.astro の注記）。
  *  「その他」は identity ではないので色相を与えない。 */
@@ -72,7 +72,16 @@ const description =
         <div><dt>期間</dt><dd class="small">{person.first_date} 〜 {person.last_date}</dd></div>
       </dl>
       <p class="small muted links">
-        {person.official_url && (<a href={person.official_url} rel="noopener nofollow">公式サイト</a>)}
+        {/* ★ **Wikidata（誰でも編集できる）から来た唯一の自由文字列**。
+            scheme は `build_politicians.py` の `safe_url()` で絞ってあるが、
+            **リンク先が本物かどうかは検証していない**（失効ドメインの取り直しもありうる）。
+            だから「公式サイト」と言い切らず、出どころを添える。
+            `rel` から `nofollow` を外さないこと。 */}
+        {person.official_url && (
+          <a href={person.official_url} rel="noopener nofollow external">
+            公式サイト<span class="muted">（Wikidata 掲載・未確認）</span>
+          </a>
+        )}
         {person.wikidata_id && (
           <a href={`https://www.wikidata.org/wiki/${person.wikidata_id}`} rel="noopener">Wikidata</a>
         )}
@@ -163,7 +172,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ id: person.id, periods: activePeriods })}
+    set:html={jsonScript({ id: person.id, periods: activePeriods })}
   />
 
   {/* 発言数の推移。この議員のぶんだけ（全期間64月 × 最大8系列で数KB）。
@@ -173,7 +182,7 @@ const description =
       is:inline
       type="application/json"
       id="activity-data"
-      set:html={JSON.stringify({
+      set:html={jsonScript({
         months: act.months,
         series: series.map((s) => ({ label: s.label, values: s.values, color: s.color })),
         name: person.name,

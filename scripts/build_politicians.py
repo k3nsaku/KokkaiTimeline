@@ -189,6 +189,42 @@ def group_people(results: list[dict]) -> dict[str, dict]:
     return people
 
 
+#: 公式サイトのURLとして受ける scheme。**これ以外は落とす。**
+SAFE_URL_SCHEMES = ("http://", "https://")
+
+#: 落とした公式サイトURL（`--report` に出す）。件数だけでなく中身を残す
+dropped_urls: list[tuple[str, str]] = []
+
+
+def safe_url(url: object, who: str) -> str | None:
+    """Wikidata の公式サイト（P856）を、リンクにしてよい形だけ通す。
+
+    ★ **ここが「誰でも編集できるもの」が公開ページの `href` に出る唯一の経路。**
+      氏名は会議録から採っていて Wikidata で上書きしない（`build_records`）。
+      政党は `party_map` の候補内からしか選ばれない（`resolve_party`）。
+      院は固定文字列2つ。**自由文字列のまま外に出るのはこのURLだけ**なので、
+      検査もここ1か所で足りる。
+
+    `javascript:` は配信側の CSP（`site/public/_headers`）も止めるが、
+    **CSP を最後の砦にしない**。CSP を緩めた瞬間に静かに効かなくなる。
+
+    ★ **`http://` は落とさない**（実測で 437件ある。消すと大量のリンクが黙って
+      消える）。平文であることと、掲載元が Wikidata で未検証であることは、
+      サイト側の表示（`politician/[id].astro`）で断ってある。
+    """
+    if not isinstance(url, str):
+        return None
+    text = url.strip()
+    if not text.lower().startswith(SAFE_URL_SCHEMES):
+        dropped_urls.append((who, text[:120]))
+        return None
+    # 制御文字・空白が混ざったものも落とす（URLとして壊れているか、細工されている）
+    if any(c.isspace() or ord(c) < 0x20 for c in text):
+        dropped_urls.append((who, text[:120]))
+        return None
+    return text
+
+
 def resolve_party(kaiha: str | None, party_map: dict, member_parties: list[str],
                   matched: bool, override: str | None) -> tuple[str | None, str | None]:
     """会派から政党を決める。決められなければ (None, 理由)。**推測はしない。**
@@ -600,7 +636,7 @@ def build_records(people: dict[str, dict], ledger: IdLedger, party_map: dict,
             "wikidata_id": matched["wikidata_id"] if matched else None,
             "wikidata_name": matched["name"] if matched else None,
             "house": "・".join(matched.get("houses") or []) if matched else None,
-            "official_url": matched.get("website") if matched else None,
+            "official_url": safe_url(matched.get("website"), name) if matched else None,
             "n_speeches": sum(u["n_speeches"] for u in person["units"]),
             "first_date": min(u["first_date"] for u in person["units"]),
             "last_date": max(u["last_date"] for u in person["units"]),
@@ -804,6 +840,18 @@ def write_report(politicians: list[dict], results: list[dict], out: Path | None)
                                          for a in p["affiliations"]))
         emit(f"| {p['id']} | {p['name']} | {p['wikidata_id'] or '—'} | {moves} | "
              f"{p['n_speeches']:,} |")
+    emit()
+
+    # ★ Wikidata は誰でも編集できる。**公開ページの href に出るのは公式サイトURLだけ**
+    #   なので、落としたものはここに残す（黙って消すと、消えたことに気づけない）
+    linked = [x for x in politicians if x["official_url"]]
+    http_urls = [x for x in linked if x["official_url"].startswith("http://")]
+    emit("## 公式サイトのURL（Wikidata P856）")
+    emit()
+    emit(f"- リンクにした: {len(linked):,}件（うち平文 http: **{len(http_urls):,}件**）")
+    emit(f"- 受け付けなかった: **{len(dropped_urls):,}件**（http/https 以外）")
+    for who, url in dropped_urls[:20]:
+        emit(f"  - {who}: `{url}`")
     emit()
 
     if out:

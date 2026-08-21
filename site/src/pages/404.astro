@@ -1,0 +1,29 @@
+---
+/**
+ * 見つからなかったときのページ。
+ *
+ * ★ **無いと Cloudflare Pages がトップを HTTP 200 で返す。** 実測で
+ *   `/.git/config` も `/package.json` も 200 でトップの HTML が返っていた
+ *   （2026-08-21）。ファイルが漏れているわけではないが、
+ *   **「無い」と「ある」を応答から区別できない**ので、監視も攻撃の検知もできない。
+ *
+ * 行き止まりにしない。存在しないURLに来る経路は
+ * 「古い共有リンク」「議員IDの打ち間違い」がほとんどなので、入口を並べておく。
+ */
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="ページが見つかりません" noindex={true}>
+  <h1>ページが見つかりません</h1>
+  <p>
+    お探しのページはありません。URLが古いか、打ち間違いかもしれません。
+  </p>
+  <p class="small">ここから探せます:</p>
+  <ul class="chips">
+    <li><a class="chip" href="/">トップ</a></li>
+    <li><a class="chip" href="/search">検索</a></li>
+    <li><a class="chip" href="/topics">争点語の一覧</a></li>
+    <li><a class="chip" href="/frequent">頻出語の一覧</a></li>
+    <li><a class="chip" href="/politicians">議員の一覧</a></li>
+  </ul>
+</Base>

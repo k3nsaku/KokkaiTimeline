@@ -14,7 +14,7 @@
 import Base from "../../layouts/Base.astro";
 import { frequent, manifest } from "../../lib/site-data";
 import { toSeries, monthlyChart } from "../../lib/chart";
-import { formatNumber } from "../../lib/format";
+import { formatNumber, jsonScript } from "../../lib/format";
 
 export function getStaticPaths() {
   return frequent().words
@@ -64,7 +64,7 @@ const description =
     <div id="results"></div>
     <p id="more-wrap" hidden><button id="more">さらに読み込む</button></p>
     <p class="small muted">
-      条件を足して絞り込むなら<a href={`/search?q=${encodeURIComponent(word.term)}`}>検索</a>から
+      条件を足して絞り込むなら<a href={`/search#q=${encodeURIComponent(word.term)}`}>検索</a>から
       どうぞ（会議名・年で絞れます）。
     </p>
   </section>
@@ -80,7 +80,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ term: word.term, periods })}
+    set:html={jsonScript({ term: word.term, periods })}
   />
 
   <script>

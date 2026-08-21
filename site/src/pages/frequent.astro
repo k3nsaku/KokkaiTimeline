@@ -11,7 +11,7 @@
  */
 import Base from "../layouts/Base.astro";
 import { frequent } from "../lib/site-data";
-import { formatNumber } from "../lib/format";
+import { formatNumber, jsonScript } from "../lib/format";
 import { formatSpan } from "../lib/frequent";
 
 const data = frequent();
@@ -135,7 +135,7 @@ const description =
     is:inline
     type="application/json"
     id="frequent-data"
-    set:html={JSON.stringify(payload)}
+    set:html={jsonScript(payload)}
   />
 
   <script>

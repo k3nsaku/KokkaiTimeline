@@ -70,7 +70,7 @@
 `/topic`・`/word` で、会期の文脈がそこで切れる。新しい集計データは作らず、
 既存の `meeting.session` で検索結果を絞る。
 
-- [ ] `/search?q=防衛費&session=213` のように会期をURLへ保持する
+- [ ] `/search#q=防衛費&session=213` のように会期をURLへ保持する（**`?` にしない**。DECISIONS §4）
 - [ ] 検索画面に会期フィルターを足す
 - [ ] 会期ページから「この会期の発言」へ進める導線を足す
 - [ ] 結果取得3経路（`ftsSql` / `topicSql` / `wordSql`）と `hitSource()` に同じ条件を足す。

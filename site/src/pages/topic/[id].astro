@@ -14,7 +14,7 @@ import Base from "../../layouts/Base.astro";
 import { topicSeries, manifest } from "../../lib/site-data";
 import { toSeries, monthlyChart, kaihaRates } from "../../lib/chart";
 import { splitTerms, unsearchableTerms } from "../../lib/query";
-import { formatNumber } from "../../lib/format";
+import { formatNumber, jsonScript } from "../../lib/format";
 
 export function getStaticPaths() {
   const data = topicSeries();
@@ -125,7 +125,7 @@ const description =
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ topicId: topic.id, term: topic.term,
+    set:html={jsonScript({ topicId: topic.id, term: topic.term,
                                indexed: topic.indexed, searchable, periods })}
   />
 
