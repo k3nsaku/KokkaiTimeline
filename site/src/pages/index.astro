@@ -19,6 +19,7 @@
 import Base from "../layouts/Base.astro";
 import { trending, topicSeries, politicians, frequent } from "../lib/site-data";
 import { formatDate, formatNumber } from "../lib/format";
+import { MAX_INPUT_LENGTH } from "../lib/query";
 
 const t = trending();
 // windows は新しい順に並んでいる（build_topics.py の出力）
@@ -45,7 +46,8 @@ const wordPages = new Map(freq.words.filter((w) => w.topic_id == null).map((w) =
 function termHref(term: string, topicId: number | null): string {
   if (topicId) return `/topic/${topicId}`;
   if (wordPages.has(term)) return `/word/${encodeURIComponent(term)}`;
-  return `/search?q=${encodeURIComponent(term)}`;
+  // ★ `?q=` にしない。**クエリ文字列は配信事業者に届く**（privacy.astro）
+  return `/search#q=${encodeURIComponent(term)}`;
 }
 
 const people = politicians();
@@ -122,15 +124,34 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
     <h2>語を指定して探す</h2>
     <p class="small muted">
       上の一覧に無い語も引けます。議員・会議名・年でも絞り込めます。
-      <strong>検索語はどこにも送られません</strong>
-      —— 照合はブラウザの中で完結します（<a href="/privacy">プライバシーポリシー</a>）。
+      <strong>照合はブラウザの中で完結します</strong>
+      —— 発言を探すこと自体に通信は要りません（<a href="/privacy">プライバシーポリシー</a>）。
     </p>
     <form class="site-search" action="/search" method="get">
       <label class="sr-only" for="q">キーワード</label>
       <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
-             enterkeyhint="search" autocomplete="off" />
+             enterkeyhint="search" autocomplete="off" maxlength={MAX_INPUT_LENGTH} />
       <button type="submit" class="primary">検索</button>
     </form>
+    <script>
+      /**
+       * 検索語を `?q=` ではなく `#q=` で渡す。**`?` より後ろは配信事業者に届く。**
+       *
+       * ★ ネイティブの GET フォームはフラグメントに値を入れられないので、ここで
+       *   横取りするしかない。**JS が無ければ素の `?q=` で飛ぶ**（/search 側が
+       *   受けて `#` に直すが、最初の1回はもう送られている）。
+       *   だから「どこにも送られません」とは書けない —— 上の本文と
+       *   privacy.astro の文面はこの限界に合わせてある。**片方だけ戻さないこと。**
+       */
+      const searchForm = document.querySelector("form.site-search") as HTMLFormElement | null;
+      searchForm?.addEventListener("submit", (e) => {
+        const input = searchForm.querySelector("input[name=q]") as HTMLInputElement | null;
+        const q = input?.value.trim();
+        if (!q) return;                 // 空なら素通し（/search 側が入力を促す）
+        e.preventDefault();
+        location.href = `/search#${new URLSearchParams({ q })}`;
+      });
+    </script>
   </section>
 
   <section>

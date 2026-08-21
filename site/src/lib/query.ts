@@ -122,23 +122,83 @@ export function toWordKey(term: string): string {
  *
  * 全角化（`toFullWidth`）に加えて、**2文字以下の語だけ**大文字に畳む。
  * `g7` と打つと索引は `Ｇ７` を引くので、`ｇ７` と見せると嘘になるうえ、
- * `?q=ｇ７` と `?q=Ｇ７` が同じ検索の別URLになる（`docs/DECISIONS.md` の「画面とURLは実際に引いた語に寄せる」）。
+ * `#q=ｇ７` と `#q=Ｇ７` が同じ検索の別URLになる（`docs/DECISIONS.md` の「画面とURLは実際に引いた語に寄せる」）。
  *
  * **3文字以上には掛けない。** `ＳＤＧｓ` を `ＳＤＧＳ` と書き換えて見せる筋合いは無い
  * （FTS は畳んで引くので、見せる側で寄せる必要も無い）。
  * 空白は打たれたまま残す（畳むと、ただ2つ空けただけで但し書きが出る）。
  */
 export function canonicalQuery(input: string): string {
-  return toFullWidth(input).replace(/[^\s　]+/g, (t) => (t.length < 3 ? toWordKey(t) : t));
+  return toFullWidth(clampQuery(input))
+    .replace(/[^\s　]+/g, (t) => (t.length < 3 ? toWordKey(t) : t));
 }
+
+/**
+ * 上限を掛ける。**`canonicalQuery()` の入口に置いてあるのが肝。**
+ *
+ * ここで切っておくと、切ったあとの語が**そのまま画面・入力欄・URL・議員検索・
+ * 3つの検索経路の全部に渡る**。`splitTerms()` だけで切ると、SQL は16語で引くのに
+ * 画面とURLには17語が残り、**表示と結果が食い違う**（細工したURLで実際にそうなる）。
+ *
+ * ★ **切ったことは黙らない。** `canonicalQuery()` の結果が入力と変われば
+ *   `search.astro` が「「…」として検索しました」と出す（半角→全角と同じ扱い）。
+ *
+ * ★ **`toFullWidth()` より前に長さで切る。** 後だと、細工した巨大なフラグメントを
+ *   まるごと正規表現に通してから捨てることになる。
+ *
+ * 上限に達していなければ**打たれたままの文字列を返す**（空白を畳まない）。
+ * 畳むと、ただ2つ空けただけで但し書きが出る。
+ */
+function clampQuery(input: string): string {
+  const capped = input.slice(0, MAX_INPUT_LENGTH);
+  const terms = capped.split(/[\s　]+/).filter(Boolean);
+  if (terms.length <= MAX_TERMS && terms.every((t) => t.length <= MAX_TERM_LENGTH)) {
+    return capped;
+  }
+  return terms.slice(0, MAX_TERMS).map((t) => t.slice(0, MAX_TERM_LENGTH)).join(" ");
+}
+
+/**
+ * 検索語の上限。**打って届く範囲より上に置いてある**ので、まともな検索は当たらない。
+ *
+ * 止めたいのは手で作ったURLのほう。語数はそのまま
+ * `"AND instr(s.body, ?) > 0 ".repeat(filters)`（`wordSql`）の本数になり、
+ * 1語の長さは FTS の式の長さになる。上限が無いと、**共有されたURLひとつで
+ * 開いた人のタブを固められる**（サーバは無いので、固まるのは閲覧者の端末）。
+ *
+ * ★ **掛ける場所は `canonicalQuery()`。** そこで切ると画面・URL・議員検索・
+ *   3経路の全部が同じ語を見る。`splitTerms()` にも同じ上限があるのは、
+ *   `toMatchExpr()` のように `canonicalQuery()` を通さずに呼ばれる経路が
+ *   あるため（**二重に掛かっても結果は変わらない**）。
+ * ★ 入力欄の `maxlength` は `MAX_INPUT_LENGTH` を渡してある（値を重複させない）。
+ */
+export const MAX_TERMS = 16;
+export const MAX_TERM_LENGTH = 64;
+/** 入力欄と、正規化を始める前に切る長さ。16語 ×（64文字＋区切り1） */
+export const MAX_INPUT_LENGTH = MAX_TERMS * (MAX_TERM_LENGTH + 1);
+/**
+ * URL（`location.search` / `location.hash`）を**解析する前に**切る長さ。
+ *
+ * `MAX_INPUT_LENGTH` よりずっと大きいのは、URLの中では日本語1文字が
+ * `%E5%AE%89` の**9文字**になるため（1040文字 × 9 ＋ 他の条件のぶん）。
+ * ここで切らないと、細工した巨大なURLを `URLSearchParams` に丸ごと通してから
+ * 捨てることになる。**切りすぎると普通の16語検索が壊れる**ので減らさないこと。
+ */
+export const MAX_URL_LENGTH = 12_000;
+/** 会議名。`<option>` のラベルとしてそのまま入るので、URL から来た分は切る */
+export const MAX_MEETING_LENGTH = 200;
 
 /**
  * 検索語を空白で割る。**全角化はここを通す**ので、FTS・争点語・2文字語の
  * 3経路とも（`toMatchExpr` / `resolveQuery` 経由で）同じ正規化を受ける。
  * ハイライトに渡す語もここから取ること。半角のままだと本文に当たらない。
+ *
+ * 上限（`MAX_TERMS` / `MAX_TERM_LENGTH`）もここで掛ける。**3経路が共有する
+ * 唯一の入口なので、ここに置けば引き先ごとに書かなくて済む。**
  */
 export function splitTerms(input: string): string[] {
-  return toFullWidth(input).trim().split(/[\s　]+/).filter(Boolean);
+  return toFullWidth(input).trim().split(/[\s　]+/).filter(Boolean)
+    .slice(0, MAX_TERMS).map((t) => t.slice(0, MAX_TERM_LENGTH));
 }
 
 /** trigram にそのまま渡すと記号が演算子として解釈されるので、フレーズとして囲む。 */

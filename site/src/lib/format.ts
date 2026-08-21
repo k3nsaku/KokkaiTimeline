@@ -20,6 +20,19 @@ const ESCAPES: Record<string, string> = {
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 };
 
+/**
+ * `<script type="application/json">` に埋め込む形にする。
+ *
+ * **`JSON.stringify()` の結果をそのまま `set:html` に渡さないこと。** 値に
+ * `</script>` が入るとそこでタグが閉じ、以降がHTMLとして解釈される。
+ * いまの材料（会議録の語・議員名・会議名）に出てくる文字ではないし、出ても
+ * CSP がインラインスクリプトを止めるが、**埋め込みの正しさをデータの中身と
+ * CSP に預けない。** `<` は JSON として `<` に戻るので読む側は変えなくてよい。
+ */
+export function jsonScript(data: unknown): string {
+  return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
 export function escapeHtml(text: string): string {
   return String(text ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }

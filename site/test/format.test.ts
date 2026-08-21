@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { describeError } from "../src/lib/format.ts";
+import { describeError, jsonScript } from "../src/lib/format.ts";
 
 describe("describeError", () => {
   it("配信DBを読めないときはキャッシュ削除を促す", () => {
@@ -28,5 +28,20 @@ describe("describeError", () => {
   it("Error でないものも落ちない", () => {
     assert.equal(describeError("目録を読めません: 503"), "目録を読めません: 503");
     assert.equal(describeError(null), "null");
+  });
+});
+
+describe("jsonScript", () => {
+  it("</script> でタグを閉じさせない", () => {
+    // 配信DBや生成JSONが書き換えられたときに、埋め込みがHTMLから抜け出さないこと。
+    // **CSP に頼らない**（CSP を緩めた瞬間に静かに効かなくなる作りにしない）
+    const out = jsonScript({ term: "</script><img src=x onerror=alert(1)>" });
+    assert.doesNotMatch(out, /<\/script/i);
+    assert.ok(!out.includes("<"));
+  });
+
+  it("読む側は素の JSON.parse のままでよい", () => {
+    const value = { term: "<a>", n: 3, list: ["＜", "安全保障"] };
+    assert.deepEqual(JSON.parse(jsonScript(value)), value);
   });
 });

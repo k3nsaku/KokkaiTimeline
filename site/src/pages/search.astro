@@ -12,7 +12,8 @@
  */
 import Base from "../layouts/Base.astro";
 import { manifest, topicSeries, politicians, latestAffiliation } from "../lib/site-data";
-import { yearsOfPeriods } from "../lib/query";
+import { MAX_INPUT_LENGTH, yearsOfPeriods } from "../lib/query";
+import { jsonScript } from "../lib/format";
 
 const periods = manifest().periods;
 const years = yearsOfPeriods(periods);
@@ -59,8 +60,10 @@ const people = politicians().map((p) => {
     <div class="row">
       <label class="grow">
         <span class="label">キーワード</span>
+        {/* ★ 実際の上限は `canonicalQuery()` 側（URLは入力欄を通らない）。
+            ここは打っている最中に気づけるようにするためだけのもの */}
         <input type="search" id="q" name="q" placeholder="例: 安全保障、選択的夫婦別姓、年金"
-               autocomplete="off" enterkeyhint="search" />
+               autocomplete="off" enterkeyhint="search" maxlength={MAX_INPUT_LENGTH} />
       </label>
       <button type="submit" class="primary">検索</button>
     </div>
@@ -143,12 +146,13 @@ const people = politicians().map((p) => {
     is:inline
     type="application/json"
     id="site-data"
-    set:html={JSON.stringify({ years, periods, topics, people, kaihaTable, houseTable, trend })}
+    set:html={jsonScript({ years, periods, topics, people, kaihaTable, houseTable, trend })}
   />
 
   <script>
     import { search, countHits, monthlyHits, meetingNames, resolveQuery, splitTerms,
              canonicalQuery, toFullWidth, periodsInYearRange, unsearchableTerms,
+             MAX_INPUT_LENGTH, MAX_URL_LENGTH, MAX_MEETING_LENGTH,
              type MonthlyPoint,
              type SearchOptions, type SearchPage, type QueryPlan } from "../lib/db";
     // **グラフはビルド時と同じ関数で描く**（争点語・頻出語のページと同じ `monthlyChart`）
@@ -415,16 +419,42 @@ const people = politicians().map((p) => {
         `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`);
     }
 
-    /** 検索条件はURLに持たせる。結果をそのまま共有できるし、戻るボタンも効く。 */
+    /** このページのパス。**`#` を書き戻すときの基点**。
+     *  本文パネルが開くと `location.pathname` は `/speech/<id>` に変わるので、
+     *  そのとき相対の `#...` を積むと発言のURLに検索条件が付いてしまう。 */
+    const SEARCH_PATH = location.pathname;
+
+    /** 検索条件はURLに持たせる。結果をそのまま共有できるし、戻るボタンも効く。
+     *
+     *  ★ **クエリ文字列ではなくフラグメント（`#`）に持つ。** `?q=` は HTTPS でも
+     *    配信事業者（Cloudflare）に届く。`#` より後ろはブラウザが要求に載せないので、
+     *    「検索語は端末の外に出ない」と言える範囲がここで決まる
+     *    （docs/DECISIONS.md「検索語はフラグメントに持つ」）。
+     *
+     *  ★ 古い `?q=` のURLも受ける。**受けたらその場で `#` の形に置き換える** ——
+     *    最初の1回はもう届いているが、再読み込みと再共有では送られなくなる。
+     *    JS 無効のときはトップの素の GET フォームがここへ `?q=` で飛んでくるので、
+     *    **この経路は消えない**（プライバシーポリシーにそう書いてある）。 */
     function readUrl(): string {
-      const p = new URLSearchParams(location.search);
-      queryInput.value = p.get("q") ?? "";
-      // 戻るボタンで絞り込み無しのURLへ戻ったら、選択も外す
-      const meeting = p.get("meeting") ?? "";
+      // ★ **解析する前に切る。** `maxlength` は JS からの代入を止めないので、
+      //   細工した巨大なURLはここを素通りする。`canonicalQuery()` の上限は
+      //   このあとの `run()` で掛かるが、**それでは URLSearchParams の解析と
+      //   入力欄への代入が先に走ってしまう**（そこで固まる）。
+      //   `MAX_URL_LENGTH` が `MAX_INPUT_LENGTH` よりずっと大きいのは、
+      //   URL の中では日本語1文字が `%E5%AE%89` の9文字になるため。
+      const legacy = new URLSearchParams(location.search.slice(0, MAX_URL_LENGTH));
+      const p = legacy.has("q") ? legacy
+        : new URLSearchParams(location.hash.slice(1, MAX_URL_LENGTH));
+      queryInput.value = (p.get("q") ?? "").slice(0, MAX_INPUT_LENGTH);
+      // 戻るボタンで絞り込み無しのURLへ戻ったら、選択も外す。
+      // **会議名も切る** — <option> のラベルとしてそのまま入る
+      const meeting = (p.get("meeting") ?? "").slice(0, MAX_MEETING_LENGTH);
       ensureOption(meeting);
       meetingSelect.value = meeting;
       if (p.get("from")) fromSelect.value = p.get("from")!;
       if (p.get("until")) untilSelect.value = p.get("until")!;
+      // 切ったあとの値でURLを書き戻す（`run()` も `replaceState` で正規形に直す）
+      if (legacy.has("q")) history.replaceState(null, "", `${SEARCH_PATH}#${p}`);
       return queryInput.value;
     }
 
@@ -466,10 +496,17 @@ const people = politicians().map((p) => {
       // 争点語に一致していれば topic_hit を引けるので、そちらが優先（`ＡＩ` など）
       const cannot = topic ? [] : unsearchableTerms(splitTerms(query));
 
-      if (pushUrl) {
+      // ★ **URLは常に、実際に引いた語に書き戻す。** `pushUrl` が偽でも `replaceState`
+      //   で直す（履歴は増やさない）。ここを飛ばすと、上限で切った検索や全角に
+      //   寄せた検索で、**URLに残る語と画面・結果の語が食い違う**
+      //   （細工したURLで17語目を足すと、画面16語・URL17語になっていた）。
+      {
         const p = new URLSearchParams({ q: query, from: fromSelect.value, until: untilSelect.value });
         if (meetingSelect.value) p.set("meeting", meetingSelect.value);
-        history.pushState(null, "", `?${p}`);
+        // ★ `?` ではなく `#`。理由は readUrl() の上
+        const url = `${SEARCH_PATH}#${p}`;
+        if (pushUrl) history.pushState(null, "", url);
+        else if (location.pathname + location.hash !== url) history.replaceState(null, "", url);
       }
 
       results.innerHTML = "";

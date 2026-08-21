@@ -5,7 +5,7 @@
  * 中身の大半はブラウザがDBから引くので、ここで出すのは骨組みと、
  * **事前生成できる分の本文**（議員の氏名・所属・争点語）だけ。
  */
-import { OPERATOR } from "../lib/operator";
+import { ANALYTICS_EXCLUDED_PATHS, OPERATOR } from "../lib/operator";
 
 export interface Props {
   title: string;
@@ -16,6 +16,14 @@ export interface Props {
 
 const { title, description, noindex = false } = Astro.props;
 
+const fullTitle = title === "国会タイムライン" ? title : `${title} | 国会タイムライン`;
+
+// 正規URL。`build.format: "file"` で `/politician/9.html` が出るが、配信されるURLは
+// 拡張子なしなので、正規URLからは `.html` を落とす。クエリ文字列も持たせない
+// （検索条件は共有できるが、索引としては同じページ）
+const path = Astro.url.pathname.replace(/\.html$/, "");
+const canonical = new URL(path, Astro.site);
+
 /**
  * アクセス解析の計測タグ。**出すかどうかは `operator.ts` の1か所だけで決まる**
  * （`/privacy` の記述と同じ値から出るので、片方だけ変わることがない）。
@@ -24,15 +32,12 @@ const { title, description, noindex = false } = Astro.props;
  *   しまい、公開中のプライバシーポリシーが黙って嘘になる。
  * ★ CSP に `static.cloudflareinsights.com` が要る（`public/_headers`）。
  *   **無いと読み込まれず、エラーも出ずにただ計測されない。**
+ * ★ **`ANALYTICS_EXCLUDED_PATHS` のページには出さない。** `/search` は URL の
+ *   `#` に検索語を持っている。要求には載らないが、**そのページで動く外部JSからは
+ *   読める**ので、読める場所に外部コードを置かない（`operator.ts` の説明）。
  */
-const beaconToken = OPERATOR.analytics ? OPERATOR.analytics.beaconToken : null;
-const fullTitle = title === "国会タイムライン" ? title : `${title} | 国会タイムライン`;
-
-// 正規URL。`build.format: "file"` で `/politician/9.html` が出るが、配信されるURLは
-// 拡張子なしなので、正規URLからは `.html` を落とす。クエリ文字列も持たせない
-// （検索条件は共有できるが、索引としては同じページ）
-const path = Astro.url.pathname.replace(/\.html$/, "");
-const canonical = new URL(path, Astro.site);
+const beaconToken = OPERATOR.analytics && !ANALYTICS_EXCLUDED_PATHS.includes(path)
+  ? OPERATOR.analytics.beaconToken : null;
 
 /**
  * ナビの現在地。**新しい情報は足していない** — いまどこにいるかを出すだけ。

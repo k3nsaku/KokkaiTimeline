@@ -135,7 +135,9 @@ async function open(speechId: string, trigger: HTMLElement): Promise<void> {
   if (!root || !bodyEl) return;
 
   // 開きっぱなしで別の抜粋を押したときは、履歴を積み増さない
-  if (root.hidden) urlBeforeOpen = location.pathname + location.search;
+  // ★ `hash` まで含めること。検索条件は `#` に載っている（search.astro）ので、
+  //   落とすと本文パネルを閉じたときに検索結果が消える
+  if (root.hidden) urlBeforeOpen = location.pathname + location.search + location.hash;
   openedFrom = trigger;
   hidden = false;
   root.hidden = false;

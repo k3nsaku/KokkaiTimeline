@@ -9,7 +9,7 @@
  */
 import Base from "../layouts/Base.astro";
 import Mail from "../components/Mail.astro";
-import { OPERATOR, missing, operatorReady } from "../lib/operator";
+import { ANALYTICS_EXCLUDED_PATHS, OPERATOR, missing, operatorReady } from "../lib/operator";
 
 const analytics = OPERATOR.analytics;
 ---
@@ -27,16 +27,35 @@ const analytics = OPERATOR.analytics;
     </p>
   )}
 
-  <h2>検索したことは送られません</h2>
+  <h2>検索は端末の中で動きます</h2>
   <p>
     このサイトはサーバを持たない静的サイトで、<strong>検索も集計もすべて閲覧者の端末の中で動きます</strong>。
-    入力した検索語は、どこにも送信していません。運営者はそれを受け取りませんし、保存もしていません。
+    運営者は検索語を受け取りませんし、保存もしていません。
   </p>
   <p class="muted small">
     仕組みとしては、期間ごとに分けた SQLite ファイルをオブジェクトストレージに置き、
     ブラウザが HTTP Range で必要な部分だけを読んでいます。
-    サーバに渡るのは「ファイルの何バイト目から何バイト目が欲しいか」だけで、
+    データの置き場所に渡るのは「ファイルの何バイト目から何バイト目が欲しいか」だけで、
     検索語そのものではありません。
+  </p>
+  <p>
+    <strong>ただし、検索語が配信事業者に届く場合があります。</strong>
+    検索語はふつうURLの <code>#</code> より後ろ（フラグメント）に置いていて、
+    そこはブラウザが通信に載せません。届くのは次の2つの場合です。
+  </p>
+  <ul class="small">
+    <li>
+      <strong>JavaScript を無効にしている場合。</strong>
+      トップの検索フォームが素の送信になり、<code>?q=</code> の形で送られます。
+    </li>
+    <li>
+      <strong><code>?q=</code> を含む古い共有URLを開いた場合</strong>（その1回だけ。
+      開いた時点で <code>#</code> の形に置き換えるので、再読み込みや共有し直しでは送られません）。
+    </li>
+  </ul>
+  <p class="muted small">
+    受け取るのはこのサイトを配信している Cloudflare です。
+    運営者はアクセスログを取得していません。
   </p>
   {analytics ? (
     <p>
@@ -44,7 +63,8 @@ const analytics = OPERATOR.analytics;
       たとえば争点語のページを開けば <code>/topic/12</code> が、議員のページを開けば
       <code>/politician/9</code> が記録されます。「どのページがどれだけ見られたか」を
       数えるためのもので、個々の閲覧者と結び付けてはいません（下の<a href="#analytics">アクセス解析</a>）。
-      <strong>検索語はURLの <code>?</code> より後ろにあり、そこは記録されません。</strong>
+      <strong>検索語はURLの <code>#</code> より後ろにあり、そこはブラウザが送りません</strong>
+      （上に書いた2つの場合を除きます）。
     </p>
   ) : (
     <p>
@@ -119,9 +139,20 @@ const analytics = OPERATOR.analytics;
         目的は<strong>次に直す場所を決めること</strong>で、閲覧者を識別したり、
         誰が何を調べたかを知るためではありません。
       </p>
-      <p>送っているのは、ページを開いたときの次のような情報です。</p>
+      <p>
+        <strong>
+          {ANALYTICS_EXCLUDED_PATHS.map((p) => <code>{p}</code>)}
+          には、この計測タグを置いていません。
+        </strong>
+        検索語はURLの <code>#</code> より後ろにあり通信には載りませんが、
+        <strong>そのページで動くプログラムからは読めます</strong>。
+        計測タグは提供元が随時更新する外部のプログラムなので、
+        <strong>検索語を読める場所には置かない</strong>ことにしました。
+        そのぶん、検索ページが何回開かれたかは運営者にも分かりません。
+      </p>
+      <p>それ以外のページで送っているのは、開いたときの次のような情報です。</p>
       <ul>
-        <li>ページのURL（<strong><code>?</code> より後ろは含みません</strong>＝検索語は入りません）</li>
+        <li>ページのURL（<strong><code>?</code> や <code>#</code> より後ろは含みません</strong>）</li>
         <li>参照元・画面の大きさ・ブラウザの種類・おおまかな地域</li>
         <li>ページの表示速度（読み込みや描画にかかった時間）</li>
       </ul>

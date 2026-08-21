@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 import {
   canonicalQuery, countQuery, fillBounds, monthBoundsQuery, monthlyQuery, monthsInPeriod,
   searchQuery, splitTerms, toFullWidth, toMatchExpr, toWordKey,
+  MAX_TERMS, MAX_TERM_LENGTH, MAX_INPUT_LENGTH, MAX_URL_LENGTH,
   wordPlan, wordProbeKeys, periodOf, periodOfIssueId, periodOfSpeechId,
   periodsInYearRange, unsearchableTerms, yearsOfPeriods,
   type QueryPlan, type SearchOptions,
@@ -502,6 +503,54 @@ describe("検索語の全角化", () => {
     assert.deepEqual(splitTerms("  LGBT　理解増進 "), ["ＬＧＢＴ", "理解増進"]);
     // ハイライトに渡す語もここから取るので、本文（全角）に当たる形になる
     assert.deepEqual(splitTerms("iPS細胞"), ["ｉＰＳ細胞"]);
+  });
+
+  it("URLの上限は、正当な最大クエリを壊さない大きさがある", () => {
+    // ★ `readUrl()` は URLSearchParams に通す**前に** MAX_URL_LENGTH で切る。
+    //   切りすぎると普通の16語検索が黙って短くなるので、ここで下限を押さえておく。
+    //   URL の中では日本語1文字が `%E5%AE%89` の9文字になる
+    const worst = Array.from({ length: MAX_TERMS }, () => "安".repeat(MAX_TERM_LENGTH));
+    const encoded = new URLSearchParams({
+      q: worst.join(" "), from: "2021", until: "2026",
+    }).toString();
+    assert.ok(encoded.length < MAX_URL_LENGTH,
+      `最大クエリのURLは ${encoded.length} 文字。MAX_URL_LENGTH=${MAX_URL_LENGTH} では切れてしまう`);
+  });
+
+  it("canonicalQuery が上限を掛ける（画面・URL・検索経路が同じ語を見る）", () => {
+    // ★ ここで切らないと、細工したURLで「画面には17語あるのに結果は16語」になる
+    const many = Array.from({ length: MAX_TERMS + 5 }, (_, i) => `語${i}`).join(" ");
+    const shown = canonicalQuery(many);
+    assert.equal(shown.split(" ").length, MAX_TERMS);
+    // 画面に出す語と、実際に引く語が一致していること
+    assert.deepEqual(splitTerms(shown), shown.split(" "));
+    // 但し書きを出す条件（入力と違う）が成り立つこと
+    assert.notEqual(shown, many);
+  });
+
+  it("上限に届かなければ打たれたままの空白を残す", () => {
+    // 畳むと、ただ2つ空けただけで「として検索しました」が出てしまう
+    assert.equal(canonicalQuery("安全保障  選択的夫婦別姓"), "安全保障  選択的夫婦別姓");
+    assert.equal(canonicalQuery("安全保障　年金"), "安全保障　年金");
+  });
+
+  it("正規化の前に長さで切る（巨大なフラグメントを丸ごと走査しない）", () => {
+    const huge = "あ".repeat(MAX_INPUT_LENGTH * 10);
+    assert.ok(canonicalQuery(huge).length <= MAX_INPUT_LENGTH);
+    assert.equal(MAX_INPUT_LENGTH, MAX_TERMS * (MAX_TERM_LENGTH + 1));
+  });
+
+  it("語数の上限で切る（手で作ったURLで閲覧者の端末を固めさせない）", () => {
+    // 語数はそのまま instr() の本数になる（wordSql）。打って届く数ではない
+    const many = Array.from({ length: MAX_TERMS + 20 }, (_, i) => `語${i}`).join(" ");
+    assert.equal(splitTerms(many).length, MAX_TERMS);
+  });
+
+  it("1語の長さも上限で切る（FTS の式の長さになる）", () => {
+    const long = "あ".repeat(MAX_TERM_LENGTH + 100);
+    assert.equal(splitTerms(long)[0].length, MAX_TERM_LENGTH);
+    // 上限は打って届く範囲より上。ふつうの語は素通りする
+    assert.deepEqual(splitTerms("安全保障 選択的夫婦別姓"), ["安全保障", "選択的夫婦別姓"]);
   });
 
   it("toMatchExpr も全角化された語をフレーズにする", () => {

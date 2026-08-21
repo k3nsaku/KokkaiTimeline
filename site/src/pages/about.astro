@@ -107,7 +107,7 @@ const biggestMb = Math.round(Math.max(...dbs.map((d) => d.size)) / 1e6);
   </p>
   <ul>
     <li><a href="/disclaimer">免責事項・訂正依頼</a>（正確性の限界、発言の引用の考え方）</li>
-    <li><a href="/privacy">プライバシーポリシー</a>（検索語は送信していません）</li>
+    <li><a href="/privacy">プライバシーポリシー</a>（検索は端末の中で動きます）</li>
   </ul>
   {!operatorReady && (
     <p class="todo small">
@@ -121,7 +121,8 @@ const biggestMb = Math.round(Math.max(...dbs.map((d) => d.size)) / 1e6);
     サーバを持たない完全静的サイトです。半年ごとに分けた SQLite（{dbs.length}ファイル・
     最大{formatNumber(biggestMb)}MB）を
     オブジェクトストレージに置き、ブラウザが HTTP Range で必要なページだけを読んでいます。
-    検索も集計もすべて手元の端末で動いていて、何を検索したかはどこにも送られません。
+    検索も集計もすべて手元の端末で動いています。検索語はURLの <code>#</code> より
+    後ろに置いているので、ふつうは通信に載りません（例外は<a href="/privacy">プライバシーポリシー</a>）。
   </p>
 
   <style>

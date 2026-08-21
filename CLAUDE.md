@@ -25,6 +25,7 @@
 | **検索・DB構築・配信を触る** | [docs/PITFALLS.md](docs/PITFALLS.md) — **全部いちど実際に踏んだもの** |
 | サイトを実装する | [site/README.md](site/README.md) |
 | 配信・日次更新を触る | [docs/PIPELINE.md](docs/PIPELINE.md) |
+| **配信・CI・運営コンソールの安全性を触る** | [docs/SECURITY.md](docs/SECURITY.md) — **残っている手当ては運営者の手にしかない** |
 | 誤りを指摘された | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) |
 | データを取り直す | [docs/BACKFILL.md](docs/BACKFILL.md) |
 | 次に何をするか決める | [docs/ROADMAP.md](docs/ROADMAP.md) |
@@ -61,6 +62,19 @@
 - **R2 へ上げるとき `--content-type` を省かない**（[docs/PIPELINE.md](docs/PIPELINE.md)）。
   省くと aws-cli が拡張子から推測する ＝ **ランナー次第で付いたり付かなかったりする。**
   実際 2026-08-18 に日次が差し替えた1本だけヘッダが欠けた。**エラーは出ない**
+- **検索語を `?q=` に置かない。** HTTPS でも**配信事業者にURLは届く**。
+  条件は `#` に持たせてある（`search.astro`）。**内部リンクも `/search#q=`**。
+  フラグメント化しても JS 無効では `?q=` に落ちるので、
+  **「どこにも送られません」とは書けない**（文面は index / privacy / about の3ページ）。
+  **`#` は要求に載らないだけで、そのページのスクリプトからは読める** ——
+  `/search` に解析タグを出さないのはこのため（`operator.ts` の `ANALYTICS_EXCLUDED_PATHS`）
+- **検索語の上限は `canonicalQuery()` で掛ける**（`splitTerms()` だけだと
+  画面とURLに切る前の語が残る）。URLは `pushUrl` が偽でも書き戻す。
+  **URL自体は `URLSearchParams` に通す前に切る**（`maxlength` は JS の代入を止めない）
+- **運営コンソールの保存は `revision` を突き合わせる**（`SAVE_LOCK` は同時実行しか
+  止められない。**開きっぱなしの別タブが古い一覧で上書きする**）
+- **秘密をワークフロー直下の `env:` に置かない**（全 step から見える ＝ `npm ci` の
+  postinstall からも見える）。**actions は SHA 固定・wrangler は lockfile 固定**
 - **インラインの `style` 属性を書かない**（CSP に黙って消され、見た目だけ静かに壊れる。
   公開時から会派バーが全部同じ長さだった）。色や幅は SVG の `fill` / `width` で出す
 
@@ -84,8 +98,9 @@ JSONを書き換えるだけ（集計は保存後に出るコマンドを手で�
 | 頻出語のノイズを denylist に入れる | 3か月 | **`admin.py` の「除外語」タブ**（頻出語500件から選ぶ）。→ `data/topic_denylist.json` |
 | 政党の手入力 | 3か月 | **`admin.py` の「政党」タブ**（会派ごとの候補が出る）。→ `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
 | 争点語のレビュー | 3か月 | **`admin.py` の「争点語」タブ**（候補と**その場で数えた件数**が出る）。→ `data/topics.json`。**足すだけなら `build_topics.py` だけ** |
+| 公式サイトURLの見直し | 6か月 | `reports/politicians.md`。**Wikidata 掲載・未確認**の外部リンクで、平文 http が437件。失効ドメインの取り直しはコードでは防げない |
 | 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
-| **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。公式FAQに「クエリ文字列は記録しない」が**将来変わりうる**と書いてある（[docs/DECISIONS.md](docs/DECISIONS.md)）。変わったら `/privacy` を直すか解析をやめる |
+| **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。**2026-08-21 に検索語を `#` へ移したので、「クエリ文字列を記録しない」への依存は薄れた**（それでも JS 無効時は `?q=` で飛ぶ）。見るのは RUM の自動挿入が復活していないかと、集める項目が増えていないか |
 | R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
 | 配信DBの最大サイズを見る | 1か月 | 日次が `manifest.json` を見て 480MB で落とす。落ちたら分割を細かくする |
 

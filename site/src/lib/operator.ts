@@ -47,6 +47,25 @@ export interface Operator {
     | { name: string; url: string; cookies: boolean; beaconToken: string };
 }
 
+/**
+ * **アクセス解析のタグを出さないページ。**
+ *
+ * ★ 検索語をフラグメント（`#q=…`）に移したので、**HTTP 要求には載らない**。
+ *   だが `location.hash` は**そのページで動くスクリプトからは読める**。
+ *   計測タグは Cloudflare が配る外部JSで、手動埋め込みでは**版の固定も SRI も
+ *   できない**（Cloudflare 自身がそう書いている）。いま配信中のビーコンが
+ *   パスしか送らないとしても、**「読める場所に外部コードを置かない」**ほうが、
+ *   よそのスクリプトの中身に依存しなくて済む。
+ *
+ * ★ **`operator.ts` に置いてあるのが肝。** ページ側に直接書くと、
+ *   「計測していないのにポリシーには載っている」が黙って生まれる。
+ *   `Base.astro`（タグを出すか）と `privacy.astro`（何と書くか）が
+ *   **同じ配列を読む**ので、片方だけ変わることがない。
+ *
+ * ここを縮めるときは、そのページのURLに何が載るかを先に確かめること。
+ */
+export const ANALYTICS_EXCLUDED_PATHS = ["/search"];
+
 export const OPERATOR: Operator = {
   name: "国会タイムライン 運営",
   // Cloudflare Email Routing で Gmail へ転送している（2026-08-06）。
