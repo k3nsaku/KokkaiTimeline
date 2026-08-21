@@ -129,8 +129,8 @@ read が1回であること・返した版が返したデータと一致する�
 
 - `set:html={JSON.stringify(...)}` を `jsonScript()` 経由にした（`</script>` で抜け出せない）
 - `404.astro` を足した（無いと Pages が存在しないパスにトップを **200** で返していた）
-- 検索語の語数・長さに上限（`query.ts` の `MAX_TERMS` / `MAX_TERM_LENGTH`）
-- `npm audit fix` で nanoid を 3.3.18 に
+- 検索語の語数・長さに上限（`query.ts` の `MAX_TERMS` / `MAX_TERM_LENGTH` / `MAX_URL_LENGTH`）
+- 依存を更新して `npm audit` を **0件**に（nanoid 3.3.18・astro 7.2.4・sharp 0.35.3・esbuild 0.28.2）
 
 ---
 
@@ -159,9 +159,13 @@ read が1回であること・返した版が返したデータと一致する�
   GitHub 側の secret scanning と push protection も有効
 - **ワークフローに script injection の経路が無い。** `${{ }}` に入るのは `date` 由来の
   出力・`vars.*`・boolean 型の `inputs` だけ
-- **Astro 5 系の8件の advisory は、この構成では到達しない。** `output: "static"`、
+- **Astro 5 系の8件の advisory は、この構成では到達しなかった。** `output: "static"`、
   `define:vars` 未使用、スプレッド props 未使用、`transition:` 未使用、名前付き slot 未使用。
-  それでも astro 7 への更新は計画として持つ（下）
+  急ぐ更新ではなかったが、Dependabot を有効にした以上どのみち PR が来るので、
+  **同日に astro 7.2.4 まで上げた**（`found 0 vulnerabilities`）。
+  ★踏んだ breaking change は1つだけ —— `site-data.ts` が `import.meta.url` から
+  `data/` を辿っていたのが、astro 7 のバンドル再配置で `site/data/` を指して落ちた。
+  cwd 基点に変えてある
 - Python 側に `subprocess` / `eval` / `pickle` / TLS 検証の無効化が無く、外部通信は
   NDL と Wikidata の https のみ
 - `admin.py` / `prototype/server.js` / dev サーバはすべて `127.0.0.1` bind、
@@ -169,18 +173,32 @@ read が1回であること・返した版が返したデータと一致する�
 
 ---
 
-## 残っているもの（運営者の手が要る）
+## 運営者の手でやったこと（2026-08-21・すべて完了）
 
-**コードでは閉じられないもの。** 手をつけたら `OPERATIONS.local.md` に日付を残すこと。
+**コードでは閉じられなかったもの。** ダッシュボードや GitHub の設定なので、
+**リポジトリには現れない。** ここが唯一の記録になる（`OPERATIONS.local.md` は
+この端末だけのもので、失うと消える）。
 
-| やること | どこで | なぜ |
+| やったこと | どこ | いまの状態 |
 |---|---|---|
-| **既定のワークフロー権限を read に** | GitHub → Settings → Actions → General | いまは write。`daily.yml` は自分で `contents: write` を宣言しているので落としても壊れない |
-| **Dependabot security updates を有効化** | Settings → Code security | いまは無効。secret scanning は有効 |
-| **`master` にブランチ保護** | Settings → Rules | ★**日次が台帳を push する**ので、bot を bypass に入れないと日次が止まる。**入れずに設定しないこと** |
-| **`CLOUDFLARE_API_TOKEN` の権限確認** | Cloudflare ダッシュボード | Pages の Edit だけに絞れているか |
-| **GitHub アカウントの 2FA 確認** | GitHub → Settings → Password and authentication | トークンのスコープでは読めなかった |
-| **`db.` サブドメインの HTTPS 強制と HSTS** | Cloudflare → SSL/TLS | `http://db.kokkai-timeline.com` が 200 を返す（リダイレクトしない） |
-| **請求アラートと Rate Limiting** | Cloudflare | クエリ文字列でキャッシュを外せる件（[PITFALLS.md](PITFALLS.md)）。**URL方式を作り直すより安い** |
-| **astro 7 への更新** | `site/` | breaking change。いまの構成では advisory に到達しないので、急がず計画として |
-| **公式サイトURLの見直し** | `reports/politicians.md` | 平文 http が 437件。失効ドメインの取り直しはコードでは防げない |
+| 既定のワークフロー権限を read に | GitHub → Actions → General | `read` / `can_approve_pull_request_reviews: false`。`daily.yml` は自分で `contents: write` を宣言しているので台帳の書き戻しは通る |
+| Dependabot を有効化 | Settings → Code security | alerts と security updates の両方が有効。★**順番がある** —— alerts が無効だと `automated-security-fixes` は黙って無視される |
+| `master` のブランチ保護 | Settings → Rules | ruleset `protect-master`（active・既定ブランチ・bypass 0件）。ルールは **`deletion` と `non_fast_forward` の2つだけ**。★**PR必須は入れない** —— 日次の台帳 push（通常の fast-forward）が拒否されて止まる |
+| Cloudflare の資格情報を確認 | Cloudflare | 変更なし。Pages トークンは `Cloudflare Pages: 編集` の1行・アカウント1つ。R2 キーは Object Read & Write・バケット2つ。★**IPフィルタと TTL は空のまま**（ランナーのIPは変わる／失効すると最大1か月配信が止まる） |
+| GitHub の 2FA | GitHub → Settings | 有効・方式は **passkey**・Recovery codes 保存済み |
+| `db.` の HTTPS 強制 | Cloudflare → SSL/TLS | 「常に HTTPS を使用」ON → `http://` は 301。暗号化モードは**フル**（自動モード有効）。**ゾーン HSTS は入れないと決めた**（[DECISIONS.md](DECISIONS.md)） |
+| 請求アラートの疎通確認 | Cloudflare | テストメールの着信を確認。★**Rate Limiting は入れない**（[PIPELINE.md](PIPELINE.md) 3.5b の実測） |
+| astro 7 への更新 | `site/` | 7.2.4 / sharp 0.35.3 / esbuild 0.28.2 で `found 0 vulnerabilities` |
+
+---
+
+## まだ残っているもの
+
+| やること | いつ | なぜ |
+|---|---|---|
+| **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★**まだ一度も通っていない。** 今回 `persist-credentials: false` に変えたので、初回は特に見たい。落ちたまま放置すると台帳を失い、公開後のURLが全部変わる |
+| 公式サイトURLの見直し | 6か月 | 平文 http が 437件。**リンク先が本物かは検証していない**（失効ドメインの取り直しはコードでは防げない） |
+
+★ push 後の最初の日次で見るもの（**いずれも今日まで一度も通っていない経路**）:
+`npx --no-install wrangler` のデプロイ、台帳 push（ヘッダ経由のトークン）、
+ruleset が通常 push を妨げないこと。`gh run list --workflow=daily.yml` で確認する。

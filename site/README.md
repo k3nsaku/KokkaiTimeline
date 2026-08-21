@@ -7,8 +7,8 @@
 cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
-npm run build      # dist/ に静的HTMLを出す（1,702ページ / 22MB）
-npm run test       # 回帰テスト（198件・0.3秒）
+npm run build      # dist/ に静的HTMLを出す（1,703ページ / 35MB）
+npm run test       # 回帰テスト（207件・0.3秒）
 npm run check      # 型検査 + テスト
 ```
 
@@ -20,7 +20,8 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 中身の大半はクライアント側でDBから引くので、静的サイトジェネレータに求めたのは
 **ページの事前生成**と**素の `<script>` をそのまま書けること**の2つだけ。
 
-- 議員 1,111ページ・争点語 82ページ・頻出語 489ページを `getStaticPaths` で事前生成する。
+- 議員 1,111ページ・争点語 82ページ・頻出語 489ページを `getStaticPaths` で事前生成する
+  （ほかに固定ページと `404.astro`。合計 1,703ページ）。
   氏名や語で検索されたときに、中身のあるHTMLが返るのはここだけ
 - UIフレームワークを入れていない。`.astro` の `<script>` に素のTypeScriptを書く。
   Vite がバンドルと型検査をしてくれる。React も Svelte も要らなかった

@@ -131,7 +131,7 @@ python scripts/verify_published.py --base https://db.kokkai-timeline.com
 
 ## もう一つのワークフロー: CI（`.github/workflows/ci.yml`）
 
-`site/**` を触った push と PR で `npm run check`（`astro check` + テスト198件）を回す。
+`site/**` を触った push と PR で `npm run check`（`astro check` + テスト207件）を回す。
 **`src/lib/query.ts` を壊す変更はここで止める。**
 
 **日次更新も同じ `npm run check` を配る前に通す**（手順8）。CI のほうが速く気づけるが、
@@ -351,6 +351,9 @@ aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
 | — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ✅ 2026-08-06 全ステップ成功・4分37秒 |
 | — | `kokkai-timeline.com` を Pages に当てる | ✅ 2026-08-06 **＝公開** |
 | — | `www.kokkai-timeline.com` | ❌ 当てていない（apex のみ。要否は ROADMAP で保留） |
+| — | **ゾーンの「常に HTTPS を使用」** | ✅ 2026-08-21。`db.` も含めて `http://` が 301。**ゾーン HSTS は入れないと決めた**（DECISIONS.md） |
+| — | **GitHub の ruleset `protect-master`** | ✅ 2026-08-21。`deletion` と `non_fast_forward` の2つだけ。★**PR必須を足さないこと**（日次の台帳 push が止まる） |
+| — | **Dependabot（alerts ＋ security updates）** | ✅ 2026-08-21。★**alerts を先に有効化する**（無効だと `automated-security-fixes` は黙って無視される） |
 
 > ### ★ 連絡先は Cloudflare Email Routing（2026-08-06）
 >

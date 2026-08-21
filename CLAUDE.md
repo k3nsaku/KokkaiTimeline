@@ -159,13 +159,13 @@ python scripts/verify_published.py --base https://db.kokkai-timeline.com
 
 ### サイト（`site/`）
 
-Node 24 / Astro。
+Node 24 / Astro 7。
 
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
-npm run build    # dist/ に 1,702ページ・22MB
-npm run check    # 型検査 + テスト199件
+npm run build    # dist/ に 1,703ページ・35MB
+npm run check    # 型検査 + テスト207件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`
