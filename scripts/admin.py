@@ -23,6 +23,12 @@
 `dbserve` と同じ位置づけで、CLAUDE.md の「常時稼働プロセスを持たない」は配信の話）。
 **外部依存パッケージ無し**（stdlib の `http.server` と `sqlite3` だけ）。
 
+★ **bind だけでは足りない。** 閲覧者のブラウザは 127.0.0.1 の内側にいる。
+  このコンソールを立ち上げたまま悪意あるページを開くと、そこから POST できてしまう
+  （`Content-Type: text/plain` なら CORS のプリフライトも起きない ＝ 応答は読めない
+  が**書き込みは成立する**。2026-08-21 に実際に通ることを確認した）。
+  Origin・Host・Content-Type・起動ごとの合言葉の4つで止めている（`_origin_ok`）。
+
 ## 集計はしない
 
 **このツールはJSONを書き換えるだけ。** DBも集計も作り直さない。
@@ -50,10 +56,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
+import secrets
 import sqlite3
 import sys
+import tempfile
 import threading
 import webbrowser
 from datetime import date
@@ -163,9 +173,86 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+class Stale(Exception):
+    """開いたときから、そのファイルが別の誰かに書き換えられていた。"""
+
+
+def revision_of(raw: bytes) -> str:
+    """バイト列から版を作る。**mtime には頼らない。**"""
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+def revision(path: Path) -> str:
+    """ファイルの版。**保存の直前（`SAVE_LOCK` の中）でだけ使う。**
+
+    ★ `SAVE_LOCK` は**同時に走る保存**を直列化するだけで、
+      **開きっぱなしのタブ**は防げない。タブAとタブBが同じ状態を開き、
+      A→B の順に保存すると、B はロックを取ってから**古い一覧で A の変更を上書きする**
+      （どちらも 200 で返るので、消えたことに誰も気づかない）。
+      GET でこの値を渡し、POST で突き合わせて、違えば 409 で断る。
+
+    ★ **画面に出すデータを作るときはこれを呼ばないこと。** `load_with_revision()` を使う。
+      本文と版を別々に読むと、その2回の read の間に入った保存を取りこぼし、
+      **古いデータに新しい版を付けて返す** ＝ そのタブの保存が検査を素通りする。
+    """
+    return revision_of(path.read_bytes()) if path.exists() else ""
+
+
+def load_with_revision(path: Path) -> tuple[dict, str]:
+    """**1回の read から**中身と版の両方を作る。
+
+    画面に出すデータは必ずこちらから取ること（理由は `revision()` の★）。
+    """
+    raw = path.read_bytes()
+    return json.loads(raw), revision_of(raw)
+
+
+def check_revision(payload: dict, path: Path) -> None:
+    """保存の直前に呼ぶ。**書き込みより前に投げること**（`Stale` は1バイトも書かない）。"""
+    sent = payload.get("revision")
+    if sent is None:
+        raise Stale("この画面は版を送っていない（開き直すこと）")
+    if sent != revision(path):
+        raise Stale("開いたあとに別のところから書き換えられている。"
+                    "**この保存は捨てた。** 画面を開き直して、編集をやり直すこと")
+
+
+#: 保存の直列化。**読み込み → 検証 → 書き込み**をまたいで掛ける。
+#: `ThreadingHTTPServer` なので、二重クリックや複数タブの保存が同時に来る。
+#: 保存は稀なうえ数ミリ秒なので、対象ごとに分けず1本で足りる。
+SAVE_LOCK = threading.Lock()
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """同じディレクトリに書いてから差し替える。
+
+    **途中で落ちても半分書けたファイルを残さない。** ここが壊れるのは
+    `data/topics.json` や `data/politician_ids.json` のような手書き資産で、
+    生成し直せない（CLAUDE.md）。`os.replace` は同一ボリュームなら不可分。
+
+    ★ **一時ファイルの名前を固定にしない。** `<対象>.tmp` を共有すると、
+      同時に走った保存どうしがぶつかる（Windows では開いているファイルを
+      置き換えられず `PermissionError`。実測で12並行のうち11件が落ちた）。
+      呼ぶ側も `SAVE_LOCK` で直列化しているが、**名前のほうでも重ならないようにする**
+      —— ロックを外したときに黙って壊れる作りにしない。
+    """
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        # newline は既定のまま（`write_text` と同じ）。**ここだけ改行コードを変えない**
+        # —— 他の書き手（build_politicians.py など）は全部 `write_text` で、
+        # 揃えないとファイルが CRLF と LF を行き来して差分が読めなくなる
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)     # 失敗したら残骸を残さない
+        raise
+
+
 def write_json(path: Path, data: dict) -> None:
     """`indent=1`。**この2ファイルは実測でこの書式**（往復して一致を確認済み）。"""
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
 
 
 def dump_topics(data: dict) -> str:
@@ -273,7 +360,8 @@ def retired_ids(current: list[dict]) -> list[int]:
 
 
 def topics_state() -> dict:
-    source = load_json(TOPICS_PATH)
+    # ★ 中身と版は**同じ read から**作る（`load_with_revision()` の説明）
+    source, rev = load_with_revision(TOPICS_PATH)
     topics = source["topics"]
 
     stats: dict[int, dict] = {}
@@ -319,6 +407,7 @@ def topics_state() -> dict:
         "retired": retired,
         "next_id": max([t["id"] for t in topics] + retired, default=0) + 1,
         "path": str(TOPICS_PATH.relative_to(ROOT)),
+        "revision": rev,
     }
 
 
@@ -386,6 +475,7 @@ def diff_topics(before: list[dict], after: list[dict]) -> dict:
 
 
 def save_topics(payload: dict) -> dict:
+    check_revision(payload, TOPICS_PATH)
     before = load_json(TOPICS_PATH)
     topics = []
     for topic in payload.get("topics", []):
@@ -402,7 +492,7 @@ def save_topics(payload: dict) -> dict:
         return {"ok": False, "errors": errors, "warnings": warnings}
 
     changed = diff_topics(before["topics"], topics)
-    TOPICS_PATH.write_text(dump_topics({**before, "topics": topics}), encoding="utf-8")
+    write_text_atomic(TOPICS_PATH, dump_topics({**before, "topics": topics}))
     commands = ["python scripts/build_topics.py"]
     if changed["rebuild"]:
         commands += ["python scripts/build_db.py --split --page-size 8192",
@@ -420,7 +510,7 @@ def parties_state() -> dict:
     """
     if not OVERRIDES_PATH.exists():
         return {"available": False}
-    data = load_json(OVERRIDES_PATH)
+    data, rev = load_with_revision(OVERRIDES_PATH)
     candidates = load_json(PARTY_MAP_PATH) if PARTY_MAP_PATH.exists() else {}
 
     known: set[str] = {"無所属"}
@@ -455,11 +545,13 @@ def parties_state() -> dict:
     return {"available": True, "people": people, "parties": sorted(known),
             "empty": empty,
             "slots": sum(len(p["slots"]) for p in people),
-            "path": str(OVERRIDES_PATH.relative_to(ROOT))}
+            "path": str(OVERRIDES_PATH.relative_to(ROOT)),
+            "revision": rev}
 
 
 def save_parties(payload: dict) -> dict:
     """`party` だけを書き換える。**枠そのものと `periods` には触らない。**"""
+    check_revision(payload, OVERRIDES_PATH)
     data = load_json(OVERRIDES_PATH)
     known: set[str] = {"無所属"}
     if PARTY_MAP_PATH.exists():
@@ -505,7 +597,8 @@ def deny_state() -> dict:
     """`data/topic_denylist.json` と、判断の材料になる頻出語500件。"""
     if not DENYLIST_PATH.exists():
         return {"available": False}
-    terms = load_json(DENYLIST_PATH).get("terms", [])
+    denylist, rev = load_with_revision(DENYLIST_PATH)
+    terms = denylist.get("terms", [])
     words = []
     frequent = DIST_DIR / "frequent.json"
     if frequent.exists():
@@ -513,7 +606,8 @@ def deny_state() -> dict:
                   "denied": w["term"] in terms}
                  for w in load_json(frequent).get("words", [])]
     return {"available": True, "terms": terms, "words": words,
-            "path": str(DENYLIST_PATH.relative_to(ROOT))}
+            "path": str(DENYLIST_PATH.relative_to(ROOT)),
+            "revision": rev}
 
 
 def save_deny(payload: dict) -> dict:
@@ -522,6 +616,7 @@ def save_deny(payload: dict) -> dict:
     五十音や辞書順に直すと、1語足しただけの差分が**全行の入れ替え**になって
     レビューできなくなる（実際に踏んだ）。
     """
+    check_revision(payload, DENYLIST_PATH)
     data = load_json(DENYLIST_PATH)
     before = list(data.get("terms", []))
     terms: list[str] = []
@@ -541,7 +636,38 @@ def save_deny(payload: dict) -> dict:
 
 # --- HTTP -------------------------------------------------------------------
 
+#: POST 本文の上限。一番大きい `topics.json` でも 10KB 台なので桁で余裕がある
+MAX_BODY = 1_000_000
+
+
 class Handler(BaseHTTPRequestHandler):
+    #: 起動ごとに変わる合言葉。画面（admin.html）が読み込み時に取り、POST に付ける
+    token = ""
+
+    def _origin_ok(self) -> str:
+        """**外のページからこのコンソールを操作させない。** 駄目なら理由を返す。
+
+        `127.0.0.1` にだけ listen していても、それは「外から繋がらない」という
+        意味でしかない。**閲覧者のブラウザは中にいる** ので、コンソールを立ち上げた
+        まま悪意あるページを開くと、そこから `http://127.0.0.1:8790` へ POST できる。
+        `Content-Type: text/plain` にすればプリフライトも起きない（＝応答は読めない
+        が、**書き込みは成立する**）。実際に外部 Origin からの POST が通っていた。
+
+        Host も見るのは DNS リバインディング避け。攻撃者のドメインを 127.0.0.1 に
+        向けられると Origin は「同一オリジン」に見えるが、Host は残る。
+        """
+        host = (self.headers.get("host") or "").strip()
+        if host not in self.server.allowed_hosts:      # type: ignore[attr-defined]
+            return f"Host が違う: {host!r}"
+        # Sec-Fetch-Site は現行のブラウザなら必ず付く。付かないのは curl 等＝人の手
+        site = self.headers.get("sec-fetch-site")
+        if site not in (None, "same-origin", "none"):
+            return f"別サイトからの要求: {site}"
+        origin = self.headers.get("origin")
+        if origin is not None and origin not in self.server.allowed_origins:  # type: ignore[attr-defined]
+            return f"Origin が違う: {origin}"
+        return ""
+
     def _send(self, status: int, body: bytes, content_type: str) -> None:
         self.send_response(status)
         self.send_header("content-type", content_type)
@@ -565,9 +691,16 @@ class Handler(BaseHTTPRequestHandler):
             "/api/parties": parties_state,
             "/api/deny": deny_state,
         }
+        if reason := self._origin_ok():
+            self._json(403, {"ok": False, "errors": [reason]})
+            return
         try:
             if url.path in ("/", "/index.html"):
                 self._send(200, HTML_PATH.read_bytes(), "text/html; charset=utf-8")
+            elif url.path == "/api/token":
+                # 画面が読み込み時に取る合言葉。**GET も上で Origin を見ている**ので、
+                # 外のページからはここを読めない（読めなければ POST も作れない）
+                self._json(200, {"token": Handler.token})
             elif url.path == "/api/term":
                 term = to_full_width((parse_qs(url.query).get("q") or [""])[0].strip())
                 self._json(200, count_term(term))
@@ -585,14 +718,36 @@ class Handler(BaseHTTPRequestHandler):
         if path not in savers:
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
+        # 書き込みは Origin/Host に加えて2つ見る。**どれか1つに頼らない**
+        #   Content-Type … `application/json` はプリフライトを強制する（単純要求から外れる）
+        #   合言葉        … 画面が /api/token で取った値。外のページは読めない
+        if reason := self._origin_ok():
+            self._json(403, {"ok": False, "errors": [reason]})
+            return
+        ctype = (self.headers.get("content-type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            self._json(415, {"ok": False, "errors": [f"Content-Type が違う: {ctype!r}"]})
+            return
+        if self.headers.get("x-admin-token") != Handler.token:
+            self._json(403, {"ok": False, "errors": ["合言葉が違う（画面を開き直す）"]})
+            return
+        length = int(self.headers.get("content-length") or 0)
+        if length > MAX_BODY:
+            self._json(413, {"ok": False, "errors": [f"本文が大きすぎる: {length}"]})
+            return
         try:
-            payload = json.loads(self.rfile.read(
-                int(self.headers.get("content-length") or 0)) or b"{}")
+            payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError as e:
             self._json(400, {"ok": False, "errors": [f"JSON として読めない: {e}"]})
             return
         try:
-            self._json(200, savers[path](payload))
+            # ★ ロックは**同時に走る保存**を直列化するだけ。**開きっぱなしのタブ**は
+            #   `check_revision()` が止める（版が古ければ 409 で断る）。
+            #   この2つは別の事故で、どちらか片方では防げない
+            with SAVE_LOCK:
+                self._json(200, savers[path](payload))
+        except Stale as e:
+            self._json(409, {"ok": False, "stale": True, "errors": [str(e)]})
         except Exception as e:                                   # noqa: BLE001
             # **書く前に落ちる**ようにしてあるので、ここに来てもファイルは無傷
             self._json(500, {"ok": False, "errors": [f"保存に失敗した: {type(e).__name__}: {e}"]})
@@ -612,8 +767,19 @@ def main() -> None:
     if missing:
         sys.exit(f"★ {' / '.join(missing)} が無い")
 
-    # ★ 127.0.0.1 にだけ listen する。手元の道具であって、配るものではない
+    # ★ 127.0.0.1 にだけ listen する。手元の道具であって、配るものではない。
+    #   **ただし bind だけでは足りない**（ブラウザは中にいる）。Origin / Host /
+    #   Content-Type / 合言葉の4つで、外のページからの操作を止める（`_origin_ok`）
+    Handler.token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    # ★ **80番のときはポート無しの Host も許す。** http の既定ポートでは、
+    #   ブラウザは `Host: 127.0.0.1` と（`:80` を付けずに）送る。
+    #   `:80` 付きしか許さないと、**正規の画面自身が 403 になる**。
+    hosts = {f"127.0.0.1:{args.port}", f"localhost:{args.port}"}
+    if args.port == 80:
+        hosts |= {"127.0.0.1", "localhost"}
+    server.allowed_hosts = hosts                                            # type: ignore[attr-defined]
+    server.allowed_origins = {f"http://{h}" for h in hosts}                 # type: ignore[attr-defined]
     url = f"http://127.0.0.1:{args.port}"
     print(f"運営コンソール: {url}")
     print("  ★ JSONを書き換えるだけ。集計は保存後に出るコマンドを手で回すこと")

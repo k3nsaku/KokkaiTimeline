@@ -216,9 +216,17 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
 const num = (n) => (n == null ? "—" : n.toLocaleString("ja-JP"));
 const mb = (n) => (n / 1e6).toFixed(0) + " MB";
 
+/* 起動ごとの合言葉。**外のページは /api/token を読めない**（admin.py の
+   `_origin_ok` が Origin と Host を見ている）ので、これを付けられるのはこの画面だけ。
+   ★ 書き込みの防ぎは4つ（Origin・Host・Content-Type・合言葉）で、
+     どれか1つに頼っていない。1つ外すなら admin.py の説明も直すこと。 */
+let adminToken = "";
+
 async function api(path, body) {
+  if (body && !adminToken) adminToken = (await (await fetch("/api/token")).json()).token;
   const res = await fetch(path, body ? {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST",
+    headers: { "content-type": "application/json", "x-admin-token": adminToken },
     body: JSON.stringify(body),
   } : undefined);
   return res.json();
@@ -227,7 +235,12 @@ async function api(path, body) {
 /** 保存結果（エラー・警告・次に打つコマンド）を出す。**黙って成功にしない。** */
 function showResult(el, result) {
   const parts = [];
-  if (result.errors?.length) {
+  if (result.stale) {
+    // 版が食い違った。**編集は捨てられている**ので、それをはっきり言う
+    parts.push(`<p class="err"><strong>保存しませんでした（他の画面と競合）。</strong></p>
+      <ul class="msgs err">${result.errors.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>
+      <p class="msgs err small">この画面を再読み込みしてから、編集をやり直してください。</p>`);
+  } else if (result.errors?.length) {
     parts.push(`<p class="err"><strong>保存しませんでした。</strong></p>
       <ul class="msgs err">${result.errors.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`);
   } else if (result.ok) {
@@ -407,7 +420,9 @@ $("t-add").addEventListener("click", () => {
 });
 $("t-save").addEventListener("click", async () => {
   $("t-save").disabled = true;
-  const result = await api("/api/topics", { topics: T.topics });
+  // ★ `revision` を必ず添える。**開いたあとに別のところから書き換えられていたら
+  //   サーバが 409 で断る**（そうしないと、開きっぱなしの別タブが古い一覧で上書きする）
+  const result = await api("/api/topics", { topics: T.topics, revision: T.revision });
   showResult($("t-result"), result);
   if (result.ok) {
     tDirty = false; $("t-dirty").textContent = "";
@@ -484,7 +499,7 @@ $("p-save").addEventListener("click", async () => {
     const [k, kaiha] = key.split("\t");
     return { key: k, kaiha, party };
   });
-  const result = await api("/api/parties", { updates });
+  const result = await api("/api/parties", { updates, revision: P.revision });
   showResult($("p-result"), result);
   if (result.ok) {
     pEdits.clear(); $("p-dirty").textContent = "";
@@ -556,7 +571,7 @@ $("d-add").addEventListener("click", () => {
 });
 $("d-save").addEventListener("click", async () => {
   $("d-save").disabled = true;
-  const result = await api("/api/deny", { terms: D.terms });
+  const result = await api("/api/deny", { terms: D.terms, revision: D.revision });
   showResult($("d-result"), result);
   if (result.ok) {
     dDirty = false; $("d-dirty").textContent = "";
