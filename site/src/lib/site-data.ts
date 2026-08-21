@@ -9,12 +9,31 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const DATA = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "data");
+/**
+ * リポジトリ直下の `data/`。
+ *
+ * ★ **`import.meta.url` から辿らないこと。** astro 7 はビルド時にこのモジュールを
+ *   `dist/` の下へまとめ直す（`Rearranging server assets...`）ので、`../../..` が
+ *   リポジトリ直下ではなく `site/` を指し、`site/data/politicians.json` を探して落ちる。
+ *   astro 5 では素通りしていたので、**上げたときに初めて出た**（2026-08-21）。
+ *
+ * `npm run dev` も `npm run build` も cwd は `site/`（package.json の scripts から
+ * 呼ぶため。CI も `working-directory: site`）。**そこを基点にする。**
+ */
+const DATA = path.resolve(process.cwd(), "..", "data");
 
 function readJson<T>(...rel: string[]): T {
-  return JSON.parse(readFileSync(path.join(DATA, ...rel), "utf-8")) as T;
+  const file = path.join(DATA, ...rel);
+  try {
+    return JSON.parse(readFileSync(file, "utf-8")) as T;
+  } catch (cause) {
+    // ★ 素の ENOENT は astro の内部から投げられて出どころが分からない。
+    //   **どこを探したか**を出す（生成物が無いのか、cwd が違うのかを切り分けるため）
+    throw new Error(
+      `${file} を読めなかった。data/ の生成物が揃っているか、`
+      + `site/ から実行しているかを確認すること。`, { cause });
+  }
 }
 
 export interface Affiliation {
