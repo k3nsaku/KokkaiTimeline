@@ -36,6 +36,11 @@ python scripts/build_politicians.py --fix 浜田聡
 
 `data/party_overrides.json` の該当箇所を書き換える。
 
+> **まとめて埋めるなら運営コンソール**（`python scripts/admin.py` の「政党」タブ）。
+> 未入力の枠が上に来て、**その会派に所属しうる政党**（`data/party_map.json`）が
+> ボタンで出る。書き換えるのは `party` だけで、枠そのものと `periods` には触らない
+> （**期間で分かれている枠はここでは編集できない**。下の書式で直接直すこと）。
+
 **全期間まとめて直す場合:**
 
 ```json

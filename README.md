@@ -85,11 +85,18 @@ python scripts/build_db.py --split --page-size 8192
 **順番は入れ替えられない。** 3 は単一DBを読むので 2 が要り、
 4 は 3 の生成物（議員マスタ・争点語）を期間DBに埋め込む。
 
+運営で人手が要る作業（争点語のレビュー・政党の手入力・除外語）は**運営コンソール**に
+まとめてある。**手元だけの道具**で、`127.0.0.1` にしか listen しない。
+
+```bash
+python scripts/admin.py        # http://127.0.0.1:8790
+```
+
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321（data/dist を /db で配る。コピーはしない）
 npm run build    # dist/ に 1,702ページ
-npm run check    # 型検査 + テスト126件
+npm run check    # 型検査 + テスト199件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。**

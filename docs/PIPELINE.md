@@ -225,6 +225,12 @@ aws s3 cp "s3://kokkai-timeline/kokkai-2026H2.db" "s3://kokkai-timeline/kokkai-2
 **語を足すだけなら、全期間のDBの作り直しは要らない**（2026-08-21）。
 **消す・書き直す・別表記を足すときは要る**（下の表）。
 
+> **編集は運営コンソールから**（`python scripts/admin.py` の「争点語」タブ）。
+> 候補（週次トレンド・頻出語500件のうち未登録のもの）と、**その語が全期間で
+> 何件当たるか**がその場で出る（配信済みDBを検索と同じ経路で引く。実測 4〜17ms）。
+> id の採番・半角英数・引けない語・二重計上はツールが止める。
+> **書き換えるのは `data/topics.json` だけ**で、集計は下のコマンドを手で回す。
+
 ```bash
 python scripts/build_topics.py     # dist/topics.json・trending.json を作り直すだけ
 ```

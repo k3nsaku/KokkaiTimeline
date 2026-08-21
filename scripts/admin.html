@@ -1,0 +1,580 @@
+<!doctype html>
+<!--
+  運営コンソールの画面。**`scripts/admin.py` が 127.0.0.1 にだけ配る手元の道具。**
+  公開サイト（site/）とは別物で、ビルドにもデプロイにも一切入らない。
+
+  依存を持たない素の HTML/CSS/JS。ビルド工程を増やさないため
+  （このプロジェクトは「壊れて困るものを作らない」が制約。CLAUDE.md）。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>運営コンソール — 国会タイムライン</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fff; --fg: #1b1b1f; --muted: #5c5f66; --line: #dcdfe4;
+    --accent: #1f6feb; --warn: #b7791f; --err: #c0392b; --ok: #1e7a45;
+    --card: #f7f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --fg: #e6e8ec; --muted: #9aa0aa; --line: #2c3038;
+            --accent: #6aa8ff; --warn: #e0a33a; --err: #ff7b6b; --ok: #62c98d;
+            --card: #1d2027; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6
+         system-ui, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+  header { border-bottom: 1px solid var(--line); padding: 0.6rem 1rem; display: flex;
+           gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+  h1 { font-size: 1rem; margin: 0; letter-spacing: 0.02em; }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.85rem; }
+  nav { display: flex; gap: 0.25rem; margin-left: auto; }
+  nav button { font: inherit; border: 1px solid transparent; background: none;
+               color: var(--muted); padding: 0.25rem 0.7rem; border-radius: 6px;
+               cursor: pointer; }
+  nav button[aria-current="true"] { background: var(--card); color: var(--fg);
+                                    border-color: var(--line); }
+  main { padding: 1rem; max-width: 1100px; margin: 0 auto; }
+  section[hidden] { display: none; }
+  h2 { font-size: 0.95rem; margin: 1.4rem 0 0.5rem; }
+  h2:first-child { margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { font-weight: 600; font-size: 0.85rem; color: var(--muted); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+          padding: 0.8rem 1rem; margin-bottom: 1rem; }
+  .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  input, select, button { font: inherit; }
+  input[type="text"], select { background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 0.3rem 0.5rem; }
+  input[type="text"]:focus, select:focus { outline: 2px solid var(--accent); }
+  button.act { background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+               padding: 0.35rem 0.9rem; cursor: pointer; }
+  button.act[disabled] { opacity: 0.5; cursor: default; }
+  button.ghost { background: none; border: 1px solid var(--line); color: var(--fg);
+                 border-radius: 6px; padding: 0.2rem 0.6rem; cursor: pointer; }
+  .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px;
+          padding: 0 0.5rem; font-size: 0.78rem; color: var(--muted); }
+  .err { color: var(--err); } .warn { color: var(--warn); } .ok { color: var(--ok); }
+  ul.msgs { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+        padding: 0.6rem 0.8rem; overflow-x: auto; font-size: 0.85rem; }
+  .bars { display: flex; gap: 2px; align-items: flex-end; height: 26px; }
+  .bars i { display: block; width: 9px; background: var(--accent); opacity: 0.75; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .scroll { max-height: 60vh; overflow-y: auto; border: 1px solid var(--line);
+            border-radius: 8px; }
+  .scroll table { border: 0; }
+  .scroll th { position: sticky; top: 0; background: var(--bg); }
+  .dirty { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>運営コンソール</h1>
+  <span class="small muted" id="root"></span>
+  <nav>
+    <button data-tab="status" aria-current="true">状態</button>
+    <button data-tab="topics">争点語</button>
+    <button data-tab="parties">政党</button>
+    <button data-tab="deny">除外語</button>
+  </nav>
+</header>
+
+<main>
+  <!-- 状態 ------------------------------------------------------------- -->
+  <section id="tab-status">
+    <h2>期限を過ぎている作業</h2>
+    <div id="ops"></div>
+    <h2>配信物</h2>
+    <div id="delivery"></div>
+  </section>
+
+  <!-- 争点語 ----------------------------------------------------------- -->
+  <section id="tab-topics" hidden>
+    <div class="card">
+      <div class="row">
+        <strong>語を足す</strong>
+        <input type="text" id="t-term" placeholder="争点語（例: 副首都）" size="18">
+        <input type="text" id="t-cat" list="t-cats" placeholder="分類" size="14">
+        <datalist id="t-cats"></datalist>
+        <input type="text" id="t-variants" placeholder="別表記（読点区切り・任意）" size="22">
+        <button class="ghost" id="t-count">件数を数える</button>
+        <button class="act" id="t-add">追加</button>
+      </div>
+      <div id="t-probe" class="small muted" style="margin-top:0.5rem">
+        件数はその場で数えられます（配信済みDBを検索と同じ経路で引きます）。
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <h2>いまの争点語（<span id="t-n"></span>）</h2>
+        <div class="row small" style="margin-bottom:0.4rem">
+          <input type="text" id="t-filter" placeholder="絞り込み" size="12">
+          <label><input type="checkbox" id="t-only-slow"> 索引に無いものだけ</label>
+        </div>
+        <div class="scroll"><table>
+          <thead><tr><th>id</th><th>語</th><th class="num">件数</th><th></th></tr></thead>
+          <tbody id="t-list"></tbody>
+        </table></div>
+      </div>
+      <div>
+        <h2>候補（未登録・<span id="t-cn"></span>）</h2>
+        <p class="small muted">週次トレンドと頻出語500件のうち、争点語にも別表記にも
+          入っていないもの。<strong>候補はあくまで候補</strong>で、何を争点と呼ぶかは
+          運営の判断です。</p>
+        <div class="scroll"><table>
+          <thead><tr><th>語</th><th class="num">件数</th><th>出どころ</th></tr></thead>
+          <tbody id="t-cands"></tbody>
+        </table></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:1rem">
+      <div class="row">
+        <button class="act" id="t-save" disabled>data/topics.json に保存</button>
+        <span id="t-dirty" class="small"></span>
+      </div>
+      <div id="t-result"></div>
+    </div>
+  </section>
+
+  <!-- 政党 ------------------------------------------------------------- -->
+  <section id="tab-parties" hidden>
+    <p class="small muted">会派から機械的に政党を決められない分の手入力です。
+      <strong>1件ずつ根拠を確認して決めること</strong>（誤った所属は無記入より有害）。
+      枠そのもの（誰の・どの会派か）は <code>build_politicians.py</code> が作るので、
+      ここで足せるのは政党名だけです。期間で分かれている枠はファイルを直接編集してください。</p>
+    <div class="row small" style="margin-bottom:0.6rem">
+      <input type="text" id="p-filter" placeholder="氏名・会派で絞り込み" size="18">
+      <label><input type="checkbox" id="p-only-empty" checked> 未入力だけ</label>
+      <span class="muted" id="p-count"></span>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>議員</th><th>会派 / 期間</th><th>政党</th></tr></thead>
+      <tbody id="p-list"></tbody>
+    </table></div>
+    <div class="card" style="margin-top:1rem">
+      <div class="row">
+        <button class="act" id="p-save" disabled>data/party_overrides.json に保存</button>
+        <span id="p-dirty" class="small"></span>
+      </div>
+      <div id="p-result"></div>
+    </div>
+  </section>
+
+  <!-- 除外語 ----------------------------------------------------------- -->
+  <section id="tab-deny" hidden>
+    <p class="small muted">トレンドと候補出しから外す語。機械抽出なので、語として
+      意味を成さない断片（<code>延防止</code> <code>目詰</code>）や、国会で言及された
+      第三者の氏名が混ざります。<strong>運営の逃げ道であって、事前審査ではありません。</strong></p>
+    <div class="grid">
+      <div>
+        <h2>いま外している語（<span id="d-n"></span>）</h2>
+        <div class="row" style="margin-bottom:0.4rem">
+          <input type="text" id="d-term" placeholder="語を足す" size="14">
+          <button class="ghost" id="d-add">足す</button>
+        </div>
+        <div class="scroll"><table><tbody id="d-list"></tbody></table></div>
+      </div>
+      <div>
+        <h2>頻出語500件から探す</h2>
+        <div class="row small" style="margin-bottom:0.4rem">
+          <input type="text" id="d-filter" placeholder="絞り込み" size="12">
+        </div>
+        <div class="scroll"><table>
+          <thead><tr><th>語</th><th class="num">発言</th><th class="num">burst</th><th></th></tr></thead>
+          <tbody id="d-words"></tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <div class="row">
+        <button class="act" id="d-save" disabled>data/topic_denylist.json に保存</button>
+        <span id="d-dirty" class="small"></span>
+      </div>
+      <div id="d-result"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ------------------------------------------------------------------ 共通 */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = (n) => (n == null ? "—" : n.toLocaleString("ja-JP"));
+const mb = (n) => (n / 1e6).toFixed(0) + " MB";
+
+async function api(path, body) {
+  const res = await fetch(path, body ? {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  } : undefined);
+  return res.json();
+}
+
+/** 保存結果（エラー・警告・次に打つコマンド）を出す。**黙って成功にしない。** */
+function showResult(el, result) {
+  const parts = [];
+  if (result.errors?.length) {
+    parts.push(`<p class="err"><strong>保存しませんでした。</strong></p>
+      <ul class="msgs err">${result.errors.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`);
+  } else if (result.ok) {
+    parts.push(`<p class="ok"><strong>保存しました。</strong></p>`);
+  }
+  if (result.warnings?.length) {
+    parts.push(`<ul class="msgs warn small">${
+      result.warnings.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`);
+  }
+  if (result.changed && !Array.isArray(result.changed)) {
+    const c = result.changed;
+    const rows = [["足した", c.added], ["消した", c.removed],
+                  ["書き直した", c.renamed], ["別表記を変えた", c.revariant]]
+      .filter(([, v]) => v?.length)
+      .map(([k, v]) => `<li>${k}: ${v.map(esc).join("、")}</li>`).join("");
+    if (rows) parts.push(`<ul class="msgs small">${rows}</ul>`);
+    if (c.rebuild) {
+      parts.push(`<p class="warn small"><strong>全期間のDBの作り直しが要ります。</strong>
+        消した・書き直した・別表記を変えたときは、配信済みDBの topic_hit が
+        古いままになるためです（作り直すまでは全部が検索経路に落ちます ＝
+        正しいまま遅くなります）。</p>`);
+    }
+  } else if (Array.isArray(result.changed) && result.changed.length) {
+    parts.push(`<ul class="msgs small">${
+      result.changed.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`);
+  }
+  if (result.commands?.length) {
+    parts.push(`<p class="small muted">次にこれを回してください（このツールは
+      JSONを書き換えるだけです）:</p><pre>${result.commands.map(esc).join("\n")}</pre>`);
+  }
+  el.innerHTML = parts.join("");
+}
+
+/* ------------------------------------------------------------------ タブ */
+const tabs = ["status", "topics", "parties", "deny"];
+const loaders = {};
+document.querySelectorAll("nav button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    tabs.forEach((t) => { $("tab-" + t).hidden = t !== btn.dataset.tab; });
+    document.querySelectorAll("nav button").forEach((b) =>
+      b.setAttribute("aria-current", String(b === btn)));
+    loaders[btn.dataset.tab]?.();
+  });
+});
+
+/* ---------------------------------------------------------------- 状態 */
+loaders.status = async () => {
+  const s = await api("/api/status");
+  $("root").textContent = s.root + "（今日 " + s.today + "）";
+
+  const ops = s.operations ?? [];
+  if (!ops.length) {
+    $("ops").innerHTML = `<p class="warn">OPERATIONS.local.md を読めませんでした。
+      CLAUDE.md の表から「未実施」で作り直してください。</p>`;
+  } else {
+    const row = (o) => `<tr>
+      <td>${o.overdue ? "<strong>" + esc(o.task) + "</strong>" : esc(o.task)}</td>
+      <td class="small muted">${esc(o.interval)}</td>
+      <td class="small">${esc(o.last)}</td>
+      <td class="small ${o.overdue || o.elapsed == null ? "warn" : "muted"}">${
+        o.elapsed == null ? "未実施"
+        : o.overdue ? `${o.elapsed}日経過` : `あと${o.due_in}日`}</td></tr>`;
+    const late = ops.filter((o) => o.overdue);
+    $("ops").innerHTML = `
+      ${late.length
+        ? `<p class="warn"><strong>${late.length}件が推奨間隔を過ぎています。</strong>
+             どれも判断か手入力が要るので、勝手には実行しません。</p>`
+        : `<p class="ok">期限を過ぎている作業はありません。</p>`}
+      <table><thead><tr><th>作業</th><th>推奨</th><th>最終実施</th><th>経過</th></tr></thead>
+      <tbody>${[...late, ...ops.filter((o) => !o.overdue)].map(row).join("")}</tbody></table>
+      <p class="small muted">実施したら <code>OPERATIONS.local.md</code> の日付を
+        書き換えてください（この表はそのファイルを読んでいるだけです）。</p>`;
+  }
+
+  const d = s.delivery ?? {};
+  $("delivery").innerHTML = !d.available
+    ? `<p class="warn">data/dist/manifest.json がありません。</p>`
+    : `<table>
+        <tr><td>期間DB</td><td class="num">${d.periods}本</td>
+            <td class="small muted">合計 ${(d.total / 1e9).toFixed(2)} GB</td></tr>
+        <tr><td>いちばん大きいファイル</td>
+            <td class="num ${d.over ? "warn" : ""}">${esc(d.largest.id)} ${mb(d.largest.size)}</td>
+            <td class="small muted">上限 ${mb(d.limit)}（超えると<strong>黙って</strong>
+              CDN キャッシュから外れる）/ 日次は ${mb(d.warn)} で落とす</td></tr>
+        ${d.unrecorded.length ? `<tr><td>争点語の記載が無い期間</td>
+            <td class="warn">${d.unrecorded.map(esc).join(" ")}</td>
+            <td class="small muted">その期間は topic_hit を使わない扱いになります。
+              <code>build_db.py --manifest-only</code> で載ります</td></tr>` : ""}
+       </table>`;
+};
+
+/* -------------------------------------------------------------- 争点語 */
+let T = null, tDirty = false;
+
+function tMark() {
+  tDirty = true;
+  $("t-save").disabled = false;
+  $("t-dirty").className = "small dirty";
+  $("t-dirty").textContent = "未保存の変更があります";
+}
+
+function tRender() {
+  const filter = $("t-filter").value.trim();
+  const onlySlow = $("t-only-slow").checked;
+  const rows = T.topics.filter((t) =>
+    (!filter || t.term.includes(filter) || (t.category ?? "").includes(filter))
+    && (!onlySlow || !t.indexed));
+  $("t-n").textContent = `${T.topics.length}語`;
+  $("t-list").innerHTML = rows.map((t) => `<tr>
+    <td class="num small muted">${t.id}</td>
+    <td>${esc(t.term)}
+      ${t.variants.length ? `<span class="small muted">＋${esc(t.variants.join("、"))}</span>` : ""}
+      <br><span class="small muted">${esc(t.category ?? "—")}</span>
+      ${t.indexed ? "" : `<span class="pill">索引に無い</span>`}
+      ${t.unsearchable ? `<span class="pill err">引けない</span>` : ""}</td>
+    <td class="num">${num(t.n_speeches)}</td>
+    <td><button class="ghost" data-del="${t.id}">消す</button></td></tr>`).join("");
+  $("t-list").querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", () => {
+    const id = Number(b.dataset.del);
+    const topic = T.topics.find((t) => t.id === id);
+    if (!confirm(`「${topic.term}」を消します。\n\n`
+      + `id=${id} は二度と使えなくなります（配信済みDBに topic_hit が残るため）。\n`
+      + `消すと全期間のDBの作り直しが要ります。`)) return;
+    T.topics = T.topics.filter((t) => t.id !== id);
+    tMark(); tRender();
+  }));
+
+  const cands = T.candidates.filter((c) => !$("t-filter").value.trim()
+    || c.term.includes($("t-filter").value.trim()));
+  $("t-cn").textContent = `${T.candidates.length}語`;
+  $("t-cands").innerHTML = cands.map((c) => `<tr>
+    <td><button class="ghost" data-pick="${esc(c.term)}">${esc(c.term)}</button></td>
+    <td class="num">${num(c.n)}</td>
+    <td class="small muted">${esc(c.from)}・${esc(c.note)}</td></tr>`).join("");
+  $("t-cands").querySelectorAll("[data-pick]").forEach((b) =>
+    b.addEventListener("click", () => { $("t-term").value = b.dataset.pick; tProbe(); }));
+}
+
+/** その語が全期間で何件当たるか。**採否の判断に一番効く数字。** */
+async function tProbe() {
+  const term = $("t-term").value.trim();
+  if (!term) return;
+  $("t-probe").textContent = "数えています…";
+  const r = await api("/api/term?q=" + encodeURIComponent(term));
+  if (r.unsearchable) {
+    $("t-probe").innerHTML = `<span class="err">「${esc(r.term)}」は検索経路で
+      引けません: ${esc(r.unsearchable)}。<strong>載せると、全期間のDBを作り直すまで
+      発言一覧が空になります。</strong></span>`;
+    return;
+  }
+  const values = Object.values(r.periods);
+  const max = Math.max(1, ...values);
+  const bars = Object.entries(r.periods).map(([p, n]) =>
+    `<i style="height:${Math.max(1, Math.round(26 * n / max))}px" title="${p}: ${n}件"></i>`).join("");
+  $("t-probe").innerHTML = `<strong>${esc(r.term)}</strong> は全期間で
+    <strong>${num(r.total)}件</strong>の発言に出てきます
+    <span class="muted">（配信済みDBを検索と同じ経路で引いた数）</span>
+    <div class="bars" style="margin-top:0.3rem">${bars}</div>
+    <span class="muted">${Object.keys(r.periods)[0]} 〜 ${Object.keys(r.periods).slice(-1)[0]}</span>`;
+}
+
+$("t-count").addEventListener("click", tProbe);
+$("t-term").addEventListener("change", tProbe);
+$("t-filter").addEventListener("input", () => tRender());
+$("t-only-slow").addEventListener("change", () => tRender());
+$("t-add").addEventListener("click", () => {
+  const term = $("t-term").value.trim();
+  if (!term) return;
+  const id = T.next_id++;
+  T.topics.push({
+    id, term, category: $("t-cat").value.trim() || null,
+    variants: $("t-variants").value.split(/[、,]/).map((v) => v.trim()).filter(Boolean),
+    n_speeches: null, indexed: false, unsearchable: "",
+  });
+  $("t-term").value = ""; $("t-variants").value = "";
+  tMark(); tRender();
+});
+$("t-save").addEventListener("click", async () => {
+  $("t-save").disabled = true;
+  const result = await api("/api/topics", { topics: T.topics });
+  showResult($("t-result"), result);
+  if (result.ok) {
+    tDirty = false; $("t-dirty").textContent = "";
+    await loaders.topics();
+  } else {
+    $("t-save").disabled = false;
+  }
+});
+
+loaders.topics = async () => {
+  if (tDirty) return;                      // 編集中に読み直して上書きしない
+  T = await api("/api/topics");
+  $("t-cats").innerHTML = T.categories.map((c) => `<option value="${esc(c)}">`).join("");
+  $("t-save").disabled = true;
+  tRender();
+};
+
+/* ---------------------------------------------------------------- 政党 */
+let P = null;
+const pEdits = new Map();                  // "key\t会派" → 政党名
+
+function pRender() {
+  const filter = $("p-filter").value.trim();
+  const onlyEmpty = $("p-only-empty").checked;
+  const rows = [];
+  let empty = 0;
+  for (const person of P.people) {
+    for (const slot of person.slots) {
+      const key = person.key + "\t" + slot.kaiha;
+      const value = pEdits.has(key) ? pEdits.get(key) : (slot.party ?? "");
+      const blank = !value && !slot.periods;
+      if (blank) empty++;
+      if (onlyEmpty && !blank && !pEdits.has(key)) continue;
+      if (filter && !person.name.includes(filter) && !slot.kaiha.includes(filter)) continue;
+      rows.push(`<tr>
+        <td>${esc(person.name)}<br><span class="small muted">${esc(person.key)}</span></td>
+        <td>${esc(slot.kaiha)}<br><span class="small muted">${esc(slot.span)}</span></td>
+        <td>${slot.periods
+          ? `<span class="small muted">期間で分かれています（${
+              slot.periods.map((p) => esc(p.party ?? "—")).join(" / ")}）<br>
+              ファイルを直接編集してください</span>`
+          : `<input type="text" data-key="${esc(key)}" list="p-parties"
+                    value="${esc(value)}" size="16" placeholder="政党名">
+             ${slot.candidates.length
+               ? `<br><span class="small muted">候補: ${
+                   slot.candidates.map((c) =>
+                     `<button class="ghost" data-set="${esc(key)}" data-party="${esc(c)}"
+                       >${esc(c)}</button>`).join(" ")}</span>`
+               : ""}`}</td></tr>`);
+    }
+  }
+  $("p-count").textContent = `未入力 ${empty}件 / 枠 ${P.slots}件`;
+  $("p-list").innerHTML = rows.join("");
+  $("p-list").querySelectorAll("input[data-key]").forEach((input) =>
+    input.addEventListener("input", () => {
+      pEdits.set(input.dataset.key, input.value.trim());
+      $("p-save").disabled = false;
+      $("p-dirty").className = "small dirty";
+      $("p-dirty").textContent = `未保存 ${pEdits.size}件`;
+    }));
+  $("p-list").querySelectorAll("[data-set]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const input = $("p-list").querySelector(`input[data-key="${CSS.escape(b.dataset.set)}"]`);
+      input.value = b.dataset.party;
+      input.dispatchEvent(new Event("input"));
+    }));
+}
+
+$("p-filter").addEventListener("input", () => pRender());
+$("p-only-empty").addEventListener("change", () => pRender());
+$("p-save").addEventListener("click", async () => {
+  $("p-save").disabled = true;
+  const updates = [...pEdits].map(([key, party]) => {
+    const [k, kaiha] = key.split("\t");
+    return { key: k, kaiha, party };
+  });
+  const result = await api("/api/parties", { updates });
+  showResult($("p-result"), result);
+  if (result.ok) {
+    pEdits.clear(); $("p-dirty").textContent = "";
+    P = await api("/api/parties"); pRender();
+  } else {
+    $("p-save").disabled = false;
+  }
+});
+
+loaders.parties = async () => {
+  if (pEdits.size) return;
+  P = await api("/api/parties");
+  if (!P.available) {
+    $("p-list").innerHTML = `<tr><td class="warn">data/party_overrides.json がありません。
+      先に build_politicians.py を回してください。</td></tr>`;
+    return;
+  }
+  $("p-parties")?.remove();
+  const list = document.createElement("datalist");
+  list.id = "p-parties";
+  list.innerHTML = P.parties.map((p) => `<option value="${esc(p)}">`).join("");
+  document.body.appendChild(list);
+  $("p-save").disabled = true;
+  pRender();
+};
+
+/* -------------------------------------------------------------- 除外語 */
+let D = null, dDirty = false;
+
+function dMark() {
+  dDirty = true;
+  $("d-save").disabled = false;
+  $("d-dirty").className = "small dirty";
+  $("d-dirty").textContent = "未保存の変更があります";
+}
+
+function dRender() {
+  $("d-n").textContent = `${D.terms.length}語`;
+  $("d-list").innerHTML = D.terms.map((t) => `<tr><td>${esc(t)}</td>
+    <td style="width:1%"><button class="ghost" data-undeny="${esc(t)}">戻す</button></td></tr>`).join("");
+  $("d-list").querySelectorAll("[data-undeny]").forEach((b) =>
+    b.addEventListener("click", () => {
+      D.terms = D.terms.filter((t) => t !== b.dataset.undeny);
+      dMark(); dRender();
+    }));
+
+  const filter = $("d-filter").value.trim();
+  const words = D.words.filter((w) => !filter || w.term.includes(filter)).slice(0, 200);
+  $("d-words").innerHTML = words.map((w) => `<tr>
+    <td>${esc(w.term)} <span class="small muted">${esc(w.peak)}</span></td>
+    <td class="num">${num(w.n)}</td>
+    <td class="num small muted">${w.burst.toFixed(0)}倍</td>
+    <td style="width:1%">${D.terms.includes(w.term)
+      ? `<span class="pill">除外中</span>`
+      : `<button class="ghost" data-deny="${esc(w.term)}">外す</button>`}</td></tr>`).join("");
+  $("d-words").querySelectorAll("[data-deny]").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (!D.terms.includes(b.dataset.deny)) D.terms.push(b.dataset.deny);
+      dMark(); dRender();
+    }));
+}
+
+$("d-filter").addEventListener("input", () => dRender());
+$("d-add").addEventListener("click", () => {
+  const term = $("d-term").value.trim();
+  if (!term || D.terms.includes(term)) return;
+  D.terms.push(term); $("d-term").value = "";
+  dMark(); dRender();
+});
+$("d-save").addEventListener("click", async () => {
+  $("d-save").disabled = true;
+  const result = await api("/api/deny", { terms: D.terms });
+  showResult($("d-result"), result);
+  if (result.ok) {
+    dDirty = false; $("d-dirty").textContent = "";
+    D = await api("/api/deny"); dRender();
+  } else {
+    $("d-save").disabled = false;
+  }
+});
+
+loaders.deny = async () => {
+  if (dDirty) return;
+  D = await api("/api/deny");
+  if (!D.available) {
+    $("d-list").innerHTML = `<tr><td class="warn">data/topic_denylist.json がありません。</td></tr>`;
+    return;
+  }
+  $("d-save").disabled = true;
+  dRender();
+};
+
+loaders.status();
+</script>
+</body>
+</html>

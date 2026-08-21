@@ -69,6 +69,11 @@
 **セッションの最初に `OPERATIONS.local.md` を読み、推奨間隔を過ぎている作業があれば
 運営者に知らせること。** 黙って実行しない — どれも判断か手入力が要る。
 
+**運営者は `python scripts/admin.py`（運営コンソール）で同じ表を見られる。**
+期限切れの作業・争点語・政党の手入力・除外語が1か所にまとまっていて、
+材料（件数・候補・会派ごとの政党候補）もそこに出る。**手元だけの道具**で、
+JSONを書き換えるだけ（集計は保存後に出るコマンドを手で回す）。
+
 `OPERATIONS.local.md` は `.gitignore`（この端末だけの実績）。**無ければ下の表から
 全部「未実施」で作ること。** 仕様はこの表、実績はあちら。
 
@@ -76,9 +81,9 @@
 |---|---|---|
 | 日次更新の成否を見る | 1か月 | `gh run list --workflow=daily.yml`。落ちても数日は放置できる |
 | **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★まだ一度も通っていない。**落ちたまま放置すると台帳を失い公開後のURLが全部変わる** |
-| 頻出語のノイズを denylist に入れる | 3か月 | `reports/frequent_words.md` → `data/topic_denylist.json` に1行 |
-| 政党の手入力 | 3か月 | `reports/party_todo.md` → `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
-| 争点語のレビュー | 3か月 | `reports/trending_new_terms.md` → `data/topics.json`。**足すだけなら `build_topics.py` だけ**（全期間の作り直しは要らない） |
+| 頻出語のノイズを denylist に入れる | 3か月 | **`admin.py` の「除外語」タブ**（頻出語500件から選ぶ）。→ `data/topic_denylist.json` |
+| 政党の手入力 | 3か月 | **`admin.py` の「政党」タブ**（会派ごとの候補が出る）。→ `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
+| 争点語のレビュー | 3か月 | **`admin.py` の「争点語」タブ**（候補と**その場で数えた件数**が出る）。→ `data/topics.json`。**足すだけなら `build_topics.py` だけ** |
 | 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
 | **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。公式FAQに「クエリ文字列は記録しない」が**将来変わりうる**と書いてある（[docs/DECISIONS.md](docs/DECISIONS.md)）。変わったら `/privacy` を直すか解析をやめる |
 | R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
@@ -88,14 +93,17 @@
 Artifacts（`reports` / 90日保持）から読む。要約に出ているのは件数だけ。
 
 **2文字語の語彙更新はもう要らない**（索引が本文から作られるようになったため）。
-全期間の作り直しが要るのは争点語を変えたときだけ。手順は
-[docs/PIPELINE.md](docs/PIPELINE.md)「★争点語を変えるとき」。
+全期間の作り直しが要るのは**争点語を消す・書き直す・`variants` を足すとき**だけ。
+手順は [docs/PIPELINE.md](docs/PIPELINE.md)「争点語を変えるとき」。
 
 ## コマンド
 
 Python 3.12+ のみ。**外部依存パッケージなし**（GitHub Actions で `pip install` を不要にするため）。
 
 ```bash
+# 運営コンソール（人手が要る作業を1か所に。127.0.0.1 だけ・配るものではない）
+python scripts/admin.py            # 期限切れの作業 / 争点語 / 政党の手入力 / 除外語
+
 # 取得（中断しても同じコマンドで再開できる）
 python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31
 python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31 --status
@@ -142,7 +150,7 @@ Node 24 / Astro。
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
 npm run build    # dist/ に 1,702ページ・22MB
-npm run check    # 型検査 + テスト198件
+npm run check    # 型検査 + テスト199件
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`
