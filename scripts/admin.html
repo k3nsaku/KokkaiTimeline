@@ -151,7 +151,10 @@
     <p class="small muted">会派から機械的に政党を決められない分の手入力です。
       <strong>1件ずつ根拠を確認して決めること</strong>（誤った所属は無記入より有害）。
       枠そのもの（誰の・どの会派か）は <code>build_politicians.py</code> が作るので、
-      ここで足せるのは政党名だけです。期間で分かれている枠はファイルを直接編集してください。</p>
+      ここで足せるのは政党名だけです。期間で分かれている枠はファイルを直接編集してください。<br>
+      <strong>ここに出てこない議員を直すには</strong>
+      <code>python scripts/build_politicians.py --fix 氏名</code> を先に回してください
+      （自動で決まった所属の枠がファイルに書き込まれ、次の読み込みでここに出ます）。</p>
     <div class="row small" style="margin-bottom:0.6rem">
       <input type="text" id="p-filter" placeholder="氏名・会派で絞り込み" size="18">
       <label><input type="checkbox" id="p-only-empty" checked> 未入力だけ</label>
