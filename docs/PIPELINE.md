@@ -346,7 +346,7 @@ aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
 | — | **GitHub にリポジトリを作って push**（`k3nsaku/KokkaiTimeline` public / 既定 `master`） | ✅ 2026-08-06 |
 | — | GitHub の **Variables 4つ** | ✅ 2026-08-06 |
 | — | GitHub の **Secrets 4つ** | ✅ 2026-08-06 |
-| — | **Actions の Workflow permissions を Read and write に** | ✅ 2026-08-06（台帳の書き戻し用） |
+| — | **Actions の Workflow permissions** | ✅ 2026-08-06 に Read and write。**2026-08-21 に既定を Read へ戻した** —— `daily.yml` が自分で `contents: write` を宣言しているので台帳の書き戻しは通る（docs/SECURITY.md） |
 | — | `daily.yml` が Actions に登録される | ✅ 2026-08-06。**初回 push では登録されなかった**（下の囲み） |
 | — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ✅ 2026-08-06 全ステップ成功・4分37秒 |
 | — | `kokkai-timeline.com` を Pages に当てる | ✅ 2026-08-06 **＝公開** |
