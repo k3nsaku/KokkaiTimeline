@@ -27,7 +27,7 @@
   "",
   "会派ごとにまとめて読み替える仕組みは**あえて用意していない**。",
   "誤った所属は同姓同名の誤分離と同じで、無記入より有害だから",
-  "（PROJECT_BRIEF.md §9）。1件ずつ根拠を確認して決めること。",
+  "（`docs/SCOPE.md`）。1件ずつ根拠を確認して決めること。",
   "",
   "埋めたら python scripts/build_politicians.py を再実行する。",
   "議員ごとの詳細（発言数・Wikidataリンク）は reports/party_todo.md。"
