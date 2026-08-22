@@ -19,7 +19,7 @@
 
 | 何をするとき | 読む |
 |---|---|
-| **常に** | この4行下の「よくある事故」と、`OPERATIONS.local.md`（期限切れの作業を知らせる） |
+| **常に** | 下の「よくある事故」と、`OPERATIONS.local.md`（期限切れの作業を知らせる） |
 | 仕様を知りたい | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 「なぜそうなっているか」を疑う | [docs/DECISIONS.md](docs/DECISIONS.md) — **数字はすべて実測値** |
 | **検索・DB構築・配信を触る** | [docs/PITFALLS.md](docs/PITFALLS.md) — **全部いちど実際に踏んだもの** |
@@ -33,8 +33,18 @@
 **設計判断を変えるときは [docs/DECISIONS.md](docs/DECISIONS.md) の実測値を先に確認すること。**
 そこにある数字はすべて実測であり、推測ではない。
 
-**実装とドキュメントの不一致は禁止。**
-少なくともコミット時点で実装とドキュメントの整合性を取ること。
+## ドキュメントの書き方（守ること）
+
+- **実装とドキュメントの不一致は禁止。** 実装を変えたら、**同じコミットで**
+  ドキュメントも直す。**片方だけ直したコミットを作らない**
+- **経緯・経過は書かない。現時点の事実と結論だけを書く。** 例外は
+  **過程そのものが判断材料になるもの**（実際に踏んだ穴・潰した容疑者）と**未決事項**
+- **同じ内容を複数のドキュメントに書かない。** 必要なら参照を書く
+- **表や箇条書きで済むものに散文を長く書かない**
+- **変動しうる値は概算で書く**（DBサイズ・件数・ページ数など）。
+  桁と傾向が伝わればよく、**1桁まで合わせる維持コストを負わない。**
+  例外は [docs/DECISIONS.md](docs/DECISIONS.md) —— あそこは**日付つきの実測の記録**なので、
+  値を丸めず、後から測り直しもしない
 
 ## よくある事故（詳細は PITFALLS.md）
 
@@ -57,7 +67,7 @@
 - **配信DBの分割規則は2か所にある。** `build_db.py` の `period_of()` と
   `query.ts` の `periodOf()`。**片方だけ変えると存在しないファイルを引きに行く**
 - **1ファイルが 512MB を超えると黙って CDN キャッシュから外れる**（RTT 8ms → 77ms）。
-  半期分割の最大は 377MB。`--period` を変える判断は DECISIONS の実測値を見てから
+  半期分割なら**最大 360MB 前後**。`--period` を変える判断は DECISIONS の実測値を見てから
 - **`data/politician_ids.json` を失うとURLが全部変わる。** 手書き資産はコミットする
 - **R2 へ上げるとき `--content-type` を省かない**（[docs/PIPELINE.md](docs/PIPELINE.md)）。
   省くと aws-cli が拡張子から推測する ＝ **ランナー次第で付いたり付かなかったりする。**
@@ -98,7 +108,7 @@ JSONを書き換えるだけ（集計は保存後に出るコマンドを手で�
 | 頻出語のノイズを denylist に入れる | 3か月 | **`admin.py` の「除外語」タブ**（頻出語500件から選ぶ）。→ `data/topic_denylist.json` |
 | 政党の手入力 | 3か月 | **`admin.py` の「政党」タブ**（会派ごとの候補が出る）。→ `data/party_overrides.json`（[docs/CORRECTIONS.md](docs/CORRECTIONS.md)） |
 | 争点語のレビュー | 3か月 | **`admin.py` の「争点語」タブ**（候補と**その場で数えた件数**が出る）。→ `data/topics.json`。**足すだけなら `build_topics.py` だけ** |
-| 公式サイトURLの見直し | 6か月 | `reports/politicians.md`。**Wikidata 掲載・未確認**の外部リンクで、平文 http が437件。失効ドメインの取り直しはコードでは防げない |
+| 公式サイトURLの見直し | 6か月 | `reports/politicians.md`。**Wikidata 掲載・未確認**の外部リンクで、平文 http が400件超。失効ドメインの取り直しはコードでは防げない |
 | 連絡先の疎通確認 | 6か月 | 1通送る。**届かない窓口は「窓口が無い」のと同じ** |
 | **アクセス解析が集めるものの再確認** | 6か月 | 解析を入れてから。**2026-08-21 に検索語を `#` へ移したので、「クエリ文字列を記録しない」への依存は薄れた**（それでも JS 無効時は `?q=` で飛ぶ）。見るのは RUM の自動挿入が復活していないかと、集める項目が増えていないか |
 | R2 とドメインの費用を見る | 1か月 | 月1,000円以内が絶対の制約 |
@@ -142,7 +152,7 @@ python scripts/build_frequent.py           # 頻出語500語（dist/frequent.jso
 python scripts/build_activity.py           # 議員ごとの発言数の推移（dist/politician_activity.json）
 
 # 検証（配る前に必ず通す。日次更新もこれを関門にしている）
-python scripts/verify_dist.py              # data/dist の全期間（実測21秒）
+python scripts/verify_dist.py              # data/dist の全期間（実測 約20秒）
 python scripts/verify_dist.py --id 2026H2  # 触った期間だけ
 
 # 検算（配ったあと。**公開URLが返すもの**を見る。関門ではなく知らせるためのもの）
@@ -164,8 +174,8 @@ Node 24 / Astro 7。
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321。data/dist を /db で配る（DBはコピーしない）
-npm run build    # dist/ に 1,703ページ・35MB
-npm run check    # 型検査 + テスト207件
+npm run build    # dist/ に約1,700ページ
+npm run check    # 型検査 + テスト
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。** `src/lib/query.ts`
@@ -178,7 +188,7 @@ sql.js-httpvfs を持ち込むとテストが動かなくなる。**
 ```
 meeting / speech / speech_fts / politician / affiliation
 topic      : 争点語82件。**運営の編集方針**（data/topics.json）
-word       : 2文字語の索引。**本文の2文字窓を全部**（期間ごとに 31,000〜106,000語）
+word       : 2文字語の索引。**本文の2文字窓を全部**（期間ごとに1万〜11万語）
 frequent   : 頻出語500件。**機械抽出の一覧**（dist/frequent.json・DBには入らない）
 ```
 

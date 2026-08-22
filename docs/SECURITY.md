@@ -1,153 +1,100 @@
-# 安全性の見直し（2026-08-21）
+# 安全性
 
 このサイトは**閲覧者に登録させないし、運営者の個人情報も置いていない**。
-だから守るべきは「抜かれること」ではなく、ほぼ**改ざん**と、
-**閲覧者の検索語**の2つに絞られる。この文書はその2つを軸に、
-何を確かめたか・何を直したか・**何が運営者の手にしか無いか**を残す。
-
-見直しの対象は HEAD `23091a7`、公開環境への受動的なHTTP確認、依存監査、
-Git履歴の秘密情報スキャン。**侵入・大量通信・負荷試験はしていない。**
-
-関連: 個別の落とし穴は [PITFALLS.md](PITFALLS.md)「公開まわり」、
-なぜそうしたかは [DECISIONS.md](DECISIONS.md) §4 と §8。
-
----
-
-## 何が本当の脅威か
-
-| 脅威 | 実現に要るもの | いまの状態 |
-|---|---|---|
-| **日次CIの供給網** → 配信DB・サイト・リポジトリを丸ごと書き換える | 依存パッケージか action の乗っ取り1件 | 露出面を4つ塞いだ（下） |
-| **閲覧者の検索語が外に出る** | 何も要らない（普通に検索するだけ） | `#` に移し、文面を実態に合わせた |
-| **Wikidata 経由の改ざん** | Wikidata を編集するだけ（資格情報が要らない） | 出口は公式サイトURL1本に限定されている |
-| **運営コンソールへの CSRF** | コンソール起動中に悪意あるページを開かせる | 4つの検査で塞いだ |
-| **配信DBの改ざん** | R2 の鍵 | escape + CSP で script 実行には化けない |
+だから守るべきは**改ざん**と**閲覧者の検索語**の2つに絞られる。
 
 **「個人情報が無いから軽い」は半分しか合っていない。** 運営者の情報は無いが、
 **閲覧者が何を検索したか**は残る。政治的関心を示す語はそれ自体がセンシティブになりうる。
 
+個別の落とし穴は [PITFALLS.md](PITFALLS.md)「公開まわり」、なぜそうしたかは
+[DECISIONS.md](DECISIONS.md) §4 と §8。**この文書は「いまどうなっているか」と
+「何が運営者の手にしか無いか」を書く。**
+
 ---
 
-## 直したもの
+## 脅威と、いまの手当て
 
-### 1. 検索語がクエリ文字列で配信事業者に届いていた
-
-トップ・`/about`・`/privacy` の3か所が「検索語はどこにも送られません」と
-書いていたのに、フォームは `GET /search?q=…` だった。**表記と実装の食い違い。**
-
-`#q=…` に移し（`search.astro`）、**フラグメント化しても塞げない2経路**
-（JS 無効・古い `?q=` URLの初回）を `/privacy` に明記した。
-詳細と限界の表は [DECISIONS.md](DECISIONS.md) §4「検索語はクエリ文字列ではなくフラグメントに持つ」。
-
-**あわせて `/search` から解析タグを外した。** フラグメントは HTTP 要求に載らないが、
-**そのページで動くスクリプトからは読める**。計測タグは提供元が随時更新する外部JSで、
-手動埋め込みでは版の固定も SRI もできない。除外は `operator.ts` の
-`ANALYTICS_EXCLUDED_PATHS` に置き、`Base.astro`（出すか）と `privacy.astro`（何と書くか）が
-**同じ配列を読む**ようにしてある。実機で `/search` の外部スクリプトが0本になることを確認した。
-**代償として、検索ページの閲覧数は取れない。**
-
-**上限は `canonicalQuery()` に掛け直した。** `splitTerms()` だけで切ると、SQL は16語で
-引くのに画面とURLには17語が残る（細工したURLで再現した）。切ったあとの語が
-画面・入力欄・URL・議員検索・3経路の全部に渡るようにし、`run()` は `pushUrl` が偽でも
-`replaceState` でURLを直す。実機で入力欄16語・URL16語・完全一致を確認。
-
-**URLは解析の前に切る。** `maxlength` は JS からの代入を止めないので、
-`canonicalQuery()` の上限だけでは `URLSearchParams` の解析と入力欄への代入が先に走る。
-`readUrl()` に `MAX_URL_LENGTH` を置いた。実測: **1.8MB のフラグメントで開いても
-画面は応答し**（636ms で完了）、入力欄もURLも 64文字に揃う。
-上限ぎりぎりの正当なクエリ（16語 × 64文字・URL 9,262文字）は壊れないことも確認した。
-
-### 2. 日次CIの供給網
-
-| 直したもの | 前 | 後 |
+| 脅威 | 実現に要るもの | 手当て |
 |---|---|---|
-| R2 の鍵 | ワークフロー直下の `env`（全 step） | 使う4 step だけ |
+| **日次CIの供給網** → 配信DB・サイト・リポジトリを丸ごと書き換える | 依存パッケージか action の乗っ取り1件 | 露出面を4つ塞いだ（下） |
+| **閲覧者の検索語が外に出る** | 何も要らない（普通に検索するだけ） | `#` に移し、文面を実態に合わせた |
+| **Wikidata 経由の改ざん** | Wikidata を編集するだけ（資格情報が要らない） | 出口は公式サイトURL1本に限定 |
+| **運営コンソールへの CSRF** | コンソール起動中に悪意あるページを開かせる | 4つの検査で塞いだ |
+| **配信DBの改ざん** | R2 の鍵 | escape + CSP で script 実行には化けない |
+
+見直しの対象は公開環境への受動的なHTTP確認・依存監査・Git履歴の秘密情報スキャン。
+**侵入・大量通信・負荷試験はしていない。**
+
+---
+
+## 1. 検索語
+
+- 検索条件は **`#q=…`**（`search.astro`）。`?q=` は HTTPS でも配信事業者に届く
+- **フラグメント化しても塞げない2経路**（JS 無効・古い `?q=` URLの初回）は
+  `/privacy` に明記してある。限界の表は [DECISIONS.md](DECISIONS.md) §4
+- **`/search` には解析タグを出さない。** フラグメントは HTTP 要求に載らないが、
+  **そのページで動くスクリプトからは読める**。除外は `operator.ts` の
+  `ANALYTICS_EXCLUDED_PATHS` に置き、`Base.astro`（出すか）と
+  `privacy.astro`（何と書くか）が**同じ配列を読む**。代償は検索ページの閲覧数が取れないこと
+- **上限は `canonicalQuery()` に掛ける**（`splitTerms()` だけだと画面とURLに切る前の語が残る）。
+  `run()` は `pushUrl` が偽でも `replaceState` でURLを直す
+- **URLは解析の前に切る**（`readUrl()` の `MAX_URL_LENGTH`）。`maxlength` は JS からの
+  代入を止めない。実測: 1.8MB のフラグメントで開いても画面は応答し（636ms）、
+  入力欄もURLも 64文字に揃う。上限ぎりぎりの正当なクエリ（16語 × 64文字・URL 9,262文字）は無傷
+
+## 2. 日次CIの供給網
+
+| | 前 | 後 |
+|---|---|---|
+| R2 の鍵 | ワークフロー直下の `env`（全 step から見える） | それを使う4 step だけ |
 | wrangler | `npx --yes wrangler@4`（毎回 npm から最新） | 版を固定した devDependency・`npm ci` の完全性検査 |
 | actions | `@v4` / `@v5`（動かせるタグ） | コミットSHAで固定 |
-| checkout | 認証情報を `.git/config` に残す | `persist-credentials: false` |
+| checkout | 認証情報を `.git/config` に残す | `persist-credentials: false`（台帳を push する step にだけ渡す） |
 
-### 3. 運営コンソール（`scripts/admin.py`）の CSRF / DNS リバインディング
+★ **actions を上げるときはコメントの版も一緒に直す。** SHA だけ変えて版のコメントが
+古いままだと次に読む人が判断できない。**版はリリース一覧で見る**
+（タグ一覧だけだと prerelease と正式リリースを区別できない）。
 
-`127.0.0.1` への bind だけでは足りなかった。**閲覧者のブラウザは内側にいる。**
-`Content-Type: text/plain` の POST は CORS のプリフライトを起こさないので、
-外のページから `data/topics.json` などを書き換えられた（実際に通ることを確認した）。
+## 3. 運営コンソール（`scripts/admin.py`）
 
-Origin・Host・Content-Type・起動ごとの合言葉の4つで塞いだ。
-**どれか1つに頼っていない。** 保存は temp → rename の差し替えにしたうえで、
-**一時ファイル名を一意にし（`tempfile.mkstemp`）、読み込み→検証→書き込みを
-`SAVE_LOCK` で直列化した** —— `<対象>.tmp` を共有していると、二重クリックや複数タブの
-保存がぶつかる（実測で12並行のうち11件が `PermissionError`）。
-対策後は12並行で12件成功・残骸なし・ファイルはバイト単位で無変更。
+`127.0.0.1` への bind だけでは足りない。**閲覧者のブラウザは内側にいる**し、
+`Content-Type: text/plain` の POST は CORS のプリフライトを起こさない。
 
-**ロックだけでは足りなかった。** 直列化しても、**開きっぱなしの別タブ**は古い一覧を
-持っている。A→B の順に保存すると B が A の変更を上書きし、どちらも 200 で返るので
-誰も気づかない。GET が返す `revision`（中身の sha256）を POST に添えさせ、
-違えば **409** で断るようにした。実測で確認:
-
-| 手順 | 結果 |
+| 守るもの | やっていること |
 |---|---|
-| タブA・タブBが同じ版を開く | 同一 revision |
-| タブA が1語足して保存 | 200・追加される |
-| タブB が古い一覧で保存 | **409（stale）・A の追加は残る** |
-| タブB が読み直して保存 | 200 |
+| CSRF / DNS リバインディング | Origin・Host・Content-Type・起動ごとの合言葉の**4つ**（どれか1つに頼らない） |
+| 同時保存の衝突 | 読み込み→検証→書き込みを `SAVE_LOCK` で直列化。一時ファイル名は `tempfile.mkstemp` で一意 |
+| **別タブによる編集消失** | GET が返す `revision`（中身の sha256）を POST に添えさせ、違えば **409** |
+| 版と表示のずれ | **1回の read から本文と版の両方を作る**（`load_with_revision()`）。2回読むと間の保存を取りこぼす |
+| `--port 80` | ポート無しの `Host` も許す（既定ポートではブラウザが `:80` を付けない） |
 
-**さらにもう1つ窓があった。** `revision` を足しただけでは、状態を返す関数が
-「本文を読む → 一覧を組み立てる → **もう一度読んで**版を計算する」構造のままで、
-その2回の read の間に入った保存を取りこぼしていた（古いデータに新しい版が付く ＝
-そのタブの保存が検査を素通りする）。**1回の read から本文と版の両方を作る**
-（`load_with_revision()`）ように直した。3つの状態関数すべてで、対象ファイルの
-read が1回であること・返した版が返したデータと一致することを実測で確認した
-（2回読む書き方では版が食い違うことも、負の対照として確認済み）。
+実測で確認済み: 外部 Origin（`text/plain` / `application/json`）・`Sec-Fetch-Site: cross-site`・
+`Host: evil.example`・合言葉なし はすべて **403**。12並行の保存で12件成功・残骸なし。
+タブA→タブBの順の保存で B は **409**（A の変更が残る）。
 
-対策後に確認したもの（すべて 403）:
+## 4. Wikidata から公開ページに出る自由文字列
 
-| 試したこと | 結果 |
-|---|---|
-| 外部 Origin + `text/plain` | 403 |
-| 外部 Origin + `application/json` | 403 |
-| `Sec-Fetch-Site: cross-site` | 403 |
-| `Host: evil.example`（リバインディング相当） | 403 |
-| 同一オリジンだが合言葉なし | 403 |
-| 正規の画面から | 200・無変更の保存でファイルに差分が出ないことも確認 |
+**出口は公式サイトURL（P856）1本だけ。** 氏名は会議録から採って Wikidata で上書きせず、
+政党は `party_map` の候補内からしか選ばれず、院は固定文字列2つ。
+URLには scheme の検査を置いてある（`build_politicians.py` の `safe_url()`）。
 
-あわせて **`--port 80` でポート無しの `Host` も許すようにした**（http の既定ポートでは
-ブラウザが `:80` を付けずに送るので、`:80` 付きしか許さないと正規の画面が 403 になる）。
-
-### 4. Wikidata から公開ページに出る自由文字列
-
-**出口は1つしかない。** 氏名は会議録から採っていて Wikidata で上書きしない、
-政党は `party_map` の候補内からしか選ばれない、院は固定文字列2つ。
-**残るのは公式サイトURL（P856）だけ**なので、そこに scheme の検査を置いた
-（`build_politicians.py` の `safe_url()`）。
-
-`http://` は落としていない（実測 437件ある。消すと大量のリンクが黙って消える）。
-代わりに**リンクの表示を「公式サイト（Wikidata 掲載・未確認）」**にして、
+`http://` は落としていない（400件超あり、消すと大量のリンクが黙って消える）。
+代わりに表示を**「公式サイト（Wikidata 掲載・未確認）」**にし、
 `rel="noopener nofollow external"` を付けてある。
-**リンク先が本物かどうかは検証していない**（失効ドメインの取り直しは防げない）。
+**リンク先が本物かどうかは検証していない。**
 
-### 5. その他
+## 5. その他
 
-- `set:html={JSON.stringify(...)}` を `jsonScript()` 経由にした（`</script>` で抜け出せない）
-- `404.astro` を足した（無いと Pages が存在しないパスにトップを **200** で返していた）
+- `set:html={JSON.stringify(...)}` は `jsonScript()` 経由（`</script>` で抜け出せない）
+- `404.astro` がある（無いと Pages が存在しないパスにトップを **200** で返す）
 - 検索語の語数・長さに上限（`query.ts` の `MAX_TERMS` / `MAX_TERM_LENGTH` / `MAX_URL_LENGTH`）
-- 依存を更新して `npm audit` を **0件**に（nanoid 3.3.18・astro 7.2.4・sharp 0.35.3・esbuild 0.28.2）
-
----
-
-## 指摘されたが、直さなかったもの
-
-- **`actions/checkout` の版コメントがSHAと合っていない**という指摘があったが、**合っている。**
-  `v4.4.0` は 2026-07-20 公開の正式リリース（prerelease ではない）で、
-  タグは `11d5960a326750d5838078e36cf38b85af677262` を指し、`v4` もそこを指している。
-  「v4系の最新は v4.3.1」という前提のほうが古い（v4.3.1 は
-  `34e114876b0b11c390a56381ad16ebd13914f8d5` で1つ前）。
-  **リリース一覧を見て判断すること。タグ一覧だけだと prerelease と区別が付かない。**
+- `npm audit` は **0件**（astro 7.2.4 / sharp 0.35.3 / esbuild 0.28.2 / nanoid 3.3.18）
 
 ---
 
 ## 確かめて、問題が無かったもの
 
-- **エスケープが全経路で徹底している。** `highlight()` は「エスケープ → マーカー置換」の順、
+- **エスケープが全経路で徹底している。** `highlight()` は「エスケープ → マーカー置換」の順。
   `render.ts` / `speech-view.ts` / `speech-panel.ts` / `chart.ts` すべて escape 済み
 - **CSP が実機で効いている。** 配信DBを改ざんされても script 実行には化けない。
   **ここが最後の砦**なので、`_headers` を緩めるときは何が守られなくなるかを見ること
@@ -159,51 +106,35 @@ read が1回であること・返した版が返したデータと一致する�
   GitHub 側の secret scanning と push protection も有効
 - **ワークフローに script injection の経路が無い。** `${{ }}` に入るのは `date` 由来の
   出力・`vars.*`・boolean 型の `inputs` だけ
-- **Astro 5 系の8件の advisory は、この構成では到達しなかった。** `output: "static"`、
-  `define:vars` 未使用、スプレッド props 未使用、`transition:` 未使用、名前付き slot 未使用。
-  急ぐ更新ではなかったが、Dependabot を有効にした以上どのみち PR が来るので、
-  **同日に astro 7.2.4 まで上げた**（`found 0 vulnerabilities`）。
-  ★踏んだ breaking change は1つだけ —— `site-data.ts` が `import.meta.url` から
-  `data/` を辿っていたのが、astro 7 のバンドル再配置で `site/data/` を指して落ちた。
-  cwd 基点に変えてある
 - Python 側に `subprocess` / `eval` / `pickle` / TLS 検証の無効化が無く、外部通信は
   NDL と Wikidata の https のみ
 - `admin.py` / `prototype/server.js` / dev サーバはすべて `127.0.0.1` bind、
   パストラバーサル対策あり
 
+> **astro を 5 系から 7 系に上げたときの唯一の breaking change** は、`site-data.ts` が
+> `import.meta.url` から `data/` を辿っていたのがバンドル再配置で `site/data/` を
+> 指して落ちたこと。**cwd 基点に変えてある。**
+
 ---
 
-## 運営者の手でやったこと（2026-08-21・すべて完了）
+## 運営者の手にしか無いもの
 
-**コードでは閉じられなかったもの。** ダッシュボードや GitHub の設定なので、
-**リポジトリには現れない。** ここが唯一の記録になる（`OPERATIONS.local.md` は
-この端末だけのもので、失うと消える）。
+**コードでは閉じられない。** ダッシュボードや GitHub の設定なので**リポジトリには現れず、
+ここが唯一の記録になる**（`OPERATIONS.local.md` は端末ごとの実績で、失うと消える）。
 
-| やったこと | どこ | いまの状態 |
+| 設定 | どこ | いまの値 |
 |---|---|---|
-| 既定のワークフロー権限を read に | GitHub → Actions → General | `read` / `can_approve_pull_request_reviews: false`。`daily.yml` は自分で `contents: write` を宣言しているので台帳の書き戻しは通る |
-| Dependabot を有効化 | Settings → Code security | alerts と security updates の両方が有効。★**順番がある** —— alerts が無効だと `automated-security-fixes` は黙って無視される |
-| `master` のブランチ保護 | Settings → Rules | ruleset `protect-master`（active・既定ブランチ・bypass 0件）。ルールは **`deletion` と `non_fast_forward` の2つだけ**。★**PR必須は入れない** —— 日次の台帳 push（通常の fast-forward）が拒否されて止まる |
-| Cloudflare の資格情報を確認 | Cloudflare | 変更なし。Pages トークンは `Cloudflare Pages: 編集` の1行・アカウント1つ。R2 キーは Object Read & Write・バケット2つ。★**IPフィルタと TTL は空のまま**（ランナーのIPは変わる／失効すると最大1か月配信が止まる） |
-| GitHub の 2FA | GitHub → Settings | 有効・方式は **passkey**・Recovery codes 保存済み |
-| `db.` の HTTPS 強制 | Cloudflare → SSL/TLS | 「常に HTTPS を使用」ON → `http://` は 301。暗号化モードは**フル**（自動モード有効）。**ゾーン HSTS は入れないと決めた**（[DECISIONS.md](DECISIONS.md)） |
-| 請求アラートの疎通確認 | Cloudflare | テストメールの着信を確認。★**Rate Limiting は入れない**（[PIPELINE.md](PIPELINE.md) 3.5b の実測） |
-| astro 7 への更新 | `site/` | 7.2.4 / sharp 0.35.3 / esbuild 0.28.2 で `found 0 vulnerabilities` |
-
----
+| 既定のワークフロー権限 | GitHub → Actions → General | `read`。`daily.yml` が自分で `contents: write` を宣言するので台帳の書き戻しは通る |
+| Dependabot | Settings → Code security | alerts と security updates の両方。★**alerts が先** —— 無効だと `automated-security-fixes` は黙って無視される |
+| `master` のブランチ保護 | Settings → Rules | ruleset `protect-master`（active・bypass 0件）。ルールは **`deletion` と `non_fast_forward` の2つだけ**。★**PR必須は入れない**（日次の台帳 push が止まる） |
+| Cloudflare の資格情報 | Cloudflare | Pages トークンは `Cloudflare Pages: 編集` の1行・アカウント1つ。R2 キーは Object Read & Write・バケット2つ。★**IPフィルタと TTL は空のまま**（ランナーのIPは変わる／失効すると最大1か月配信が止まる） |
+| GitHub の 2FA | GitHub → Settings | 有効・方式は **passkey**・Recovery codes 保存済み。★API では方式まで読めないので画面で見る |
+| `db.` の HTTPS 強制 | Cloudflare → SSL/TLS | 「常に HTTPS を使用」ON。暗号化モードは**フル**。**ゾーン HSTS は入れない**（[DECISIONS.md](DECISIONS.md)） |
+| 請求アラート | Cloudflare | 疎通確認済み。★**Rate Limiting は入れない**（[PIPELINE.md](PIPELINE.md) 3.5b の実測） |
 
 ## まだ残っているもの
 
 | やること | いつ | なぜ |
 |---|---|---|
-| **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★**まだ一度も通っていない。** 今回 `persist-credentials: false` に変えたので、初回は特に見たい。落ちたまま放置すると台帳を失い、公開後のURLが全部変わる |
-| 公式サイトURLの見直し | 6か月 | 平文 http が 437件。**リンク先が本物かは検証していない**（失効ドメインの取り直しはコードでは防げない） |
-
-★ **2026-08-22 の日次で、うち1つは通った。** 全ステップ成功（7分36秒）:
-SHA固定した actions、`npx --no-install wrangler`（4.125.0・1,737ファイル・
-`_headers` と `_redirects` 込み）。公開URLでも 404 が 404 を返すこと・
-`/search` の外部スクリプトが0本・`http://db.` が 301 を確認した。
-
-**台帳 push だけは依然として未検証。** その日は `ID台帳に変更なし（1,111件）` で
-早期 exit した。`persist-credentials: false` ＋ ヘッダ経由トークン ＋ ruleset 下での
-初回は、**議員が増えた日**に来る。
+| **議員ID台帳の書き戻しを確認** | 議員が増えた日に1回 | ★**まだ一度も通っていない**（差分が出た日にしか走らない）。`persist-credentials: false` ＋ ヘッダ経由トークン ＋ ruleset 下での初回になる。落ちたまま放置すると台帳を失い、公開後のURLが全部変わる |
+| 公式サイトURLの見直し | 6か月 | 平文 http が400件超。**リンク先が本物かは検証していない**（失効ドメインの取り直しはコードでは防げない） |

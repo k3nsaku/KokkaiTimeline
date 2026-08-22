@@ -45,7 +45,7 @@ LLM に「立場が変わったか」を判定させて事実として出すこ�
 **照合はブラウザの中で完結する。** 検索語はURLの `#` より後ろに置いてあり、
 ふつうは要求に載らない（**「どこにも送られない」とは書けない**。JS 無効のときと
 古い `?q=` のURLを開いたときだけ届く。[docs/DECISIONS.md](docs/DECISIONS.md)）。
-ブラウザが最大 377MB の SQLite を「必要な 8KB ページだけ」HTTP Range で
+ブラウザが最大 360MB 前後の SQLite を「必要な 8KB ページだけ」HTTP Range で
 読みながら引く。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## リポジトリの構成
@@ -68,7 +68,7 @@ Python 3.12+ と Node 24。**Python 側に外部依存パッケージは無い**
 （GitHub Actions で `pip install` を不要にするため）。
 
 ```bash
-# 1. 会議録を取る（中断しても同じコマンドで再開できる。全期間で約5時間）
+# 1. 会議録を取る（中断しても同じコマンドで再開できる。全期間で5時間17分）
 python scripts/fetch_range.py --from 2021-01-01 --until 2026-07-31
 
 # 2. 単一DBを作る（このあとの集計スクリプトの材料になる）
@@ -97,8 +97,8 @@ python scripts/admin.py        # http://127.0.0.1:8790
 ```bash
 cd site && npm install
 npm run dev      # http://localhost:4321（data/dist を /db で配る。コピーはしない）
-npm run build    # dist/ に 1,702ページ
-npm run check    # 型検査 + テスト199件
+npm run build    # dist/ に約1,700ページ
+npm run check    # 型検査 + テスト
 ```
 
 **検索まわりを触ったら `npm run check` を通すこと。**
@@ -115,22 +115,20 @@ npm run check    # 型検査 + テスト199件
 | [docs/PIPELINE.md](docs/PIPELINE.md) | 日次更新の運用と Cloudflare 側の設定 |
 | [docs/BACKFILL.md](docs/BACKFILL.md) | 会議録を取り直す手順 |
 | [docs/CORRECTIONS.md](docs/CORRECTIONS.md) | 所属政党などの訂正依頼への対応手順 |
+| [docs/SECURITY.md](docs/SECURITY.md) | 何を守っていて、何が運営者の手にしか無いか |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | これからやること |
 | [site/README.md](site/README.md) | サイトの実装 |
 
 ## データの扱い
 
-発言そのものは国会会議録（公的記録）で、著作権法40条1項により政治上の演説等は
-自由に利用できる。ただし但し書きが「同一の著作者のものを編集して利用する場合」を
-除いているため、**特定議員の発言だけを集めた編集物に見えない設計**にしてある
-（一覧は抜粋＋原典リンクに留め、全文は会議という文脈の中で出す）。
-**全レコードに原典URLを付ける。**
+- 発言は公的記録で、**著作権法40条1項**により自由に利用できる。ただし但し書きに
+  合わせて、**特定議員の発言だけを集めた編集物に見えない設計**にしてある
+- **全レコードに原典URLを付ける**（著作権法48条の出所明示義務）
+- 名寄せ・会派から政党への対応づけ・抜粋位置には限界がある。
+  **誤りは指摘があれば直す**（`/disclaimer`・手順は [docs/CORRECTIONS.md](docs/CORRECTIONS.md)）
+- **この整理は専門家のレビューを経ていない**
 
-名寄せ・会派から政党への対応づけ・抜粋位置には限界がある。
-サイト上の `/disclaimer` に書いてあるとおり、**誤りは指摘があれば直す**
-（手順は [docs/CORRECTIONS.md](docs/CORRECTIONS.md)）。
-
-このリポジトリの法的整理は専門家のレビューを経ていない。
+詳細は [docs/SCOPE.md](docs/SCOPE.md)「法的な整理」。
 
 ## ライセンス
 
@@ -141,5 +139,4 @@ npm run check    # 型検査 + テスト199件
 （`data/raw/` と `data/*.db` は `.gitignore`）ので、こちらが再配布しておらず、
 ライセンスを付ける立場にない。実体は実行時に NDL の API から取る。
 
-範囲の詳細は [NOTICE.md](NOTICE.md)、データ側の法的整理は
-上の「データの扱い」と [docs/SCOPE.md](docs/SCOPE.md)。
+範囲の詳細は [NOTICE.md](NOTICE.md)。

@@ -153,7 +153,7 @@ python scripts/build_politicians.py --fix 浜田聡
 | ファイル | 失うとどうなるか |
 |---|---|
 | `data/politician_ids.json` | **公開後はURLが全部変わる** |
-| `data/party_overrides.json` | 手入力した145件の政党が消える |
+| `data/party_overrides.json` | 手入力した政党（約150件）が消える |
 | `data/party_map.json` | 会派→政党の対応が消え、同姓同名の分離も弱くなる |
 | `data/topics.json` | 争点語リスト（編集方針そのもの）が消える |
 | `data/topic_denylist.json` | トレンドから外した語が復活する |

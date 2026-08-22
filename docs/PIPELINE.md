@@ -49,7 +49,7 @@ CDN キャッシュは残りが効き続ける。配信DBは半期で割って�
 ### ★ 手順7: 配信物の検証（`scripts/verify_dist.py`）
 
 ```bash
-python scripts/verify_dist.py              # data/dist にあるDB全部（実測 12期間で18秒）
+python scripts/verify_dist.py              # data/dist にあるDB全部（実測 12期間で約20秒）
 python scripts/verify_dist.py --id 2026H2  # 触った期間だけ。日次はこちら
 ```
 
@@ -80,10 +80,9 @@ python scripts/verify_dist.py --id 2026H2  # 触った期間だけ。日次は�
 `--no-fts` で作った配信DBをそのまま配ってしまう事故になる。
 **構造の検査を件数の少なさで免除しないこと。**
 
-**実測（2026-08-06 の初回実行 / run 31086294777）: 全体で4分37秒。**
-上の目安は会期中の見積もりで、**閉会中はこの1/10で終わる。**
-内訳は手順3（取得）が約1分半、手順4〜5が約2分、残りが1分。
-会期中に伸びるのは手順3だけなので、**最悪でも上の目安の合計を超えない。**
+**閉会中の実測は全体で4分半〜8分**（内訳は手順3が約1分半、手順4〜5が約2分、残り）。
+上の目安の表は会期中の見積もりで、**会期中に伸びるのは手順3（取得）だけ**なので、
+最悪でも表の合計を超えない。
 
 **取り直す範囲を当月だけにしない。** 会議録は会議の当日には出ない。月末の会議が
 翌月になって公開された分と、前月以前に入った訂正を、当月だけだと二度と拾えない
@@ -131,7 +130,7 @@ python scripts/verify_published.py --base https://db.kokkai-timeline.com
 
 ## もう一つのワークフロー: CI（`.github/workflows/ci.yml`）
 
-`site/**` を触った push と PR で `npm run check`（`astro check` + テスト207件）を回す。
+`site/**` を触った push と PR で `npm run check`（`astro check` + 回帰テスト）を回す。
 **`src/lib/query.ts` を壊す変更はここで止める。**
 
 **日次更新も同じ `npm run check` を配る前に通す**（手順8）。CI のほうが速く気づけるが、
@@ -151,7 +150,7 @@ CI は `site/**` を触ったときしか走らないので、**毎日必ず通�
 
 ## ★ DBの差し替えとキャッシュ
 
-年DBのURLには **`?v=<中身の指紋>`** が付く（`manifest.json` の `version`）。
+期間DBのURLには **`?v=<中身の指紋>`** が付く（`manifest.json` の `version`）。
 これが無いと2つ壊れる。
 
 1. **開きっぱなしのページが壊れる。** `sql.js-httpvfs` は読んだページを
@@ -172,7 +171,7 @@ CI は `site/**` を触ったときしか走らないので、**毎日必ず通�
 
 | | |
 |---|---|
-| 年DB | `public, max-age=3600, s-maxage=31536000` |
+| 期間DB | `public, max-age=3600, s-maxage=31536000` |
 | `manifest.json` | `public, max-age=300` |
 
 `immutable` を付けていた時期に、**Chrome のブラウザキャッシュに壊れたものが入り、
@@ -271,39 +270,12 @@ CI からやるなら `workflow_dispatch` を `all_years=true` で実行する�
 > **目録（`manifest.json`）が期間ごとの争点語を持っている。** `{"ids": "1-82", "fp": …}`。
 > ここが実物とずれていると、持っていない語を `topic_hit` で引いて**0件**になる。
 > DBを作り直さずに目録だけ直すなら `python scripts/build_db.py --manifest-only`。
-
-### ★ 一度だけ要る移行（2026-08-21 の変更）
-
-**公開中の目録には `topics` の記載が無い。** 記載の無い期間は「持っていない」扱いに
-なるので（推測しない）、そのままだと**全部の争点語が検索経路に落ちて遅いまま**になる。
-日次はそのとき手元に無い期間の記載を引き継ぐだけなので、放っておいても直らない。
-
-手元に全期間のDBが揃っている端末で目録を作り直し、**それを1回だけ配ること**:
-
-```bash
-python scripts/build_db.py --manifest-only      # data/dist を走査して目録を作り直す
-python scripts/verify_dist.py                   # 目録と実物が合っているか（実測21秒）
-aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --content-type "application/json" \
-  --cache-control "public, max-age=300"
-```
-
-**`--content-type` を省かない**（このページの上のほうの注意）。
-
+>
 > ★ **手元の `data/dist` は当期だけ配信より古い**（日次が毎日作り直しているため）。
-> そのまま上げると**その期間の `size` / `version` / 収録範囲が過去の世代に巻き戻る**
-> — `?v=` が戻り、エッジに残っていれば**1か月前のDBを配る**。
-> `--manifest-only` は世代が変わる期間を警告に出すので、**当期が出たら上げた後に
-> 日次を1回回すこと**（`gh workflow run daily.yml`）。当期を作り直して目録を正しく
-> 書き直し、他の期間は争点語の記載を引き継ぐ。**2026-08-21 に実際に踏んだ。**
-
-翌日以降の日次はこの目録を降ろしてくるので、そこから先は勝手に維持される。
-
-> **2文字語の語彙を作り直す作業はもう無い**（2026-08-12）。
-> 索引は本文の2文字窓を全部拾うようになり、`build_words.py` と `data/words.json`、
-> 状態バケットへの受け渡し、語彙の指紋の検査はすべて消えた。
-> **語彙が期間をまたいで食い違うと過去が黙って0件になる**という事故クラスごと無くなっている。
+> そのまま上げると**その期間の `size` / `version` / 収録範囲が過去の世代に巻き戻る** ——
+> `?v=` が戻り、エッジに残っていれば1か月前のDBを配る。`--manifest-only` は世代が
+> 変わる期間を警告に出すので、**当期が出たら上げた後に日次を1回回すこと**
+> （`gh workflow run daily.yml`）。**2026-08-21 に実際に踏んだ。**
 
 ## ★ 分割の単位を変えるとき
 
@@ -320,68 +292,6 @@ aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
 日次はその手前（480MB）で失敗するようにしてある。
 
 ---
-
-## 設定の進み具合（2026-08-06 時点・**公開済み**）
-
-**すべて通った。** 以下は再構築するときの参照用に残してある。
-
-| # | 作業 | 状態 |
-|---|---|---|
-| — | ドメイン `kokkai-timeline.com`（Registrar / DNSSEC有効） | ✅ |
-| 1 | R2 バケット2つ（`kokkai-timeline` APAC / `kokkai-timeline-state`） | ✅ |
-| 2 | カスタムドメイン `db.kokkai-timeline.com` | ✅ 疎通確認済み |
-| 3 | CORS ポリシー | ✅ curl で確認済み |
-| 3.5 | **Cache Rule `r2-db-cache`** | ✅ RTT 77ms→8ms を確認 |
-| 3.5b | クエリ文字列でキャッシュを素通りできる（コストの穴） | ⚠ **通知だけ入れた**（2026-08-03）。free では塞ぎ切れない。手順3.5 の囲み |
-| 3.6 | サイトの セキュリティヘッダ（`site/public/_headers`） | ✅ CSP 込み・実機で全ページ型を確認 |
-| 4 | R2 APIキー `github-actions-daily-update` | ✅ |
-| — | データの初回投入（下の「初回の流し込み」） | ✅ バイト数一致を確認 |
-| 5 | Cloudflare Pages プロジェクト（Direct Upload） | ✅ 初回デプロイ済み |
-| 6 | Pages 用トークン `github-actions-pages-deploy` | ✅ |
-| — | 年DB6個の `cache-control` 打ち直し（`immutable` を消す） | ✅ 6年とも確認・Purge 済み |
-| — | 法務（`/disclaimer` `/privacy`・運営者表示・連絡先） | ✅ docs/SCOPE.md |
-| — | **Cloudflare Email Routing**（`info@kokkai-timeline.com` → Gmail） | ✅ 2026-08-06 送受信テスト済み。★下記 |
-| — | 争点語のレビュー（79→82件） | ✅ docs/DECISIONS.md |
-| — | **年DB6個・目録・`words.json`・Pages を手で反映**（2026-08-03） | ✅ ★下記 |
-| — | **GitHub にリポジトリを作って push**（`k3nsaku/KokkaiTimeline` public / 既定 `master`） | ✅ 2026-08-06 |
-| — | GitHub の **Variables 4つ** | ✅ 2026-08-06 |
-| — | GitHub の **Secrets 4つ** | ✅ 2026-08-06 |
-| — | **Actions の Workflow permissions** | ✅ 2026-08-06 に Read and write。**2026-08-21 に既定を Read へ戻した** —— `daily.yml` が自分で `contents: write` を宣言しているので台帳の書き戻しは通る（docs/SECURITY.md） |
-| — | `daily.yml` が Actions に登録される | ✅ 2026-08-06。**初回 push では登録されなかった**（下の囲み） |
-| — | `workflow_dispatch` で手動実行（**`all_years` は `false` でよい**） | ✅ 2026-08-06 全ステップ成功・4分37秒 |
-| — | `kokkai-timeline.com` を Pages に当てる | ✅ 2026-08-06 **＝公開** |
-| — | `www.kokkai-timeline.com` | ❌ 当てていない（apex のみ。要否は ROADMAP で保留） |
-| — | **ゾーンの「常に HTTPS を使用」** | ✅ 2026-08-21。`db.` も含めて `http://` が 301。**ゾーン HSTS は入れないと決めた**（DECISIONS.md） |
-| — | **GitHub の ruleset `protect-master`** | ✅ 2026-08-21。`deletion` と `non_fast_forward` の2つだけ。★**PR必須を足さないこと**（日次の台帳 push が止まる） |
-| — | **Dependabot（alerts ＋ security updates）** | ✅ 2026-08-21。★**alerts を先に有効化する**（無効だと `automated-security-fixes` は黙って無視される） |
-
-> ### ★ 連絡先は Cloudflare Email Routing（2026-08-06）
->
-> `info@kokkai-timeline.com` を Gmail へ転送している。**サーバは増えていない**
-> （Cloudflare 側の設定だけで動く。「常時稼働プロセスを持たない」に触れない）。
-> Gmail 側でエイリアスを作ってあるので、返信もこのアドレスから出る。
->
-> **サイトの表示は `site/src/lib/operator.ts` の1か所だけ。**
-> `/disclaimer` `/privacy` `/about` はそこを見ている。アドレスを変えるときは
-> **Cloudflare の転送ルールと Gmail のエイリアスも一緒に**直すこと。
-> 訂正依頼の窓口なので、**届かない状態は「窓口が無い」のと同じ**
-> （名誉毀損の抗弁としても弱くなる。[SCOPE.md](SCOPE.md)）。
->
-> ドメインを移したり作り直したりしたら、**必ず1通送って着信を確かめる。**
-
-> ### ★ 全年の作り直しは 2026-08-03 に手で済ませた
->
-> 争点語を 79 → 82 件に変え（`topic_id` がずれる）、さらに
-> **2文字語の語彙を 16,058 → 16,264 件に変えた**（`vocabulary` の指紋が変わる）。
-> どちらも全年の作り直しが要るもので、**手元で作り直して R2 に上げ済み**。
-> `words.json` も状態バケットに置いた。
->
-> **したがって Actions の初回は `all_years=false` でよい。** 当年だけ作り直す
-> 通常の経路が正しく回るかを見るほうが、いまは情報量が多い。
->
-> 手で上げるときは **DBを先に、目録を後に**（順番を逆にすると、まだ無いDBをサイトが引きにいく）。
-> **`words.json` を状態バケットに上げ忘れると、日次が古い語彙を戻してきて
-> `ＡＩ` が引けない状態に巻き戻る**（最後に同じものが書き戻されるので自然には直らない）。
 
 ## Cloudflare 側でやること
 
@@ -405,10 +315,10 @@ aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
 
 > 紛らわしいので明示しておくと、**公開バケットへの書き込みもカスタムドメインは通らない。**
 > 日次更新は両方のバケットに S3 エンドポイント経由で書く。
-> `db.kokkai-timeline.com` と CORS は、**サイトが年DBを読むためだけ**に要る。
+> `db.kokkai-timeline.com` と CORS は、**サイトが期間DBを読むためだけ**に要る。
 
 分けるのは、公開バケットにカスタムドメインを付けると**バケット全体が見える**ため。
-1.2GBの生データを配る必要はない。合計 3.3GB で、無料枠10GBに収まる。
+1.2GBの生データを配る必要はない。合計は約3.7GBで、無料枠10GBに収まる。
 
 **Location は作成時にしか指定できない**（同じ名前で作り直しても、ヒントが尊重されるのは
 最初の1回だけ）。公開バケットの読み手は日本の有権者なので APAC。
@@ -424,7 +334,7 @@ aws s3 cp data/dist/manifest.json "s3://$PUBLIC_BUCKET/manifest.json" \
 > --create-bucket-configuration LocationConstraint=ENAM --endpoint-url ...`
 
 **Storage class は両方 Standard。** Infrequent Access は
-①年DBが Range で常時読まれる（取り出し料金が乗る）
+①期間DBが Range で常時読まれる（取り出し料金が乗る）
 ②**最低保存期間30日**があり、当月の生データは毎日置き換えるので置換のたびに30日分を払う
 —— の2点で合わない。そもそも無料枠10GBに収まっているので、安くなる余地が無い。
 
@@ -540,8 +450,8 @@ Caching → Cache Rules → Create rule:
 > 「DBは新しいのにエッジが古い」＝ `immutable` で実際に踏んだのと同型の事故を生む。
 > **起きていない攻撃のために、踏んだことのある事故の再発リスクを取らない。**
 >
-> **②の閾値を下げすぎないこと。** 1回の検索は1年DBあたり平均80・最悪187リクエストの束で、
-> 6年を並列に引くので**1回の検索で約500、重い語だと1,000を超える**。
+> **②の閾値を下げすぎないこと。** 1回の検索は1ファイルあたり平均80・最悪187リクエストの束で、
+> 12期間を並列に引くので**1回の検索で約500、重い語だと1,000を超える**。
 > さらに「さらに読み込む」で積み増す。**10秒あたり2,000未満にすると普通の利用者が落ちる。**
 > その閾値だと単一IPで平均100req/s は通ってしまうので、**止まるのは事故と雑なスクレイパまで。**
 >
@@ -549,8 +459,8 @@ Caching → Cache Rules → Create rule:
 > Page Rules 経由なら **free でも使える**。ただし `?v=` が効かなくなるので、
 > 単体でやると**DBを差し替えた瞬間にエッジが古いまま1年固まる**。必ずセットで:
 >
-> - 版をオブジェクトキーに入れる（`kokkai-2025-<指紋>.db`）か、
-> - 差し替えた年のURLをワークフローから purge する（API 1本）
+> - 版をオブジェクトキーに入れる（`kokkai-2025H1-<指紋>.db`）か、
+> - 差し替えた期間のURLをワークフローから purge する（API 1本）
 >
 > そのうえで WAF カスタムルール（free で5本）で
 > `http.host eq "db.kokkai-timeline.com" and http.request.uri.query ne ""` を Block すれば、
@@ -558,23 +468,10 @@ Caching → Cache Rules → Create rule:
 > 代償は「CDNのパージが要らない」という現構成の利点で、
 > **purge の失敗が新しい壊れ方（DBは新しいのにエッジが古い）を生む**。
 >
-> #### ★ 2026-08-21 の実測で、この判断は補強された
->
-> 直近30日の実績（公開バケット ＋ 状態バケット）:
->
-> | | 実測 | 無料枠 | 使用率 |
-> |---|---:|---:|---:|
-> | ストレージ | **3.71 GB** | 10 GB | **37%** |
-> | Class A | 2.09k | 100万 | 0.2% |
-> | Class B | **6.94k** | 1,000万 | **0.07%** |
->
-> **月1,000円に届かせるには約2,800万リクエスト/月**（＝11 req/s を30日間）が要る。
-> いまが枠の 0.07% なので、**それは1,000倍以上の跳ね上がり**で、①の通知が鳴らない
-> ほうがおかしい。②を入れて普通の利用者を弾く危険を負う理由が、実測からも無い。
->
-> ★ **監視すべきはリクエスト数ではなくストレージ。** 3.71GB で37%、半期DBが増える
->   ぶん年 0.6〜0.9GB 育つので、10GB に当たるのはざっと8年後。ここが最初に課金へ届く。
->   （このページの他の箇所にある「合計 3.3GB」は構築時の見積りで、実測はもう少し多い）
+> **実測がこの判断を支えている**（下の「費用」）。**月1,000円に届かせるには
+> 約2,800万リクエスト/月**（＝11 req/s を30日間）が要るのに、いまは枠の 0.07%。
+> **1,000倍以上の跳ね上がりが要る**ので、①の通知が鳴らないほうがおかしい。
+> ②を入れて普通の利用者を弾く危険を負う理由が、実測からも無い。
 >
 > #### 叩かれたときにやること（先に決めておく）
 >
@@ -593,7 +490,7 @@ CSP・`X-Frame-Options`・`Permissions-Policy`・HSTS。
 `astro.config.mjs` の `inlineStylesheets: "never"` と
 `vite.build.assetsInlineLimit: 0` がそれを防いでいる。**片方だけ戻さないこと。**
 
-`connect-src` に年DBのホストが入っているので、**`PUBLIC_DB_BASE` を変えたら
+`connect-src` に期間DBのホストが入っているので、**`PUBLIC_DB_BASE` を変えたら
 `_headers` も変える**。
 
 ### 4. R2 の S3 API キーを作る
@@ -633,7 +530,7 @@ Pages 用（手順6）は `github-actions-pages-deploy` にして対にしてお
 > 1日10万リクエスト）。バズっても財布が痛まない構成にするのが前提なので Pages。
 
 ★ **ダッシュボードの Drag and drop は使えない。1,000ファイルが上限で、
-このサイトは 1,211ファイル**（議員ページだけで1,111枚ある）。**将来も超え続ける。**
+このサイトは1,700ファイルを超える**（議員ページだけで約1,100枚）。**将来も増え続ける。**
 名前を入れた時点でプロジェクトだけは作られるので、アップロードは Wrangler でやる。
 
 ★ 下の `npx --yes wrangler@4` は**この初期構築（手元で1回）だけ**。
@@ -675,6 +572,18 @@ My Profile → API Tokens → Create Token → 一番下の **Custom token**。
 | Token name | `github-actions-pages-deploy` |
 | Permission | **Account → Cloudflare Pages → Edit** の1行だけ（Zone は要らない） |
 | TTL | **空のまま**（＝無期限）。欄を押すとカレンダーが開くが、日付を選ばずに Esc で閉じる |
+
+### 7. 連絡先を Email Routing で作る
+
+`info@kokkai-timeline.com` を Gmail へ転送する。**サーバは増えない**（Cloudflare 側の
+設定だけで動くので「常時稼働プロセスを持たない」に触れない）。Gmail 側でエイリアスを
+作れば、返信もこのアドレスから出る。
+
+- **サイトの表示は `site/src/lib/operator.ts` の1か所だけ**（`/disclaimer` `/privacy`
+  `/about` がそこを見る）。アドレスを変えるときは**転送ルールと Gmail のエイリアスも一緒に**
+- 訂正依頼の窓口なので、**届かない状態は「窓口が無い」のと同じ**
+  （名誉毀損の抗弁としても弱くなる。[SCOPE.md](SCOPE.md)）
+- ドメインを移したり作り直したりしたら、**必ず1通送って着信を確かめる**
 
 ---
 
@@ -769,44 +678,9 @@ aws s3 cp data\dist\manifest.json s3://kokkai-timeline/manifest.json --endpoint-
   --cache-control "public, max-age=300"
 ```
 
-### 既にR2にあるものの `cache-control` を打ち直す
-
-**`cache-control` はオブジェクトのメタデータなので、上げ直すまで古いままになる。**
-2026-08-02 より前に投入した年DBは `immutable` が付いているので、一度だけ打ち直す。
-400MBのDBを上げ直さなくても、**同じキーへのコピーでメタデータだけ差し替えられる**:
-
-```powershell
-Get-ChildItem data\dist\kokkai-*.db | ForEach-Object {
-  aws s3 cp "s3://kokkai-timeline/$($_.Name)" "s3://kokkai-timeline/$($_.Name)" `
-    --endpoint-url $R2 --metadata-directive REPLACE `
-    --cache-control "public, max-age=3600, s-maxage=31536000"
-}
-
-# 打ち直せたか確認（CacheControl の欄を見る）
-aws s3api head-object --bucket kokkai-timeline --key kokkai-2025.db --endpoint-url $R2
-```
-
-**中身は変わらないので `?v=` も変わらない。** エッジには古いヘッダのまま載った
-オブジェクトが残っているので、**打ち直したら Caching → Configuration →
-Purge Everything を1回だけ実行する**（しないと最長1年、古い `immutable` が配られ続ける）。
-パージ後の初回アクセスは `MISS` の 210〜260ms に戻るが、1回で載り直す。
-
-**確認**: ブラウザで `https://db.kokkai-timeline.com/manifest.json` を開く。
-JSONが見えればカスタムドメインと公開設定が通っている。
-403/404 ならその先へ進んでも無駄なので、ここで直す。
-
-**バイト数の突き合わせ**（切れた転送を見逃すと、壊れたDBが配られる）:
-
-```powershell
-aws s3 ls s3://kokkai-timeline/ --endpoint-url $R2
-```
-
-出てくるサイズが `data\dist\` の実物と一致すること。2026-08-02 の投入時は
-6個のDBと `manifest.json` すべてが一致し、目録に記録されたサイズとも整合していた。
-
 ### 手で Pages に上げるとき（Actions を通さない場合）
 
-GitHub より先に本番で確かめたいときに使う。2026-08-03 に実際にこれで通した。
+GitHub より先に本番で確かめたいときに使う。
 
 **★ビルドに `PUBLIC_DB_BASE` を必ず付ける。** 付け忘れると `/db`（開発サーバ用の
 相対パス）を指した `dist` ができ、**上げてもDBを引けないサイトが本番に載る**。
@@ -834,9 +708,9 @@ $env:CLOUDFLARE_ACCOUNT_ID = '＜アカウントID＞'
 npx --yes wrangler@4 pages deploy site\dist --project-name kokkai-timeline --branch main
 ```
 
-**確認は件数で取る。** 2026-08-03 の反映後、全年（2021〜2026）で
-`ＡＩ` 5,412 / `Ｇ７` 4,439 / `ＤＸ` 3,039 / `ＧＸ` 2,692 / `ＥＵ` 2,579。
-「引けない」と出たら、年DBか目録のどちらかが古いままか、パージが効いていない。
+**確認は件数で取る。** 全期間で `ＡＩ` 5,412 / `Ｇ７` 4,439 / `ＤＸ` 3,039 /
+`ＧＸ` 2,692 / `ＥＵ` 2,579（2026-08-03 実測）。0件になったら、期間DBか目録の
+どちらかが古いままか、パージが効いていない。
 
 そのあと Actions から `workflow_dispatch` で1回手動実行して、通ることを確かめる。
 
@@ -874,13 +748,18 @@ GitHub は**定期実行が失敗すると、そのワークフローファイ�
 
 ## 費用
 
-| | 使用量 | 無料枠 |
-|---|---|---|
-| R2 ストレージ | 3.3 GB | 10 GB |
-| R2 Class A（書き込み） | 月およそ100回 | 月100万回 |
-| R2 Class B（読み出し） | 1検索あたり約80回 → 月12万検索 | 月1,000万回 |
-| R2 下り | 0円（R2は下り無料） | — |
-| Cloudflare Pages | 月500ビルドまで。日次なら30 | — |
-| GitHub Actions | public なら実質無制限 | — |
+直近30日の実測（2026-08 時点・公開バケット ＋ 状態バケット）:
+
+| | 使用量 | 無料枠 | 使用率 |
+|---|---:|---:|---:|
+| **R2 ストレージ** | **約3.7 GB** | 10 GB | **37%** |
+| R2 Class A（書き込み） | 約2千回 | 月100万回 | 0.2% |
+| R2 Class B（読み出し） | 約7千回 | 月1,000万回 | **0.07%** |
+| R2 下り | 0円（R2は下り無料） | — | — |
+| Cloudflare Pages | 日次なら月30ビルド | 月500 | 6% |
+| GitHub Actions | public なら実質無制限 | — | — |
 
 **実際にかかるのはドメイン代（月250円）だけ。** 予算は月1,000円。
+
+★ **監視すべきはリクエスト数ではなくストレージ。** 半期DBが増えるぶん
+年 0.6〜0.9GB 育つので、10GB に当たるのはざっと8年後。ここが最初に課金へ届く。

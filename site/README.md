@@ -7,8 +7,8 @@
 cd site
 npm install
 npm run dev        # http://localhost:4321（data/dist を /db で配る。DBのコピーはしない）
-npm run build      # dist/ に静的HTMLを出す（1,703ページ / 35MB）
-npm run test       # 回帰テスト（207件・0.3秒）
+npm run build      # dist/ に静的HTMLを出す（約1,700ページ）
+npm run test       # 回帰テスト（1秒未満）
 npm run check      # 型検査 + テスト
 ```
 
@@ -20,8 +20,8 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 中身の大半はクライアント側でDBから引くので、静的サイトジェネレータに求めたのは
 **ページの事前生成**と**素の `<script>` をそのまま書けること**の2つだけ。
 
-- 議員 1,111ページ・争点語 82ページ・頻出語 489ページを `getStaticPaths` で事前生成する
-  （ほかに固定ページと `404.astro`。合計 1,703ページ）。
+- 議員・争点語・頻出語・会期のページを `getStaticPaths` で事前生成する
+  （固定ページと `404.astro` を含めて約1,700ページ。大半は議員ぶん）。
   氏名や語で検索されたときに、中身のあるHTMLが返るのはここだけ
 - UIフレームワークを入れていない。`.astro` の `<script>` に素のTypeScriptを書く。
   Vite がバンドルと型検査をしてくれる。React も Svelte も要らなかった
@@ -33,14 +33,14 @@ sql.js-httpvfs のワーカと wasm を `public/vendor/` にコピーする。
 |---|---|---|
 | `/` | 静的 | **語から入る**（急増語→争点語→頻出語→検索→議員）。順序が主機能の表明（下記） |
 | `/search` | 静的（骨組み） | 検索。条件は**URLフラグメント**（`#q=…`）に持つ —— `?` より後ろは配信事業者に届くため（docs/DECISIONS.md §4）。**発言と議員の2タブ**（下記） |
-| `/politicians` | 静的 | 議員1,111人の一覧。**氏名のよみ順**。絞り込みも並べ替えもDOM上で完結（下記） |
-| `/politician/<id>` | **静的 ×1,111** | 氏名・所属会派の時系列・**発言数の推移**（下記）は静的。発言はDBから |
-| `/speech/<speech_id>` | 静的1枚 + rewrite | 発言650,785件は事前生成できない（下記）。広い画面では**一覧に重ねるパネル**で出す |
+| `/politicians` | 静的 | 議員 約1,100人の一覧。**氏名のよみ順**。絞り込みも並べ替えもDOM上で完結（下記） |
+| `/politician/<id>` | **静的 ×約1,100** | 氏名・所属会派の時系列・**発言数の推移**（下記）は静的。発言はDBから |
+| `/speech/<speech_id>` | 静的1枚 + rewrite | 発言 約65万件は事前生成できない（下記）。広い画面では**一覧に重ねるパネル**で出す |
 | `/topics` | 静的 | 争点語82件（**運営の編集方針**） |
 | `/topic/<id>` | **静的 ×82** | 頻度推移のSVGと会派比較は**ビルド時に生成**。発言はDBから |
 | `/frequent` | 静的 | 頻出語500件（**機械抽出**）。山が立った年ごとに並べる。**会期で絞れる**（下記） |
-| `/session/<n>` | **静的 ×11** | 会期の概要＋その会期で増えた語。**新しいデータは作っていない**（下記） |
-| `/word/<語>` | **静的 ×489** | 頻度推移のSVG。発言は既存の `word_hit` / FTS から |
+| `/session/<n>` | **静的**（会期ごと） | 会期の概要＋その会期で増えた語。**新しいデータは作っていない**（下記） |
+| `/word/<語>` | **静的 ×約490** | 頻度推移のSVG。発言は既存の `word_hit` / FTS から |
 | `/about` | 静的 | データの出どころと限界 |
 | `/disclaimer` | 静的 | 免責事項・引用の考え方・**訂正依頼の窓口**・運営者表示 |
 | `/privacy` | 静的 | プライバシーポリシー |
@@ -71,18 +71,11 @@ docs/SCOPE.md。空になるまで公開しない）。
 `user@domain` の並びが1度も現れないことを確認済み）。コピーボタンはJSで後から差し込む
 —— 動かない環境に押せないボタンを残さないため。スタイルを `is:global` にしてあるのは
 そのボタンにスコープ付きの属性が付かないから。
-**アクセス解析もここが唯一の入り口。** `analytics` を埋めると、計測タグ
-（`layouts/Base.astro`）と `/privacy` の記述が**同じ値から**出る。トークンだけ空だと
-`missing` に出て⚠が付く（計測されないのにポリシーには「使っています」と出る状態を防ぐ）。
-
-> **★ Cloudflare Pages のダッシュボードから Web Analytics を有効にしないこと。**
-> あれはリポジトリを1行も変えずに計測を始められる ＝ **公開中のプライバシーポリシーが
-> 黙って嘘になる。** CSP（`public/_headers`）には
-> `static.cloudflareinsights.com` を先に通してあるので、足すのは `analytics` の1か所だけ。
-> 判断の経緯は [docs/DECISIONS.md](../docs/DECISIONS.md)。
-
-`operator.ts` から `db.ts` を import しないこと。`format.ts` と同じ理由で、
-ビルド時（Node側）に読まれるので、ブラウザ専用のコードを引き込むと SSR が落ちる。
+**アクセス解析もここが唯一の入り口。** `analytics` から、計測タグ
+（`layouts/Base.astro`）・`/privacy` の記述・除外パス（`ANALYTICS_EXCLUDED_PATHS`）が
+**同じ値から**出る。トークンだけ空だと `missing` に出て⚠が付く。
+★ **ダッシュボード側から有効にしないこと**（[docs/PITFALLS.md](../docs/PITFALLS.md)
+「公開まわり」）。
 
 ### `/frequent` の会期絞り込み
 
@@ -215,7 +208,7 @@ focus は飛ばない（押した先が focusable でないため）ので `poin
 
 ### `/speech/<id>` の扱い
 
-発言は 650,785 件あって事前生成できない。`/speech` を1枚だけ出して、
+発言は約65万件あって事前生成できない。`/speech` を1枚だけ出して、
 `public/_redirects` の `200` rewrite で全部そこへ流す（URLは変わらない）。
 開発サーバでは `scripts/dev-data-server.js` が同じ書き換えをしている。
 
@@ -249,7 +242,7 @@ PUBLIC_DB_BASE=http://127.0.0.1:8788/db npm run build && npm run preview
 ## `/search` の2タブ（発言 / 議員）
 
 **議員の検索は発言DBを引かない。** `src/lib/politician-search.ts` が、ページに
-埋め込んだ議員1,111人ぶん（62KB / gzip 23KB）と照合する。
+埋め込んだ議員 約1,100人ぶん（約60KB / gzip 約23KB）と照合する。
 
 **★発言DBで議員を探させない。** 姓は2文字が多く（`岸田` `林` `高市`）、`word_hit` が
 返すのは**その語を含む発言**であって「その議員」ではない。議員マスタは手元にあるので、
@@ -310,22 +303,17 @@ PUBLIC_DB_BASE=http://127.0.0.1:8788/db npm run build && npm run preview
 複数語で2文字語が混ざるときは、**いちばん珍しい2文字語を起点**にして残りを
 `instr()` で絞る。走査する行数が起点の語の件数で頭打ちになる。
 
-**★ 検索語の全角化はこの3経路の手前、`query.ts` の `splitTerms()` でやっている**
-（`toFullWidth()`・`docs/DECISIONS.md`）。会議録の英数字は全部全角で、
-素の半角で引くと0件になる。**引き先を足すときも必ずこの入口を通すこと。**
+**★ 検索語の正規化は3経路の手前、`query.ts` の `splitTerms()` でやっている。**
+規則と理由は [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)「検索語の正規化」と
+[docs/DECISIONS.md](../docs/DECISIONS.md) §4。**引き先を足すときも必ずこの入口を通すこと。**
 
-- **NFKC を使わない。** 全角→半角に潰す**逆方向**の正規化で、やると全滅する。
-  必要なのは `A-Za-z0-9` を `+0xFEE0` する片方向の写像だけ
-- **大小の扱いは経路で逆になる。揃えようとするとどちらかが壊れる。**
-  - **FTS 経路は畳まない。** trigram が全角ラテンの大小を自分で畳むので幅だけで足りる。
-    寄せると `ＳＤＧｓ` `ｉＰＳ` `ＩｏＴ` が引けなくなるだけ。代わりに畳むのは
-    `matchTopic()`（争点語の突合）と `highlightTerm()`（強調）の2か所
-  - **word 経路は畳まないと引けない。** `w.term = ?` は BINARY 比較で、SQLite の
-    `NOCASE` も `upper()` も ASCII 限定なので全角に効かない。`toWordKey()` で
-    **2文字以下だけ**大文字に寄せる（3文字以上に掛けると `ＳＤＧｓ` が壊れる）。
-    索引側も `build_db.py` の `fold_word_run()` が同じ写像を掛けてある
-  - 画面・入力欄・URL に出すのは `canonicalQuery()` の結果（＝実際に引いた語）
-- ハイライトに渡す `terms` も `splitTerms()` から取る（本文が全角なので、半角のままだと光らない）
+サイト側で押さえるのはこの3点:
+
+- 大小を畳むのは **word 経路の2文字以下だけ**。FTS 経路で代わりに畳むのは
+  `matchTopic()`（争点語の突合）と `highlightTerm()`（強調）の2か所
+- 索引側も `build_db.py` の `fold_word_run()` が `toWordKey()` と同じ写像を掛けている
+- 画面・入力欄・URL に出すのは `canonicalQuery()` の結果（＝実際に引いた語）。
+  ハイライトに渡す `terms` も `splitTerms()` から取る（半角のままだと光らない）
 
 **引き先が3通りあるということは、直す場所も複数あるということ。**
 絞り込み条件を足すときは、結果取得（`ftsSql` / `topicSql` / `wordSql`）と
@@ -484,19 +472,15 @@ CSP（`style-src 'self'`）に**エラーも出さずに消される**。色や�
 
 ## 触る前に読むもの
 
-**[docs/PITFALLS.md](../docs/PITFALLS.md) の「ブラウザからDBを引く」。** `src/lib/query.ts` の SQL は
-全部それに縛られている。特に:
+**[docs/PITFALLS.md](../docs/PITFALLS.md) の「ブラウザからDBを引く」。**
+`src/lib/query.ts` の SQL は全部それに縛られている（`ORDER BY rowid DESC`・
+keyset のページ送り・期間ごとに別ワーカ・`db.query()` の第2引数）。
 
-- **「新しい順」は `ORDER BY rowid DESC`。`date` で並べない**
-  （検索で204MB転送・議員ページで7,800リクエストになる）
-- **ページ送りは OFFSET ではなく rowid の keyset**
-  （OFFSET 80 で134リクエスト・4.1秒）
-- **年またぎは年ごとに別ワーカで並列**（ATTACH+UNION にしない）
-- **`db.query(sql, params)` の第2引数は配列で1個**（展開すると黙って束縛されない）
+モジュールの依存だけ、ここにも書いておく:
 
-もうひとつ、モジュールの依存に注意:
-
-- **`src/lib/format.ts` から `db.ts` を import しない。** format.ts は
-  `.astro` のフロントマター（ビルド時のNode側）からも読む。db.ts は
+- **`src/lib/format.ts` と `operator.ts` から `db.ts` を import しない。**
+  この2つは `.astro` のフロントマター（ビルド時のNode側）からも読む。`db.ts` は
   sql.js-httpvfs に依存していてブラウザでしか動かないので、
-  間にimportが1本でも通ると SSR が落ちる。
+  間に import が1本でも通ると SSR が落ちる
+- **`src/lib/query.ts` に sql.js-httpvfs を持ち込まない。**
+  1本でも通ると Node からテストを走らせられなくなる
