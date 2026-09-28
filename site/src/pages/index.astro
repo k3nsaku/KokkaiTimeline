@@ -62,11 +62,11 @@ const totalSpeeches = people.reduce((sum, p) => sum + p.n_speeches, 0);
   <p class="lede">
     国会会議録の発言とその頻度の推移を、<strong>語から</strong>・<strong>議員から</strong>・
     <strong>全文検索から</strong>たどれます。
-    数字は出しますが、評価も採点もしません。
+    議事録がNDL国会会議録検索システムに登録されるまで一定の期間を要するためリアルタイムではありません。
   </p>
 
   <section class="lead-section">
-    <h2>いま国会で議論されていること</h2>
+    <h2>最近国会で議論されていること</h2>
     <p class="small muted">
       {formatDate(latest.from)}〜{formatDate(latest.until)}の
       {latest.sitting_days}開催日・{formatNumber(latest.n_speeches)}発言のうち、
