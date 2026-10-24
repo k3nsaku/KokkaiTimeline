@@ -282,7 +282,7 @@ jobs:
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           # 台帳の push が公開の関門になったので、他の commit と競ったときに
           # 1回だけやり直す。台帳は追記しかされないので rebase で衝突しない。
-          # ★ 追跡ブランチの設定に頼らず明示する（この経路はまだ一度も通っていない）
+          # ★ 追跡ブランチの設定に頼らず明示する。やり直しの側（pull --rebase）はまだ一度も通っていない
           push() { git -c http.extraheader="$auth" push origin "HEAD:$GITHUB_REF_NAME"; }
           push || { git pull --rebase origin "$GITHUB_REF_NAME"; push; }
 
