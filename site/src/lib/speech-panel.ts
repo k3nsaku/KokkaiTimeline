@@ -21,11 +21,23 @@
  * 開いたら `pushState` で `/speech/<id>` にする。アドレスバーが共有できるURLのまま
  * になり、リロードすれば本物のページが出る。**隠す・再表示では履歴を触らない**
  * （表示の状態であって遷移ではない）。
+ *
+ * ## パネル内を検索
+ *
+ * ★ **DOM を書き換えずに光らせる**（CSS Custom Highlight API）。`<mark>` で包むと
+ *   テキストノードが割れ、前後の発言を差し込んだあとの位置合わせや、引用のための
+ *   文字選択に響く。API が無いブラウザでは光らないが、位置へは飛べる。
+ *
+ * ★ **Enter は変換の確定にも使う。** `isComposing` を見ないと、漢字を確定した
+ *   だけで次の一致へ飛ぶ。
+ *
+ * ★ **欄の中の Esc は「語を消す」。** 語が空のときだけ、いつもどおりパネルを閉じる。
  */
 
 import { speechDetail, speechContext, type SpeechDetail } from "./db";
 import { renderContextList, splitContext } from "./speech-view";
 import { describeError, escapeHtml, formatDate, paragraphs } from "./format";
+import { findMatches, findTerms } from "./find";
 
 let root: HTMLElement | null = null;
 let bodyEl: HTMLElement | null = null;
@@ -36,6 +48,15 @@ let openedFrom: HTMLElement | null = null;
 /** パネルを開く前のURL。閉じたらここへ戻す */
 let urlBeforeOpen: string | null = null;
 let currentLabel = "";
+
+let findInput: HTMLInputElement | null = null;
+let findCount: HTMLElement | null = null;
+let findButtons: HTMLButtonElement[] = [];
+let findRanges: Range[] = [];
+let findIndex = -1;
+/** `::highlight()` の名前。CSS は `Base.astro` */
+const HL_ALL = "panel-find";
+const HL_CURRENT = "panel-find-current";
 
 function panelAllowed(): boolean {
   // CSS が単一の情報源。`--panel-ok` は @media の中でだけ 1 になる
@@ -52,6 +73,15 @@ function build(): void {
   root.setAttribute("aria-label", "発言の本文");
   root.innerHTML = `
     <div class="speech-panel-bar">
+      <div class="speech-panel-find" role="search">
+        <input type="search" class="speech-panel-find-input" placeholder="パネル内を検索"
+          aria-label="この発言の中を検索" autocomplete="off" enterkeyhint="search">
+        <button type="button" class="speech-panel-find-prev" disabled
+          aria-label="前の一致" title="前の一致（Shift+Enter）">↑</button>
+        <button type="button" class="speech-panel-find-next" disabled
+          aria-label="次の一致" title="次の一致（Enter）">↓</button>
+        <span class="speech-panel-find-count small muted" role="status"></span>
+      </div>
       <button type="button" class="speech-panel-hide" title="一覧に戻る（あとで続きから読めます）">
         隠す
       </button>
@@ -64,12 +94,115 @@ function build(): void {
   root.querySelector(".speech-panel-hide")!.addEventListener("click", hide);
   root.querySelector(".speech-panel-close")!.addEventListener("click", () => close());
 
+  findInput = root.querySelector<HTMLInputElement>(".speech-panel-find-input")!;
+  findCount = root.querySelector<HTMLElement>(".speech-panel-find-count")!;
+  const prev = root.querySelector<HTMLButtonElement>(".speech-panel-find-prev")!;
+  const next = root.querySelector<HTMLButtonElement>(".speech-panel-find-next")!;
+  findButtons = [prev, next];
+  prev.addEventListener("click", () => stepFind(-1));
+  next.addEventListener("click", () => stepFind(1));
+  findInput.addEventListener("input", (event) => {
+    if ((event as InputEvent).isComposing) return;   // 確定してから数える
+    runFind(false);
+  });
+  findInput.addEventListener("compositionend", () => runFind(false));
+  findInput.addEventListener("keydown", (event) => {
+    // keyCode 229 は Safari 向け（確定の Enter で isComposing が既に偽になっている）
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      stepFind(event.shiftKey ? -1 : 1);
+    } else if (event.key === "Escape" && findInput!.value) {
+      event.preventDefault();
+      event.stopPropagation();   // パネルを閉じる Esc（document）まで届かせない
+      findInput!.value = "";
+      runFind(false);
+    }
+  });
+
   reopenBtn = document.createElement("button");
   reopenBtn.type = "button";
   reopenBtn.className = "speech-panel-reopen";
   reopenBtn.hidden = true;
   reopenBtn.addEventListener("click", reopen);
   document.body.append(reopenBtn);
+}
+
+function highlightsSupported(): boolean {
+  return typeof CSS !== "undefined" && "highlights" in CSS;
+}
+
+function clearFind(): void {
+  findRanges = [];
+  findIndex = -1;
+  if (highlightsSupported()) {
+    CSS.highlights.delete(HL_ALL);
+    CSS.highlights.delete(HL_CURRENT);
+  }
+}
+
+/**
+ * パネルの中身全体（前後の発言を含む）から当たる位置を拾い直す。
+ *
+ * `keep` が真なら、いま選んでいる一致を保ったまま数え直す（前後の発言が
+ * 後から届いたとき）。偽なら本文の中の最初の一致へ移る。
+ *
+ * テキストノードごとに照合するので、要素をまたぐ語（氏名のリンクと
+ * 続く文字など）は拾わない。本文の段落は1ノードなので困らない。
+ */
+function runFind(keep: boolean): void {
+  const prev = keep ? findRanges[findIndex] : undefined;
+  clearFind();
+  const terms = findTerms(findInput?.value ?? "");
+  if (terms.length && bodyEl) {
+    const walker = document.createTreeWalker(bodyEl, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (const [start, end] of findMatches(node.nodeValue ?? "", terms)) {
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, end);
+        findRanges.push(range);
+      }
+    }
+    if (prev) {
+      findIndex = findRanges.findIndex((r) =>
+        r.startContainer === prev.startContainer && r.startOffset === prev.startOffset);
+    }
+    if (findIndex < 0 && findRanges.length) {
+      // 前の発言が上にあるので、素直に1件目を採ると本文より先にそちらへ飛ぶ
+      const main = bodyEl.querySelector(".speech-panel-main");
+      findIndex = Math.max(0, main
+        ? findRanges.findIndex((r) => main.contains(r.startContainer)) : 0);
+    }
+  }
+  paintFind();
+}
+
+function stepFind(delta: number): void {
+  if (!findRanges.length) return;
+  findIndex = (findIndex + delta + findRanges.length) % findRanges.length;
+  paintFind();
+}
+
+function paintFind(): void {
+  const total = findRanges.length;
+  const current = findRanges[findIndex];
+  if (highlightsSupported() && total) {
+    CSS.highlights.set(HL_ALL, new Highlight(...findRanges));
+    const cur = new Highlight(current);
+    cur.priority = 1;   // 全件の色より上に塗る
+    CSS.highlights.set(HL_CURRENT, cur);
+  }
+  for (const b of findButtons) b.disabled = total < 2;
+  if (findCount) {
+    findCount.textContent = !findInput?.value.trim() ? ""
+      : total ? `${findIndex + 1} / ${total}` : "0件";
+  }
+  if (current && bodyEl) {
+    // 上から3分の1あたりに置く。前後の文脈が両方見える
+    const box = bodyEl.getBoundingClientRect();
+    bodyEl.scrollTop += current.getBoundingClientRect().top - box.top - box.height / 3;
+  }
 }
 
 function renderDetail(s: SpeechDetail): string {
@@ -128,6 +261,8 @@ async function fillContext(s: SpeechDetail): Promise<void> {
     bodyEl.scrollTop +=
       main.getBoundingClientRect().top - bodyEl.getBoundingClientRect().top;
   }
+  // 検索中なら、差し込んだぶんを数え直して選んでいる一致の位置へ合わせ直す
+  if (findInput?.value.trim()) runFind(true);
 }
 
 async function open(speechId: string, trigger: HTMLElement): Promise<void> {
@@ -144,6 +279,11 @@ async function open(speechId: string, trigger: HTMLElement): Promise<void> {
   reopenBtn!.hidden = true;
   document.body.classList.add("has-speech-panel");
   bodyEl.scrollTop = 0;
+  // ★ 中身を差し替える前に捨てる。古いノードを指す Range が残る
+  //   （語は残す — 別の発言に移っても同じ語で読み比べられるように）
+  clearFind();
+  for (const b of findButtons) b.disabled = true;
+  if (findCount) findCount.textContent = "";   // 届く前に「0件」と言わない
   bodyEl.innerHTML = `<p class="status" role="status">読み込み中…</p>`;
   bodyEl.focus();
 
@@ -154,6 +294,7 @@ async function open(speechId: string, trigger: HTMLElement): Promise<void> {
       return;
     }
     bodyEl.innerHTML = renderDetail(s);
+    if (findInput?.value.trim()) runFind(false);
     currentLabel = `${s.speaker} ${Number(s.date.slice(5, 7))}/${Number(s.date.slice(8, 10))}`;
     reopenBtn!.textContent = `${currentLabel} の続きを読む`;
     history.pushState({ speechPanel: true }, "",
@@ -191,6 +332,9 @@ function close(fromPopstate = false): void {
   currentLabel = "";
   document.body.classList.remove("has-speech-panel");
   if (reopenBtn) reopenBtn.hidden = true;
+  if (findInput) findInput.value = "";
+  clearFind();
+  paintFind();
   if (bodyEl) bodyEl.innerHTML = "";
   if (!fromPopstate && urlBeforeOpen && location.pathname.startsWith("/speech")) {
     history.pushState({}, "", urlBeforeOpen);
